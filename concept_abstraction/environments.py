@@ -5,7 +5,7 @@ import numpy as np
 class Cyclic4StateEnv(gym.Env):
     metadata = {"render_modes": ["human"], "render_fps": 4}
 
-    def __init__(self,concept_list=[]):
+    def __init__(self,concept_list=[],error=0):
         super().__init__()
         
         if len(concept_list) == 0:
@@ -14,15 +14,18 @@ class Cyclic4StateEnv(gym.Env):
             self.observation_space = spaces.MultiBinary(len(concept_list))
         self.action_space = spaces.Discrete(3)       # 0 = left, 1 = right
         self.concept_list = concept_list
+        self.error = error 
 
         self.state = 0  # Start at A
+        self.all_states = [0,1,2,3]
         self.rewards = [2.5, 2.85, 2.5, 2.85]
         
         self.concepts = np.array([[0,1,0,1],[1,0,0,1],[0,0,0,1]])
 
-    def get_observation(self,error=0):
+    def get_observation(self):
 
         state = self.state 
+        error = self.error 
 
         if np.random.random() < error:
             state = np.random.randint(0,len(self.rewards))
@@ -62,10 +65,12 @@ class Cyclic4StateEnv(gym.Env):
 
 
 class TreeRepeatEnv(gym.Env):
-    def __init__(self,concept_list=[]):
+    def __init__(self,concept_list=[],error=0):
         super().__init__()
         self.max_state = 15
         self.state = 1
+        self.error = error
+        self.all_states = list(range(1,15))
 
         # Actions: 0 = up (left), 1 = down (right)
         self.action_space = spaces.Discrete(2)
@@ -75,16 +80,8 @@ class TreeRepeatEnv(gym.Env):
         self.observation_space = spaces.MultiBinary(len(concept_list))
 
         # Rewards: only for some leaves
-        self.reward_dict = {
-            1: 1.0,
-            2: 1.0,
-            4: 1.0,
-            8: 1.0,
-            15: 0,
-            13: 0,
-            11: 0,
-            9: 0,
-        }
+        self.rewards = [0 for i in range(15)]
+        self.rewards[0] = self.rewards[1] = self.rewards[3] = self.rewards[7] = 1
 
         self.concepts = []
         for i in range(4):
@@ -102,40 +99,39 @@ class TreeRepeatEnv(gym.Env):
         self.concepts = np.array(self.concepts)
 
 
-    def get_observation(self,error=0):
-        state = self.state-1 
+    def get_observation(self):
         if len(self.concept_list) == 1:
-            error = 0.25
+            error = self.error 
+        else:
+            error = 0
 
+        state = self.state 
         if np.random.random() < error:
             state = np.random.randint(0,15)
-
-        if len(self.concept_list) == 0:
-            return state  
         
         current_concepts = self.concepts[self.concept_list,state]
         return current_concepts 
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        self.state = 1
+        self.state = 0
         return self.get_observation(), {}
 
     def step(self, action):
         # Determine next state based on tree transition
 
         if action == 0:
-            reward = self.reward_dict.get(self.state, 0.0)
+            reward = self.rewards[self.state]
         elif action == 1:
             reward = 0.1
 
-        if self.state > 7:
-            if self.state == 8:
-                self.state = 1
+        if self.state > 6:
+            if self.state == 7:
+                self.state = 0
             else:
-                self.state = 3  # Reset after leaf step
+                self.state = 2
         else:
-            self.state = 2 * self.state + action
+            self.state = 2 * (self.state+1) + action - 1
 
         obs = self.get_observation()
 
