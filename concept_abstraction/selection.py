@@ -2,7 +2,34 @@ import numpy as np
 import gurobipy as gp
 from gurobipy import GRB
 
+
+def random_selection(env,num_concepts):
+    """Randomly select {num_concepts} from env.concepts
+    
+    Arguments:
+        env: Gymasium environment
+        num_concepts: Integer, number of concepts to select
+    
+    Returns: List of size {num_concepts} of integers
+        each representing a concept"""
+    
+    total_concepts = len(env.concepts)
+    return np.random.choice(list(range(total_concepts)),num_concepts,replace=False)
+
 def greedy_selection(env,num_concepts):
+    """Select {num_concepts} greedily
+        by selecting those that reduce the reward range within each partition
+        For example, first select the concept
+            so that, c_{i} = 0 and c_{i} = 1 each have
+                small differences between max and min reward
+
+    Arguments:
+        env: Gymasium environment
+        num_concepts: Integer, number of concepts to select
+    
+    Returns: List of size {num_concepts} of integers
+        each representing a concept"""
+
     total_concepts = []
     all_concepts = env.concepts
     reward_by_state = env.rewards
@@ -19,16 +46,18 @@ def greedy_selection(env,num_concepts):
             for g in range(total_groups+1):
                 states_in_group = [i for i in range(len(groups)) if groups[i] == g]
                 partition_0 = [i for i in states_in_group if env.concepts[k][i] == 0]
-                rewards_0 = [reward_by_state[i] for i in partition_0]
+                rewards_0 = np.array([reward_by_state[i] for i in partition_0])
                 partition_1 = [i for i in states_in_group if env.concepts[k][i] == 1]
-                rewards_1 = [reward_by_state[i] for i in partition_1]
+                rewards_1 = np.array([reward_by_state[i] for i in partition_1])
 
                 if len(rewards_0) > 0:
-                    total_score = max(max(rewards_0)-min(rewards_0),total_score)
+                    for action in range(len(rewards_0[0])):
+                        total_score = max(np.max(rewards_0[:,action])-np.min(rewards_0[:,action]),total_score) 
                 if len(rewards_1) > 0:
-                    total_score = max(max(rewards_1)-min(rewards_1),total_score)
+                    for action in range(len(rewards_1[0])):
+                        total_score = max(np.max(rewards_1[:,action])-np.min(rewards_1[:,action]),total_score) 
             scores_by_group.append(total_score)
-        selected_idx = np.argmin(scores_by_group)
+        selected_idx = int(np.argmin(scores_by_group))
 
         total_groups = max(groups)
         new_groups = max(groups)
@@ -43,42 +72,71 @@ def greedy_selection(env,num_concepts):
         total_concepts.append(selected_idx)
     return total_concepts 
 
-def random_selection(env,num_concepts):
-    total_concepts = len(env.concepts)
-    return np.random.choice(list(range(total_concepts)),num_concepts,replace=False)
 
 def human_centered_selection(env,accuracy_by_concept,target_abstraction):
+    """Select concepts based on human skill
+        Solve a fractional linear programming problem
+        that optimizes for the average accuracy
+        subject to range <= target_abstraction
+
+    Arguments:
+        env: Gymasium environment
+        accuracy_by_concept: List of floats, accuracy of 
+            humans for each concept
+        target_abstraction: float, threshold for 
+            range of concepts
+    
+    Returns: List of size {num_concepts} of integers
+        each representing a concept"""
+    
     rewards = env.rewards
     state_pairs = []
 
     for i in range(len(rewards)):
         for j in range(i):
-            state_pairs.append((abs(rewards[i]-rewards[j]),np.where(env.concepts[:,i] != env.concepts[:,j])[0]))
-    state_pairs = [i for i in state_pairs if i[0] > target_abstraction]
+            state_pairs.append((max(abs(rewards[i]-rewards[j])),np.where(env.concepts[:,i] != env.concepts[:,j])[0]))
 
+    state_pairs = [i for i in state_pairs if i[0] > target_abstraction]
     m = gp.Model("fractional_lp")
     n = len(accuracy_by_concept)
 
-    # Variables: y[i] = t * x[i], where x[i] ∈ [0,1]
+    # Variables: y[i] ≥ 0, t ≥ 0
     y = m.addVars(n, lb=0.0, name="y")
     t = m.addVar(lb=0.0, name="t")
 
-    # Objective: Maximize sum(c[i] * y[i])
+    # Objective: Maximize weighted sum
     m.setObjective(gp.quicksum(accuracy_by_concept[i] * y[i] for i in range(n)), GRB.MAXIMIZE)
 
-    # Charnes-Cooper constraint: sum(y) = 1
-    m.addConstr(gp.quicksum(y[i] for i in range(n)) == 1)
+    # Total weight constraint
+    m.addConstr(gp.quicksum(y[i] for i in range(n)) == 1, name="normalize")
 
-    # Bounds: y[i] <= t
+    # Ensure t is ≥ each y[i]
     for i in range(n):
-        m.addConstr(y[i] <= t)
+        m.addConstr(y[i] <= t, name=f"upper_bound_y_{i}")
 
-    for pair in state_pairs:
-        m.addConstr(gp.quicksum(y[i] for i in pair[1] if i < n) >= t)
+    # Coverage constraints from state_pairs
+    for idx, pair in enumerate(state_pairs):
+        m.addConstr(gp.quicksum(y[i] for i in pair[1]) >= t, name=f"coverage_{idx}_{pair}")
 
-    # Optimize
+    # Prevent Gurobi from treating model as infeasible-or-unbounded
+    m.setParam(gp.GRB.Param.DualReductions, 0)
+
+    # Solve
     m.optimize()
 
+    # Handle infeasibility
+    if m.status == gp.GRB.INFEASIBLE:
+        print("Model is infeasible")
+        m.computeIIS()
+        m.write("model.ilp")
+        m.write("model.lp")
+        m.write("model.mps")
+        raise RuntimeError("Model infeasible")
+    elif m.status != gp.GRB.OPTIMAL:
+        raise RuntimeError(f"Solver ended with status {m.status}")
+
+    # Extract solution
     t_val = t.X
-    x_vals = [y[i].X / t_val for i in range(n)]
+    x_vals = [y[i].X / t_val for i in range(n)] if t_val > 0 else [0.0] * n
+
     return np.array(x_vals)

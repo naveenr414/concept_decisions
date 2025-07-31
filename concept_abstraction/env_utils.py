@@ -4,47 +4,83 @@ import torch
 import numpy as np
 
 
-def create_environment_from_string(environment_string,concept_list,error):
+def create_environment_from_string(environment_string,environment_nodes,concept_list,error):
+    """Initialize an environment based on a string
+    
+    Arguments:
+        environment_string: String, e.g., tree or cycle
+        concept_list: List of concepts which are used to define the state
+        error: float, erorr in concept prediction
+    
+    Returns: Gymasium Environment"""
+    
     models_by_string = {
         'tree': TreeRepeatEnv, 
         'cycle': Cyclic4StateEnv,
     }
     
-    return models_by_string[environment_string](concept_list,error)
+    return models_by_string[environment_string](environment_nodes,concept_list,error)
 
-def get_baseline_concept_sets(environment_string):
+def get_baseline_concept_sets(environment_string,environment_nodes):
+    """Retrieve a list of potential concept sets from a string
+    
+    Arguments:
+        environment_string: String, e.g., tree or cycle
+    
+    Returns: List of lists, representing different concept 
+        combinations"""
+    
     baseline_concepts_by_string = {
-        'tree': [[0,1,2,3],[4]],
-        'cycle': [[0,1,2],[0],[1],[2]]
+        'tree': [list(range(int(np.log2(environment_nodes+1)))),[int(np.log2(environment_nodes+1))]],
+        'cycle': [list(range(0,environment_nodes-1))] + [[j] for j in list(range(0,environment_nodes-1))]
     }
 
     return baseline_concepts_by_string[environment_string]
 
-def get_values(env,q_net):
-    unique_obs = set()
-    state_to_obs = {}
-    obs_to_val = {}
-    obs_to_q = {}
+def get_values(env, q_net, num_rollouts=10, max_steps=100, gamma=1):
+    """
+    Estimate V^{π}(s) for all states using rollouts from each state under the policy implied by q_net.
+    
+    Args:
+        env: The environment with .all_states and .state access.
+        q_net: Trained Q-network (maps obs to Q-values).
+        num_rollouts: Number of rollouts per state.
+        max_steps: Max steps per rollout.
+        gamma: Discount factor.
+    
+    Returns:
+        List of value estimates V(s) for each s in env.all_states.
+    """
+    values = []
 
-    # Get all unique observations and their value
     for s in env.all_states:
-        env.state = s
-        o = tuple(env.get_observation())
-        unique_obs.add(o)
-        state_to_obs[s] = o
+        total_return = 0.0
 
-    for o in unique_obs:
-        o_tensor = torch.tensor(o).unsqueeze(0).float()
-        q_vals = q_net(o_tensor).detach().squeeze().numpy()
-        v = q_vals.max()
-        obs_to_val[o] = v
-        obs_to_q[o] = q_vals
+        for _ in range(num_rollouts):
+            env.reset()
+            try:
+                env.unwrapped.state = s
+            except AttributeError:
+                raise AttributeError("env must support setting env.unwrapped.state directly")
+            discounted_reward = 0.0
+            discount = 1 
+            done = False
+            steps = 0
 
-    vals = []
-    for s in env.all_states:
-        o = state_to_obs[s]
-        q_vals = obs_to_q[o]
-        action_probs = F.softmax(torch.tensor(q_vals), dim=0).numpy()
-        best_action = np.argmax(q_vals)
-        vals.append(obs_to_val[o])
-    return vals 
+            while not done and steps < max_steps:
+                obs = env.get_observation()
+                obs_tensor = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
+                action, _states = q_net.predict(obs, deterministic=True)
+                old_state = env.state 
+                obs, reward, done, _, _ = env.step(action)
+
+                discounted_reward += discount * reward
+                discount *= gamma
+                steps += 1
+
+            discounted_reward /= steps
+            total_return += discounted_reward
+
+        values.append(total_return / num_rollouts)
+
+    return values

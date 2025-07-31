@@ -1,0 +1,32 @@
+Running cycle with error & intervention
+Parameters {'seed': 42, 'environment_string': 'cycle', 'environment_nodes': 4, 'show_baseline': False, 'num_concepts_selected': 0, 'human_accuracy_by_concept': [0.9, 0.9, 0.9], 'human_reliance_by_concept': [0.75, 0.75, 0.75], 'target_abstraction': 0.1, 'cbm_accuracy_by_concept': [0.5, 1.0, 1.0], 'reward_error': 0, 'transition_error': 0}
+Set parameter Username
+Academic license - for non-commercial use only - expires 2025-10-14
+Set parameter DualReductions to value 0
+Gurobi Optimizer version 10.0.3 build v10.0.3rc0 (linux64)
+
+CPU model: Intel(R) Core(TM) i7-7700K CPU @ 4.20GHz, instruction set [SSE2|AVX|AVX2]
+Thread count: 4 physical cores, 8 logical processors, using up to 8 threads
+
+Optimize a model with 8 rows, 4 columns and 21 nonzeros
+Model fingerprint: 0x9f29d935
+Coefficient statistics:
+  Matrix range     [1e+00, 1e+00]
+  Objective range  [9e-01, 9e-01]
+  Bounds range     [0e+00, 0e+00]
+  RHS range        [1e+00, 1e+00]
+Presolve time: 0.00s
+Presolved: 2 rows, 2 columns, 4 nonzeros
+
+Iteration    Objective       Primal Inf.    Dual Inf.      Time
+       0    9.0000000e-01   0.000000e+00   0.000000e+00      0s
+       0    9.0000000e-01   0.000000e+00   0.000000e+00      0s
+
+Solved in 0 iterations and 0.00 seconds (0.00 work units)
+Optimal objective  9.000000000e-01
+/usr0/home/naveenr/projects/concept_decisions/concept_abstraction/training.py:81: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+  scaler = GradScaler()
+/usr0/home/naveenr/projects/concept_decisions/concept_abstraction/training.py:56: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray with numpy.array() before converting to a tensor. (Triggered internally at ../torch/csrc/utils/tensor_new.cpp:278.)
+  torch.tensor(obs, dtype=torch.float32),
+/usr0/home/naveenr/projects/concept_decisions/concept_abstraction/training.py:127: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
+  with autocast():
