@@ -31,15 +31,15 @@ is_jupyter = 'ipykernel' in sys.modules
 # +
 if is_jupyter: 
     seed        = 42
-    environment_string = "cycle"
-    environment_nodes = 4
-    show_baseline = False 
+    environment_string = "tree"
+    environment_nodes = 127
+    show_baseline = True 
     human_accuracy_by_concept = None 
-    target_abstraction = 0.1
+    target_abstraction = 0.05
     out_folder = "synthetic"
-    num_concepts_selected = 0
-    cbm_accuracy_by_concept = [0.9,0.9,0.9]
-    human_reliance_by_concept =None
+    num_concepts_selected = 4
+    cbm_accuracy_by_concept = None 
+    human_reliance_by_concept = None 
     reward_error = 0
     transition_error = 0
 else:

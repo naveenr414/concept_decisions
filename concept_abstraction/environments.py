@@ -63,9 +63,9 @@ class Cyclic4StateEnv(gym.Env):
         
     def get_observation(self):
         current_concepts = self.concepts[self.concept_list,self.state].copy()
-
         for i in range(len(current_concepts)):
-            if self.acc_by_concept is not None and np.random.random() > self.acc_by_concept[i]:
+            concept_num = self.concept_list[i]
+            if self.acc_by_concept is not None and np.random.random() > self.acc_by_concept[concept_num]:
                 current_concepts[i] = 1-current_concepts[i]         
         return current_concepts 
 
@@ -169,7 +169,8 @@ class TreeRepeatEnv(gym.Env):
         current_concepts = self.concepts[self.concept_list,self.state].copy()
 
         for i in range(len(current_concepts)):
-            if self.acc_by_concept is not None and np.random.random() > self.acc_by_concept[i]:
+            concept_num = self.concept_list[i]
+            if self.acc_by_concept is not None and np.random.random() > self.acc_by_concept[concept_num]:
                 current_concepts[i] = 1-current_concepts[i]         
         return current_concepts 
 
