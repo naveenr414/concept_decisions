@@ -7,13 +7,13 @@ LOGFILE_CYCLE=../../runs/error_cycle.txt
 #### Cycle Environment
 
 environment=food
-env=cycle 
 tmux new-session -d -s match_${env}
 tmux send-keys -t match_${env} ENTER 
 tmux send-keys -t match_${env} "cd scripts/notebooks" ENTER
 
 for seed in 42 43 44 45 46
 do 
+    env=cycle 
     LOGFILE=${LOGFILE_CYCLE}
     # Impact of Size
     for nodes in 4 8 16
@@ -56,7 +56,7 @@ do
     cbm_accuracy="${cbm_accuracy[*]}"
     tmux send-keys -t match_${env} "conda activate ${environment}; python synthetic_environments.py --seed ${seed} --environment_string ${env} --environment_nodes ${nodes} --cbm_accuracy_by_concept ${cbm_accuracy} --human_accuracy_by_concept ${human_accuracy_by_concept} --human_reliance_by_concept ${human_reliance_by_concept} --target_abstraction ${target_abstraction} --out_folder synthetic >> ${LOGFILE} 2>&1" ENTER
 
-    cbm_accuracy=(0.5 0.5 0.5 0.5 0.5)
+    cbm_accuracy=(0.5 0.5 0.5)
     cbm_accuracy="${cbm_accuracy[*]}"
     for human_rel in 0.1 0.25 0.5 0.75 0.9 
     do 
