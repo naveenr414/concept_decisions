@@ -2,3 +2,4 @@
 results/*.json
 runs/*.txt
 */__pycache__
+results/

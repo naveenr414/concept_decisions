@@ -91,40 +91,28 @@ def human_centered_selection(env,accuracy_by_concept,target_abstraction):
     
     rewards = env.rewards
     state_pairs = []
-
     for i in range(len(rewards)):
         for j in range(i):
             state_pairs.append((max(abs(rewards[i]-rewards[j])),np.where(env.concepts[:,i] != env.concepts[:,j])[0]))
-
     state_pairs = [i for i in state_pairs if i[0] > target_abstraction]
+    
     m = gp.Model("fractional_lp")
     n = len(accuracy_by_concept)
-
-    # Variables: y[i] ≥ 0, t ≥ 0
     y = m.addVars(n, lb=0.0, name="y")
     t = m.addVar(lb=0.0, name="t")
 
-    # Objective: Maximize weighted sum
+    # Maximize average accuracy
     m.setObjective(gp.quicksum(accuracy_by_concept[i] * y[i] for i in range(n)), GRB.MAXIMIZE)
 
-    # Total weight constraint
+    # Ensure minimum coverage
     m.addConstr(gp.quicksum(y[i] for i in range(n)) == 1, name="normalize")
-
-    # Ensure t is ≥ each y[i]
     for i in range(n):
         m.addConstr(y[i] <= t, name=f"upper_bound_y_{i}")
-
-    # Coverage constraints from state_pairs
     for idx, pair in enumerate(state_pairs):
         m.addConstr(gp.quicksum(y[i] for i in pair[1]) >= t, name=f"coverage_{idx}_{pair}")
-
-    # Prevent Gurobi from treating model as infeasible-or-unbounded
     m.setParam(gp.GRB.Param.DualReductions, 0)
-
-    # Solve
     m.optimize()
 
-    # Handle infeasibility
     if m.status == gp.GRB.INFEASIBLE:
         print("Model is infeasible")
         m.computeIIS()

@@ -1,6 +1,4 @@
 from concept_abstraction.environments import TreeRepeatEnv, Cyclic4StateEnv
-import torch.nn.functional as F
-import torch
 import numpy as np
 
 
@@ -40,7 +38,8 @@ def get_baseline_concept_sets(environment_string,environment_nodes):
 def get_values(env, q_net, num_rollouts=10, max_steps=100, gamma=1):
     """
     Estimate V^{π}(s) for all states using rollouts from each state under the policy implied by q_net.
-    
+        Currently it does so with no discounting, but with average reward
+
     Args:
         env: The environment with .all_states and .state access.
         q_net: Trained Q-network (maps obs to Q-values).
@@ -62,24 +61,20 @@ def get_values(env, q_net, num_rollouts=10, max_steps=100, gamma=1):
                 env.unwrapped.state = s
             except AttributeError:
                 raise AttributeError("env must support setting env.unwrapped.state directly")
-            discounted_reward = 0.0
-            discount = 1 
+            total_reward = 0.0
             done = False
             steps = 0
 
             while not done and steps < max_steps:
                 obs = env.get_observation()
-                obs_tensor = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
-                action, _states = q_net.predict(obs, deterministic=True)
-                old_state = env.state 
+                action, _ = q_net.predict(obs, deterministic=True)
                 obs, reward, done, _, _ = env.step(action)
 
-                discounted_reward += discount * reward
-                discount *= gamma
+                total_reward += reward
                 steps += 1
 
-            discounted_reward /= steps
-            total_return += discounted_reward
+            avg_reward = total_reward / steps
+            total_return += avg_reward
 
         values.append(total_return / num_rollouts)
 

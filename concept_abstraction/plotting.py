@@ -94,7 +94,8 @@ def plot_bar(ax,x_groups,y_values,y_errors,labels,formatting):
         assert formatting['color_palette'] in color_schemes
         assert len(color_schemes[formatting['color_palette']]) >= num_groups
 
-        colors = color_schemes[formatting['color_palette']][:max_bars_per_group]
+        colors = color_schemes[formatting['color_palette']][:num_groups]
+    print(len(colors),formatting['color_palette'],max_bars_per_group)
 
     if 'bar_width' not in formatting:
         formatting['bar_width'] = 0.25

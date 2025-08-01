@@ -15,8 +15,7 @@
 # %load_ext autoreload
 # %autoreload 2
 
-from start_line.plotting import *
-from concept_abstraction.training import train_model, MultiBinaryToBoxObsWrapper
+from concept_abstraction.training import train_model
 from concept_abstraction.selection import greedy_selection, random_selection, human_centered_selection
 from concept_abstraction.env_utils import *
 from concept_abstraction.utils import *
@@ -32,16 +31,16 @@ is_jupyter = 'ipykernel' in sys.modules
 # +
 if is_jupyter: 
     seed        = 43
-    environment_string = "tree"
-    environment_nodes = 3
+    environment_string = "cycle"
+    environment_nodes = 4
     show_baseline = True 
-    human_accuracy_by_concept = [0.5,0.5,0.5] 
-    target_abstraction = 0.1
-    out_folder = "exploration"
+    human_accuracy_by_concept = None 
+    target_abstraction = 0
+    out_folder = "synthetic"
     num_concepts_selected = 0
-    cbm_accuracy_by_concept = [0.5,0.5,0.5]  
-    human_reliance_by_concept = [0.5,0.5,0.5]  
-    reward_error = 0
+    cbm_accuracy_by_concept = None
+    human_reliance_by_concept =None
+    reward_error = 0.1
     transition_error = 0
 else:
     parser = argparse.ArgumentParser()
@@ -96,39 +95,44 @@ random.seed(seed)
 
 # ## Retrieving Concept Values
 
-values_by_concept = []
 baseline_concepts = get_baseline_concept_sets(environment_string,environment_nodes)
 results['baseline'] = {'concepts': baseline_concepts}
 env = create_environment_from_string(environment_string,environment_nodes,baseline_concepts[-1],None)
 
 
 def make_env_fn(concept_list,accuracies,reward_error=0,transition_error=0):
-    def m():
-        env = create_environment_from_string(environment_string, environment_nodes, concept_list, accuracies)
-        new_rewards = env.rewards+np.random.normal(0,reward_error,size=env.rewards.shape)
-        new_transitions = env.transitions+np.random.normal(0,transition_error,size=env.transitions.shape) 
-        if np.min(new_transitions) < 0:
-            new_transitions -= np.min(new_transitions)
-        for i in range(len(new_transitions)):
-            for j in range(len(new_transitions[i])):
-                new_transitions[i,j] /= np.sum(new_transitions[i,j])
-        
-        env.rewards = new_rewards 
-        env.transitions = new_transitions 
+    env = create_environment_from_string(environment_string, environment_nodes, concept_list, accuracies)
+    new_rewards = env.rewards+np.random.normal(0,reward_error,size=env.rewards.shape)
+    new_transitions = env.transitions+np.random.normal(0,transition_error,size=env.transitions.shape) 
+    if np.min(new_transitions) < 0:
+        new_transitions -= np.min(new_transitions)
+    for i in range(len(new_transitions)):
+        for j in range(len(new_transitions[i])):
+            new_transitions[i,j] /= np.sum(new_transitions[i,j])
+    
+    env.rewards = new_rewards 
+    env.transitions = new_transitions 
 
-        return MultiBinaryToBoxObsWrapper(env)
-    return m
+    return env
 
 
 if show_baseline:
+    values_by_concept = []
+    rewards = []
+    transitions = []
+
     for concept_list in baseline_concepts:
-        q_net = train_model(make_env_fn(concept_list,None))  # uses vectorized version internally
-        env = make_env_fn(concept_list,None)()  # get one env instance for evaluation
-        values_by_concept.append(get_values(env, q_net))
+        env = make_env_fn(concept_list,None,reward_error,transition_error)
+        model = train_model(env)
+        values_by_concept.append(get_values(env, model))
+        rewards.append(env.rewards.tolist())
+        transitions.append(env.transitions.tolist())
 
     results['baseline'] = {
         'concepts': baseline_concepts,
-        'values': values_by_concept
+        'values': values_by_concept,
+        'rewards': rewards, 
+        'transitions': transitions 
     }
 
 # ## Concept Selection
@@ -145,10 +149,10 @@ for k in range(1,num_concepts_selected+1):
         break 
     random_concepts = random_selection(env,k)
 
-    env = make_env_fn(random_concepts,None,reward_error,transition_error)()
-    q_net = train_model(make_env_fn(random_concepts,None,reward_error,transition_error))
+    env = make_env_fn(random_concepts,None,reward_error=reward_error,transition_error=transition_error)
+    model = train_model(env)
     selected_concepts.append(random_concepts)
-    values_by_random_concept.append(get_values(env,q_net))
+    values_by_random_concept.append(get_values(env,model))
     random_times.append(time.time()-start)
     rewards.append(env.rewards.tolist())
     transitions.append(env.transitions.tolist())
@@ -172,10 +176,10 @@ for k in range(1,num_concepts_selected+1):
     if k > len(env.concepts):
         break 
     greedy_concepts = greedy_selection(env,k)
-    env = make_env_fn(greedy_concepts,None,reward_error,transition_error)()
-    q_net = train_model(make_env_fn(greedy_concepts,None,reward_error,transition_error))
+    env = make_env_fn(greedy_concepts,None,reward_error=reward_error,transition_error=transition_error)
+    model = train_model(env)
     selected_concepts.append(greedy_concepts)
-    values_by_greedy_concept.append(get_values(env,q_net))
+    values_by_greedy_concept.append(get_values(env,model))
     greedy_times.append(time.time()-start)
     rewards.append(env.rewards.tolist())
     transitions.append(env.transitions.tolist())
@@ -189,52 +193,41 @@ results['greedy_selection'] = {
 }
 # -
 
-if human_accuracy_by_concept is not None: 
-    start = time.time()
-    concept_list = list(range(env.concepts.shape[0]))
-    env = create_environment_from_string(environment_string,environment_nodes,baseline_concepts[-1],None)
-
-    selected_concepts = human_centered_selection(env,human_accuracy_by_concept,target_abstraction)
-    selected_concepts = [concept_list[idx] for idx,i in enumerate(selected_concepts) if i>=0.5]
-    selected_accuracies = [human_accuracy_by_concept[idx] for idx,i in enumerate(selected_concepts) if i>=0.5]
-
-    env = create_environment_from_string(environment_string,environment_nodes,selected_concepts,human_accuracy_by_concept)
-    q_net = train_model(make_env_fn(selected_concepts,human_accuracy_by_concept))
-    human_perf = get_values(env,q_net)
-    results['human_selection'] = {
-        'accuracies': human_accuracy_by_concept,
-        'target': target_abstraction,
-        'concepts': selected_concepts,
-        'values': values_by_greedy_concept,
-        'time': [time.time()-start]
-    }
-
 # ## Performance under Uncertainty
 
-if human_accuracy_by_concept is not None:
-    values_error = [[] for _ in baseline_concepts]
+if human_accuracy_by_concept is not None or cbm_accuracy_by_concept is not None:
+    if human_accuracy_by_concept is None:
+        modified_acc_rate = cbm_accuracy_by_concept
+    elif cbm_accuracy_by_concept is None:
+        modified_acc_rate = human_accuracy_by_concept
+    else:
+        modified_acc_rate = [reliance_percent*human_acc + (1-reliance_percent)*machine_acc 
+                for human_acc,machine_acc,reliance_percent in zip(human_accuracy_by_concept,
+                                                                cbm_accuracy_by_concept,
+                                                                human_reliance_by_concept)]
 
-    for idx,concept_list in enumerate(baseline_concepts):
-        env = create_environment_from_string(environment_string,environment_nodes,concept_list,human_accuracy_by_concept)
-        q_net = train_model(make_env_fn(concept_list,human_accuracy_by_concept))
-        values_error[idx] = get_values(env,q_net)
-    results['uncertainty'] = {
-        'values': values_error,
-    }
+    selected_concepts = human_centered_selection(env,modified_acc_rate,target_abstraction)
+    selected_concepts = [idx for idx,i in enumerate(selected_concepts) if i>=0.5]
 
-if human_accuracy_by_concept is not None and cbm_accuracy_by_concept is not None:
-    values_error = [[] for _ in baseline_concepts]
-    modified_acc_rate = [reliance_percent*human_acc + (1-reliance_percent)*machine_acc 
-                    for human_acc,machine_acc,reliance_percent in zip(human_accuracy_by_concept,
-                                                                    cbm_accuracy_by_concept,
-                                                                    human_reliance_by_concept)]
+    env = make_env_fn(selected_concepts,modified_acc_rate)
+    model = train_model(env)
+    human_perf = get_values(env,model)
+
+    concepts = []
+    values_error = []
 
     for idx,concept_list in enumerate(baseline_concepts):
         env = create_environment_from_string(environment_string,environment_nodes,concept_list,modified_acc_rate)
         q_net = train_model(make_env_fn(concept_list,modified_acc_rate))
-        values_error[idx] = get_values(env,q_net)
+        concepts.append(concept_list)
+        values_error.append(get_values(env,q_net))
+
     results['uncertainty'] = {
         'values': values_error,
+        'concepts': concepts, 
+        'selected_concepts': selected_concepts,
+        'combined_accuracies': modified_acc_rate,
+        'combined_value': human_perf,
     }
 
 # ## Save Data
@@ -244,5 +237,3 @@ save_path = get_save_path(out_folder,save_name)
 delete_duplicate_results(out_folder,"",results)
 
 json.dump(results,open('../../results/'+save_path,'w'))
-
-
