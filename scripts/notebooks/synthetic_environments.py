@@ -30,17 +30,17 @@ is_jupyter = 'ipykernel' in sys.modules
 
 # +
 if is_jupyter: 
-    seed        = 43
+    seed        = 42
     environment_string = "cycle"
     environment_nodes = 4
-    show_baseline = True 
+    show_baseline = False 
     human_accuracy_by_concept = None 
-    target_abstraction = 0
+    target_abstraction = 0.1
     out_folder = "synthetic"
     num_concepts_selected = 0
-    cbm_accuracy_by_concept = None
+    cbm_accuracy_by_concept = [0.9,0.9,0.9]
     human_reliance_by_concept =None
-    reward_error = 0.1
+    reward_error = 0
     transition_error = 0
 else:
     parser = argparse.ArgumentParser()
@@ -95,9 +95,10 @@ random.seed(seed)
 
 # ## Retrieving Concept Values
 
-baseline_concepts = get_baseline_concept_sets(environment_string,environment_nodes)
-results['baseline'] = {'concepts': baseline_concepts}
-env = create_environment_from_string(environment_string,environment_nodes,baseline_concepts[-1],None)
+if environment_string == 'tree':
+    total_timesteps = 40000
+else:
+    total_timesteps = 10000
 
 
 def make_env_fn(concept_list,accuracies,reward_error=0,transition_error=0):
@@ -116,6 +117,10 @@ def make_env_fn(concept_list,accuracies,reward_error=0,transition_error=0):
     return env
 
 
+baseline_concepts = get_baseline_concept_sets(environment_string,environment_nodes)
+results['baseline'] = {'concepts': baseline_concepts}
+env = make_env_fn(baseline_concepts[-1],None)
+
 if show_baseline:
     values_by_concept = []
     rewards = []
@@ -123,7 +128,8 @@ if show_baseline:
 
     for concept_list in baseline_concepts:
         env = make_env_fn(concept_list,None,reward_error,transition_error)
-        model = train_model(env)
+        model = train_model(env,total_timesteps=total_timesteps)
+        env = make_env_fn(concept_list,None)
         values_by_concept.append(get_values(env, model))
         rewards.append(env.rewards.tolist())
         transitions.append(env.transitions.tolist())
@@ -150,8 +156,9 @@ for k in range(1,num_concepts_selected+1):
     random_concepts = random_selection(env,k)
 
     env = make_env_fn(random_concepts,None,reward_error=reward_error,transition_error=transition_error)
-    model = train_model(env)
+    model = train_model(env,total_timesteps=total_timesteps)
     selected_concepts.append(random_concepts)
+    env = make_env_fn(random_concepts,None)
     values_by_random_concept.append(get_values(env,model))
     random_times.append(time.time()-start)
     rewards.append(env.rewards.tolist())
@@ -177,8 +184,9 @@ for k in range(1,num_concepts_selected+1):
         break 
     greedy_concepts = greedy_selection(env,k)
     env = make_env_fn(greedy_concepts,None,reward_error=reward_error,transition_error=transition_error)
-    model = train_model(env)
+    model = train_model(env,total_timesteps=total_timesteps)
     selected_concepts.append(greedy_concepts)
+    env = make_env_fn(greedy_concepts,None)
     values_by_greedy_concept.append(get_values(env,model))
     greedy_times.append(time.time()-start)
     rewards.append(env.rewards.tolist())
@@ -210,17 +218,19 @@ if human_accuracy_by_concept is not None or cbm_accuracy_by_concept is not None:
     selected_concepts = [idx for idx,i in enumerate(selected_concepts) if i>=0.5]
 
     env = make_env_fn(selected_concepts,modified_acc_rate)
-    model = train_model(env)
+    model = train_model(env,total_timesteps=total_timesteps)
+    env = make_env_fn(selected_concepts,None)
     human_perf = get_values(env,model)
 
     concepts = []
     values_error = []
 
     for idx,concept_list in enumerate(baseline_concepts):
-        env = create_environment_from_string(environment_string,environment_nodes,concept_list,modified_acc_rate)
-        q_net = train_model(make_env_fn(concept_list,modified_acc_rate))
+        env = make_env_fn(concept_list,modified_acc_rate)
+        model = train_model(env,total_timesteps=total_timesteps)
         concepts.append(concept_list)
-        values_error.append(get_values(env,q_net))
+        env = make_env_fn(concept_list,None)
+        values_error.append(get_values(env,model))
 
     results['uncertainty'] = {
         'values': values_error,
