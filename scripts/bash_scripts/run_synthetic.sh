@@ -1,8 +1,8 @@
 #!/bin/bash 
-: > runs/error_tree.txt
-: > runs/error_cycle.txt
-LOGFILE_TREE=../../runs/error_tree.txt
-LOGFILE_CYCLE=../../runs/error_cycle.txt
+: > runs/logs/error_tree.txt
+: > runs/logs/error_cycle.txt
+LOGFILE_TREE=../../runs/logs/error_tree.txt
+LOGFILE_CYCLE=../../runs/logs/error_cycle.txt
 
 #### Cycle Environment
 

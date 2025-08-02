@@ -1,5 +1,4 @@
 *.egg-info
-results/*.json
-runs/*.txt
 */__pycache__
 results/
+runs/
