@@ -1,11 +1,10 @@
-from concept_abstraction.environments import TreeRepeatEnv, Cyclic4StateEnv
+from concept_abstraction.environments import TreeRepeatEnv, Cyclic4StateEnv, get_custom_binary_features, RewardPerturbationWrapper, ObservationSubsetWrapper, DiscretizeObservationWrapper, BinaryObservationSubsetWrapper, CustomBinaryFeatureWrapper, get_binary_subset_env
+from concept_abstraction.training import train_ppo_model
 import numpy as np
 import numpy as np
 import gymnasium as gym
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from typing import Callable
+import os 
+from stable_baselines3 import PPO
 
 
 def create_environment_from_string(environment_string,environment_nodes,concept_list,error):
@@ -24,6 +23,123 @@ def create_environment_from_string(environment_string,environment_nodes,concept_
     }
     
     return models_by_string[environment_string](environment_nodes,concept_list,error)
+
+def create_environment_from_string_real_world(environment_string,concept_list,accuracies=None,reward_error=0):
+    """Initialize an environment based on a string
+    
+    Arguments:
+        environment_string: String, e.g., tree or cycle
+        concept_list: List of concepts which are used to define the state
+        error: float, erorr in concept prediction
+    
+    Returns: Gymasium Environment"""
+
+    env = gym.make("CartPole-v1")
+
+    if environment_string == "cart_pole":
+        env = ObservationSubsetWrapper(env, indices=concept_list)
+        env.concepts = list(range(4))
+    elif environment_string == "cart_pole_binary":
+        env = DiscretizeObservationWrapper(env, bins_per_feature=4)
+        env = BinaryObservationSubsetWrapper(env, concept_list,accuracies)
+        env.concepts = list(range(16))
+    elif environment_string == "cart_pole_post_hoc":
+        golden_model = get_golden_model(environment_string)
+        env = get_binary_subset_env(golden_model, env, concept_list,accuracies=accuracies)
+    elif environment_string == "cart_pole_llm":
+        env = CustomBinaryFeatureWrapper(env)
+        env = BinaryObservationSubsetWrapper(env, concept_list,accuracies=accuracies)
+    else:
+        raise Exception("Environment {} not implemented".format(environment_string))
+    
+    if reward_error > 0:
+        env = RewardPerturbationWrapper(env,reward_error)
+
+    return env
+
+def get_all_concepts(environment_string):
+    """Get the list of all concepts from a string
+    
+    Arguments:
+        environment_string: String, e.g., tree or cycle
+    
+    Returns: List with indices into all concepts"""
+
+    if environment_string == "cart_pole":
+        return list(range(4))
+    elif environment_string == "cart_pole_binary":
+        return list(range(16))
+    elif environment_string == "cart_pole_post_hoc":
+        return list(range(16))
+    elif environment_string == "cart_pole_llm":
+        return list(range(16))
+    else:
+        raise Exception("Environment {} not implemented".format(environment_string))
+
+def get_golden_model(environment_string,reward_error=0):
+    """Get the optimal model for a given environment
+    
+    Arguments:
+        environment_string: String representing the environment
+            which we want to instantiate
+    
+    Returns: StableBaseline model"""
+
+    if "cart_pole" in environment_string:
+        model_path = f"../../models/cart_pole/cart_pole_{reward_error}.zip"
+        if os.path.exists(model_path):
+            print("Loading model from", model_path)
+            model = PPO.load(model_path)
+            return model 
+        else:
+            env = create_environment_from_string_real_world("cart_pole",[0,1,2,3],None,reward_error)
+            golden_model = train_ppo_model(env,total_timesteps=100000)
+            golden_model.save(model_path)
+            return golden_model 
+    else:
+        raise Exception("Environment {} not applicable for golden model".format(environment_string))
+
+def convert_env_state_to_concept(environment_string,env,state):
+    """Given a state as a 4-vector, convert this 
+        to a concept vector, depending on the representation
+    
+    Arguments:
+        environment_string: One of 
+            cart_pole
+            cart_pole_binary
+            cart_pole_post_hoc
+            cart_pole_llm
+        env: A gymnasium environment
+        state: 4 tuple state in CartPole
+
+    Returns: Vector representing the 
+        corresponding concept(s)"""
+
+    if environment_string == "cart_pole_binary":
+        bins_per_feature = 4
+        n_features =  4
+        bin_edges = [
+            np.linspace(-4.8, 4.8, bins_per_feature + 1),         # Cart position
+            np.linspace(-3.0, 3.0, bins_per_feature + 1),         # Cart velocity
+            np.linspace(-0.418, 0.418, bins_per_feature + 1),     # Pole angle
+            np.linspace(-3.5, 3.5, bins_per_feature + 1)          # Pole angular velocity
+        ]
+
+        binary_obs = np.zeros(n_features * bins_per_feature, dtype=np.int8)
+        for i in range(n_features):
+            bin_index = np.digitize(state[i], bin_edges[i]) - 1
+            bin_index = np.clip(bin_index, 0, bins_per_feature - 1)
+            offset = i * bins_per_feature
+            binary_obs[offset + bin_index] = 1
+        return binary_obs
+    elif environment_string == "cart_pole_post_hoc":
+        observation_2d = state.reshape(1, -1)
+        binary_obs = env.feature_extractor.convert_to_binary(observation_2d)
+        return binary_obs[0]
+    elif environment_string == "cart_pole_llm":
+        return get_custom_binary_features(state)
+    else:
+        return state 
 
 def get_baseline_concept_sets(environment_string,environment_nodes):
     """Retrieve a list of potential concept sets from a string
@@ -113,6 +229,7 @@ def get_average_reward(env,model):
     total_reward /= 10000
     return total_reward
 
+
 def list_to_string(obs):
     """Convert a list of numbers to its string concatenated version
     
@@ -123,26 +240,28 @@ def list_to_string(obs):
 
     return " ".join([str(j) for j in list(obs)])
 
-def get_observed_transition(model,env):
-    """Given an environment, get the observed transition matrix
+def get_transition_reward_rollout(model,env,restarts=10,steps=1000):
+    """Given an environment, run a series of rollouts
+        to get the transition and rewards
         
     Arguments:
         model: Object with 'predict' function
         env: Gymnasium environment
     
-    Returns: Matrix of size State x Action x State"""
+    Returns: Two things: transitions, a dictionary
+        mapping states (as tuples) to a dictionary
+        mapping actions -> next state (as a tuple)
+        And Reward, a dictionary mapping states
+            to rewards"""
 
     transition_dict = {}
     reward_dict = {}
 
-    for restart in range(10):
-        observation, info = env.reset()
-        for _ in range(1000):
-            # Random action: 0 (left) or 1 (right)
+    for _ in range(restarts):
+        observation, _ = env.reset()
+        for _ in range(steps):
             action = model.predict(observation)[0]
-
-            # Take a step in the environment
-            next_observation, reward, terminated, truncated, info = env.step(action)
+            next_observation, reward, terminated, truncated, _ = env.step(action)
             
             action_string = str(action)
             obs_string = list_to_string(observation)
@@ -158,179 +277,20 @@ def get_observed_transition(model,env):
                 reward_dict[obs_string][action_string] = reward
 
             transition_dict[obs_string][(action_string,next_obs_string)] += 1
-
             observation = next_observation
-            
-            # End episode if done
             if terminated or truncated:
                 break
     return transition_dict, reward_dict
 
-class SimpleQEstimator:
-    """
-    Simple neural network Q-function estimator for continuous state spaces.
-    Uses Monte Carlo returns as training targets.
-    """
+def get_recordable(env):
+    """Add recording and save the recording to logs/videos
     
-    def __init__(self, state_dim: int, action_dim: int, policy: Callable):
-        self.policy = policy
-        
-        # Simple 3-layer neural network
-        self.q_network = nn.Sequential(
-            nn.Linear(state_dim + action_dim, 64),
-            nn.ReLU(),
-            nn.Linear(64, 64),
-            nn.ReLU(),
-            nn.Linear(64, 1)
-        )
-        
-        self.optimizer = optim.Adam(self.q_network.parameters(), lr=0.001)
-        self.loss_fn = nn.MSELoss()
+    Arguments:
+        env: Gymnasium environment
     
-    def collect_and_train(self, env: gym.Env, num_episodes: int = 100, gamma: float = 0.99):
-        """Collect episodes and train Q-network in one go"""
-        print(f"Collecting {num_episodes} episodes and training...")
-        
-        all_transitions = []
-        
-        # Collect episodes
-        for ep in range(num_episodes):
-            if ep % 10 == 0:
-                print(f"Episode {ep}/{num_episodes}")
-            
-            state, _ = env.reset()
-            episode_transitions = []
-            
-            # Run episode
-            while True:
-                action = self.policy.predict(state)[0]
-                next_state, reward, terminated, truncated, _ = env.step(action)
-                
-                episode_transitions.append({
-                    'state': state,
-                    'action': [action],
-                    'reward': reward
-                })
-                
-                state = next_state
-                if terminated or truncated:
-                    break
-            
-            # Calculate returns (Monte Carlo targets)
-            G = 0
-            for i in reversed(range(len(episode_transitions))):
-                G = episode_transitions[i]['reward'] + gamma * G
-                episode_transitions[i]['return'] = G
-            
-            all_transitions.extend(episode_transitions)
-        
-        # Train on all collected data
-        self._train_network(all_transitions)
+    Returns: Gymnasium Environment
     
-    def _train_network(self, transitions, batch_size: int = 256, epochs: int = 50):
-        """Train the Q-network"""
-        print("Training Q-network...")
-        
-        # Prepare training data
-        states = []
-        actions = []
-        returns = []
-        
-        for trans in transitions:
-            states.append(trans['state'])
-            actions.append(trans['action'])
-            returns.append(trans['return'])
-        
-        states = torch.FloatTensor(np.array(states))
-        actions = torch.FloatTensor(np.array(actions))
-        returns = torch.FloatTensor(returns)
-        
-        # Training loop
-        dataset_size = len(states)
-        for epoch in range(epochs):
-            total_loss = 0
-            num_batches = 0
-            
-            # Mini-batch training
-            for i in range(0, dataset_size, batch_size):
-                batch_states = states[i:i+batch_size]
-                batch_actions = actions[i:i+batch_size]
-                batch_returns = returns[i:i+batch_size].reshape((-1,1))
+    Side Effects: Wraps the environment for video recording"""
 
-                # Concatenate state and action
-                inputs = torch.cat([batch_states, batch_actions], dim=1)
-                
-                # Forward pass
-                predicted_q = self.q_network(inputs).squeeze()
-                loss = self.loss_fn(predicted_q, batch_returns)
-                
-                # Backward pass
-                self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
-                
-                total_loss += loss.item()
-                num_batches += 1
-            
-            if epoch % 10 == 0:
-                avg_loss = total_loss / num_batches
-                print(f"Epoch {epoch}, Average Loss: {avg_loss:.4f}")
-    
-    def get_q_value(self, state, action):
-        """Get Q-value for a state-action pair"""
-        state_tensor = torch.FloatTensor(state).unsqueeze(0)
-        action_tensor = torch.FloatTensor(action).unsqueeze(0)
-        input_tensor = torch.cat([state_tensor, action_tensor], dim=1)
-        
-        with torch.no_grad():
-            return self.q_network(input_tensor).item()
-    
-    def save(self, filename: str):
-        """Save the Q-network"""
-        torch.save(self.q_network.state_dict(), filename)
-        print(f"Q-network saved to {filename}")
-    
-    def load(self, filename: str):
-        """Load a saved Q-network"""
-        self.q_network.load_state_dict(torch.load(filename))
-        print(f"Q-network loaded from {filename}")
-
-
-# Example usage
-if __name__ == "__main__":
-    # Create environment
-    env = gym.make('Pendulum-v1')
-    
-    # Your golden_model policy (replace this with your actual policy)
-    def golden_model(state):
-        # Example: simple policy that tries to balance
-        # Replace this with your actual trained policy
-        return np.array([np.tanh(state[0] + state[1])])  # Simple heuristic
-    
-    # Get dimensions
-    state_dim = env.observation_space.shape[0]
-    action_dim = env.action_space.shape[0]
-    
-    print(f"State dimension: {state_dim}")
-    print(f"Action dimension: {action_dim}")
-    
-    # Create Q-function estimator
-    q_estimator = SimpleQEstimator(state_dim, action_dim, golden_model)
-    
-    # Collect episodes and train
-    q_estimator.collect_and_train(env, num_episodes=500)
-    
-    # Test the Q-function
-    state, _ = env.reset()
-    action = golden_model(state)
-    q_value = q_estimator.get_q_value(state, action)
-    
-    print(f"\nExample Q-value:")
-    print(f"State: {state}")
-    print(f"Action: {action}")
-    print(f"Q-value: {q_value:.4f}")
-    
-    # Save the trained Q-function
-    q_estimator.save("simple_q_function.pth")
-    
-    env.close()
+    env = gym.wrappers.RecordVideo(env, video_folder="../../runs/videos/", episode_trigger=lambda e: True)
+    return env 

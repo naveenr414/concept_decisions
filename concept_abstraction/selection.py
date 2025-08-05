@@ -72,7 +72,7 @@ def greedy_selection(env,num_concepts):
         total_concepts.append(selected_idx)
     return total_concepts 
 
-def greedy_selection_diverse(env,num_concepts,concept_list,state_maps,metric='std'):
+def greedy_selection_real_world(env,num_concepts,concept_list,state_maps,metric='std'):
     """Select {num_concepts} greedily
         by selecting those that reduce the reward range within each partition
         For example, first select the concept
@@ -82,7 +82,6 @@ def greedy_selection_diverse(env,num_concepts,concept_list,state_maps,metric='st
     Arguments:
         env: Gymasium environment
         num_concepts: Integer, number of concepts to select
-        state_list: List of states seen during rollout
         concept_list: Map of those states to concepts
         state_maps: Either the actions (\pi(s)), Q values ([Q(s,0),Q(s,1)], or reward/transition [Transition List for each concept])
             for each of the state seen
@@ -196,7 +195,7 @@ def human_centered_selection(env,accuracy_by_concept,target_abstraction):
     return np.array(x_vals)
 
 
-def human_centered_selection_diverse(env,accuracy_by_concept,target_abstraction,concept_list,state_maps,sample=10):
+def human_centered_selection_real_world(env,accuracy_by_concept,target_abstraction,concept_list,state_maps,sample=10):
     """Select concepts based on human skill
         Solve a fractional linear programming problem
         that optimizes for the average accuracy
@@ -208,7 +207,10 @@ def human_centered_selection_diverse(env,accuracy_by_concept,target_abstraction,
             humans for each concept
         target_abstraction: float, threshold for 
             range of concepts
-    
+            concept_list: Map of those states to concepts
+        state_maps: Either the actions (\pi(s)), Q values ([Q(s,0),Q(s,1)], or reward/transition [Transition List for each concept])
+            for each of the state seen
+
     Returns: List of size {num_concepts} of integers
         each representing a concept"""
     
