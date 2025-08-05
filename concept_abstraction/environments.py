@@ -248,9 +248,10 @@ class DiscretizeObservationWrapper(gym.ObservationWrapper):
 
 
 class BinaryObservationSubsetWrapper(gym.ObservationWrapper):
-    def __init__(self, env, indices):
+    def __init__(self, env, indices,accuracies):
         super().__init__(env)
         self.indices = indices
+        self.accuracies = accuracies
 
         if not isinstance(env.observation_space, gym.spaces.MultiBinary):
             raise ValueError("BinaryObservationSubsetWrapper requires MultiBinary observation space.")
@@ -263,7 +264,14 @@ class BinaryObservationSubsetWrapper(gym.ObservationWrapper):
         self.observation_space = gym.spaces.MultiBinary(len(indices))
 
     def observation(self, observation):
-        return observation[self.indices]
+        new_obs = observation[self.indices]
+
+        if self.accuracies is not None:
+            for idx,i in self.indices:
+                if np.random.random() > self.accuracies[i]:
+                    new_obs[idx] = 1-new_obs[idx]
+
+        return new_obs
 
 class CustomBinaryFeatureWrapper(gym.ObservationWrapper):
     """
@@ -285,10 +293,11 @@ class CustomBinaryFeatureWrapper(gym.ObservationWrapper):
     12: Is pole rotating fast? → |pole angular velocity| > 1.0
     """
     
-    def __init__(self, env):
+    def __init__(self, env,accuracies=None):
         super().__init__(env)
         self.observation_space = gym.spaces.MultiBinary(13)  # 13 binary features
-        
+        self.accuracies = accuracies
+
         # Feature names for reference
         self.feature_names = [
             "cart_near_center",      # 0
@@ -333,6 +342,11 @@ class CustomBinaryFeatureWrapper(gym.ObservationWrapper):
         binary_features[11] = int(pole_ang_vel > 0)            # pole rotating counterclockwise
         binary_features[12] = int(abs(pole_ang_vel) > 1.0)     # pole rotating fast
         
+        if accuracies is not None: 
+            for i in range(len(self.accuracies)):
+                if np.random.random() > self.accuracies[i]:
+                    binary_features[i] = 1-binary_features[i]
+
         return binary_features
     
     def get_feature_names(self):
@@ -360,21 +374,6 @@ def get_recordable(env):
     env = gym.wrappers.RecordVideo(env, video_folder="../../runs/videos/", episode_trigger=lambda e: True)
     return env 
 
-
-class BinaryObservationSubsetWrapper(gym.ObservationWrapper):
-    def __init__(self, env, indices):
-        super().__init__(env)
-        self.indices = indices
-        if not isinstance(env.observation_space, gym.spaces.MultiBinary):
-            raise ValueError("BinaryObservationSubsetWrapper requires MultiBinary observation space.")
-        orig_n = env.observation_space.n
-        if max(indices) >= orig_n:
-            raise ValueError("Subset indices exceed original observation length.")
-        # Define new observation space
-        self.observation_space = gym.spaces.MultiBinary(len(indices))
-    
-    def observation(self, observation):
-        return observation[self.indices]
 
 class CartPoleBinaryFeatureExtractor:
     def __init__(self, percentiles=[20, 40, 60, 80]):
@@ -643,7 +642,7 @@ def create_binary_feature_system(golden_model, env, percentiles=[20, 40, 60, 80]
     return extractor, binary_env, rankings
 
 # Minimum example to get binary subset environment
-def get_binary_subset_env(golden_model, env, indices):
+def get_binary_subset_env(golden_model, env, indices,accuracies=None):
     """
     Minimal function to get an environment that returns binary features at specified indices
     
@@ -663,7 +662,44 @@ def get_binary_subset_env(golden_model, env, indices):
     binary_env = BinaryFeatureEnvironmentWrapper(env, extractor)
     
     # Create subset environment with your specified indices
-    subset_env = BinaryObservationSubsetWrapper(binary_env, indices)
+    subset_env = BinaryObservationSubsetWrapper(binary_env, indices,accuracies=accuracies)
     
     return subset_env
 
+
+class RewardPerturbationWrapper(gym.Wrapper):
+    def __init__(self, env, noise_std=0.1):
+        super().__init__(env)
+        self.noise_std = noise_std
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        # Add Gaussian noise to reward
+        perturbed_reward = reward + np.random.normal(0, self.noise_std)
+        return obs, perturbed_reward, terminated, truncated, info
+
+def state_to_concepts(state,accuracies=None,binary=False,aggregated=False,llm=False):
+    if binary:
+        bins_per_feature = 4
+        n_features =  4
+
+        # Define bin edges for each feature (replace inf with reasonable bounds)
+        bin_edges = [
+            np.linspace(-4.8, 4.8, bins_per_feature + 1),         # Cart position
+            np.linspace(-3.0, 3.0, bins_per_feature + 1),         # Cart velocity
+            np.linspace(-0.418, 0.418, bins_per_feature + 1),     # Pole angle
+            np.linspace(-3.5, 3.5, bins_per_feature + 1)          # Pole angular velocity
+        ]
+
+        binary_obs = np.zeros(n_features * bins_per_feature, dtype=np.int8)
+        for i in range(n_features):
+            bin_index = np.digitize(state[i], bin_edges[i]) - 1
+            bin_index = np.clip(bin_index, 0, bins_per_feature - 1)
+            offset = i * bins_per_feature
+            binary_obs[offset + bin_index] = 1
+        return binary_obs
+    elif aggregated:
+        env = get_binary_subset_env(golden_model, env, concept_list,accuracies=accuracies)
+    elif llm:
+        env = CustomBinaryFeatureWrapper(env)
+        env = BinaryObservationSubsetWrapper(env, concept_list,accuracies=accuracies)

@@ -1,0 +1,43 @@
+\ Model fractional_lp_copy
+\ LP format - for model browsing. Use MPS format to capture full model detail.
+Maximize
+ 
+Subject To
+ normalize: y[0] + y[1] + y[2] + y[3] + y[4] + y[5] + y[6] + y[7] + y[8]
+   + y[9] + y[10] + y[11] + y[12] + y[13] + y[14] + y[15] = 1
+ upper_bound_y_0: y[0] - t <= 0
+ upper_bound_y_1: y[1] - t <= 0
+ upper_bound_y_2: y[2] - t <= 0
+ upper_bound_y_3: y[3] - t <= 0
+ upper_bound_y_4: y[4] - t <= 0
+ upper_bound_y_5: y[5] - t <= 0
+ upper_bound_y_6: y[6] - t <= 0
+ upper_bound_y_7: y[7] - t <= 0
+ upper_bound_y_8: y[8] - t <= 0
+ upper_bound_y_9: y[9] - t <= 0
+ upper_bound_y_10: y[10] - t <= 0
+ upper_bound_y_11: y[11] - t <= 0
+ upper_bound_y_12: y[12] - t <= 0
+ upper_bound_y_13: y[13] - t <= 0
+ upper_bound_y_14: y[14] - t <= 0
+ upper_bound_y_15: y[15] - t <= 0
+ coverage_8_(1,_array([],_dtype=int64)): - t >= 0
+Bounds
+ y[0] free
+ y[1] free
+ y[2] free
+ y[3] free
+ y[4] free
+ y[5] free
+ y[6] free
+ y[7] free
+ y[8] free
+ y[9] free
+ y[10] free
+ y[11] free
+ y[12] free
+ y[13] free
+ y[14] free
+ y[15] free
+ t free
+End
