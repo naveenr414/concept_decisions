@@ -3,6 +3,9 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from typing import Callable
+import numpy as np
+import gymnasium as gym
+
 
 def train_model(env,total_timesteps=10000):
     """Train an environment according to a stable baseline policy
@@ -50,16 +53,11 @@ class SimpleQEstimator:
         self.loss_fn = nn.MSELoss()
     
     def collect_and_train(self, env, num_episodes: int = 100, gamma: float = 0.99):
-        """Collect episodes and train Q-network in one go"""
-        print(f"Collecting {num_episodes} episodes and training...")
-        
+        """Collect episodes and train Q-network in one go"""        
         all_transitions = []
         
         # Collect episodes
-        for ep in range(num_episodes):
-            if ep % 10 == 0:
-                print(f"Episode {ep}/{num_episodes}")
-            
+        for ep in range(num_episodes):            
             state, _ = env.reset()
             episode_transitions = []
             
@@ -150,9 +148,7 @@ class SimpleQEstimator:
     def save(self, filename: str):
         """Save the Q-network"""
         torch.save(self.q_network.state_dict(), filename)
-        print(f"Q-network saved to {filename}")
     
     def load(self, filename: str):
         """Load a saved Q-network"""
         self.q_network.load_state_dict(torch.load(filename))
-        print(f"Q-network loaded from {filename}")

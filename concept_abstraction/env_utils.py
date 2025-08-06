@@ -38,11 +38,9 @@ def create_environment_from_string_real_world(environment_string,concept_list,ac
 
     if environment_string == "cart_pole":
         env = ObservationSubsetWrapper(env, indices=concept_list)
-        env.concepts = list(range(4))
     elif environment_string == "cart_pole_binary":
         env = DiscretizeObservationWrapper(env, bins_per_feature=4)
         env = BinaryObservationSubsetWrapper(env, concept_list,accuracies)
-        env.concepts = list(range(16))
     elif environment_string == "cart_pole_post_hoc":
         golden_model = get_golden_model(environment_string)
         env = get_binary_subset_env(golden_model, env, concept_list,accuracies=accuracies)
@@ -52,6 +50,8 @@ def create_environment_from_string_real_world(environment_string,concept_list,ac
     else:
         raise Exception("Environment {} not implemented".format(environment_string))
     
+    env.concepts = get_all_concepts(environment_string)
+
     if reward_error > 0:
         env = RewardPerturbationWrapper(env,reward_error)
 
@@ -72,7 +72,7 @@ def get_all_concepts(environment_string):
     elif environment_string == "cart_pole_post_hoc":
         return list(range(16))
     elif environment_string == "cart_pole_llm":
-        return list(range(16))
+        return list(range(13))
     else:
         raise Exception("Environment {} not implemented".format(environment_string))
 
@@ -88,7 +88,6 @@ def get_golden_model(environment_string,reward_error=0):
     if "cart_pole" in environment_string:
         model_path = f"../../models/cart_pole/cart_pole_{reward_error}.zip"
         if os.path.exists(model_path):
-            print("Loading model from", model_path)
             model = PPO.load(model_path)
             return model 
         else:

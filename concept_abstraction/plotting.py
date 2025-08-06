@@ -19,6 +19,7 @@ color_schemes = {
                 (0.596, 0.306, 0.639, 0.7),
                 (0.894, 0.102, 0.11, 0.7)], 
         }
+markers = [".","v","^","s","*","x"]
 
 def get_or_none(d,key):
     """Helper function to either retunr None or the value of a key
@@ -448,9 +449,13 @@ def create_legend(fig,ax,plot_dimensions,formatting):
 
     if formatting['type'] == 'is_global':
         handles, labels = ax[0][0].get_legend_handles_labels()
-
         if get_or_none(formatting,'show_point'):
-            pass
+            handles, labels = ax[0][0].get_legend_handles_labels()
+            custom_lines = [Line2D([0], [0], color=handles[i].get_color(), linestyle=handles[i].get_linestyle(), marker=markers[i]) for i in range(len(handles))]
+            fig.legend(custom_lines, labels,loc=formatting['loc'],
+                ncol=formatting['ncol'],
+                bbox_to_anchor=formatting['bbox_to_anchor'],
+                fontsize=legend_size)
         else:
             fig.legend(handles, labels, loc=formatting['loc'],
                     ncol=formatting['ncol'],

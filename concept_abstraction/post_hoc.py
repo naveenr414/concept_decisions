@@ -1,7 +1,10 @@
-
 import gymnasium as gym
-from sklearn.metrics import accuracy_score
+import numpy as np
+import pandas as pd
+
 from sklearn.feature_selection import mutual_info_classif
+from sklearn.metrics import accuracy_score
+
 
 class BinaryFeatureEnvironmentWrapper(gym.ObservationWrapper):
     """Wrapper that converts CartPole observations to binary features"""
@@ -59,13 +62,7 @@ class CartPoleBinaryFeatureExtractor:
     
     def fit_thresholds(self, golden_model, env, n_samples=10000):
         """Learn thresholds for each feature based on training data"""
-        print("Generating training data for threshold learning...")
         states, actions = self._generate_training_data(golden_model, env, n_samples)
-        
-        print(f"State ranges:")
-        for i, name in enumerate(self.feature_names):
-            min_val, max_val = states[:, i].min(), states[:, i].max()
-            print(f"  {name}: [{min_val:.3f}, {max_val:.3f}]")
         
         # Calculate thresholds for each feature
         for feature_idx in range(len(self.feature_names)):
@@ -73,11 +70,9 @@ class CartPoleBinaryFeatureExtractor:
             thresholds = np.percentile(feature_values, self.percentiles)
             self.thresholds[feature_idx] = thresholds
             
-            print(f"\n{self.feature_names[feature_idx]} thresholds:")
             for i, (percentile, threshold) in enumerate(zip(self.percentiles, thresholds)):
                 feature_name = f"{self.feature_names[feature_idx]}_p{percentile}"
                 self.binary_feature_names.append(feature_name)
-                print(f"  {percentile}th percentile: {threshold:.3f}")
         
         return states, actions
     
@@ -128,7 +123,6 @@ class CartPoleBinaryFeatureExtractor:
         ranking_data = []
         for i, (name, score) in enumerate(zip(self.binary_feature_names, scores)):
             orig_feature = "_p".join(name.split('_p')[0:-1])
-            print(name)
             percentile = int(name.split('_p')[-1])
             ranking_data.append({
                 'feature_idx': i,

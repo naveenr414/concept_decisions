@@ -270,7 +270,7 @@ class BinaryObservationSubsetWrapper(gym.ObservationWrapper):
         new_obs = observation[self.indices]
 
         if self.accuracies is not None:
-            for idx,i in self.indices:
+            for idx,i in enumerate(self.indices):
                 if np.random.random() > self.accuracies[i]:
                     new_obs[idx] = 1-new_obs[idx]
 
@@ -350,7 +350,7 @@ class CustomBinaryFeatureWrapper(gym.ObservationWrapper):
     def observation(self, observation):
         """Convert continuous observation to binary features"""
         binary_features = get_custom_binary_features(observation)
-        if accuracies is not None: 
+        if self.accuracies is not None: 
             for i in range(len(self.accuracies)):
                 if np.random.random() > self.accuracies[i]:
                     binary_features[i] = 1-binary_features[i]
