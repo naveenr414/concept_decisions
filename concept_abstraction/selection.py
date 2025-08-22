@@ -137,6 +137,62 @@ def greedy_selection_real_world(env,num_concepts,concept_list,state_maps,metric=
         total_concepts.append(selected_idx)
     return total_concepts 
 
+def greedy_selection_supervised(train_matrix,labels,num_concepts):
+    """Select {num_concepts} greedily
+        by selecting those that reduce the reward range within each partition
+        For example, first select the concept
+            so that, c_{i} = 0 and c_{i} = 1 each have
+                small differences between max and min reward
+
+    Arguments:
+        env: Gymasium environment
+        num_concepts: Integer, number of concepts to select
+    
+    Returns: List of size {num_concepts} of integers
+        each representing a concept"""
+
+    total_concepts = []
+    all_concepts = train_matrix.shape[1]
+    groups = [0 for i in range(len(labels))]
+
+    for _ in range(num_concepts):
+        scores_by_group = []
+        for k in range(all_concepts):
+            if k in total_concepts:
+                scores_by_group.append(np.inf)
+                continue   
+            total_groups = max(groups)
+            total_score = 0
+            for g in range(total_groups+1):
+                states_in_group = [i for i in range(len(groups)) if groups[i] == g]
+                partition_0 = [i for i in states_in_group if train_matrix[i][k] == 0]
+                rewards_0 = np.array([labels[i] for i in partition_0])
+                partition_1 = [i for i in states_in_group if train_matrix[i][k] == 1]
+                rewards_1 = np.array([labels[i] for i in partition_1])
+
+                total_score = 0 
+                
+                if len(rewards_0) > 0:
+                    total_score += float((1-np.max(np.bincount(rewards_0)) / len(rewards_0))*len(rewards_0))
+                if len(rewards_1) > 0:
+                    total_score += (1-np.max(np.bincount(rewards_1)) / len(rewards_1))*len(rewards_1)
+
+            scores_by_group.append(total_score)
+        selected_idx = int(np.argmin(scores_by_group))
+
+        total_groups = max(groups)
+        new_groups = max(groups)
+        for g in range(total_groups+1):
+            states_in_group = [i for i in range(len(groups))  if groups[i] == g]
+            partition_0 = [i for i in states_in_group if train_matrix[i][selected_idx] == 0]
+            partition_1 = [i for i in states_in_group if train_matrix[i][selected_idx] == 1]
+            if len(partition_0) > 0 and len(partition_1) > 0:
+                for i in partition_1:
+                    groups[i] = new_groups + 1
+                new_groups += 1
+        total_concepts.append(selected_idx)
+    return total_concepts 
+
 
 def human_centered_selection(env,accuracy_by_concept,target_abstraction):
     """Select concepts based on human skill

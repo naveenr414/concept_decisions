@@ -4,8 +4,46 @@ import numpy as np
 import pandas as pd
 from concept_abstraction.post_hoc import BinaryFeatureEnvironmentWrapper, CartPoleBinaryFeatureExtractor
 
+class ConceptEnv(gym.Env):
+    """Build a new concept-based environment"""
 
-class Cyclic4StateEnv(gym.Env):
+    def __init__(self,concept_list,observation_space,action_space,reward,transitions,all_states,max_steps):
+        super().__init__()
+
+        self.concept_list = concept_list 
+        self.observation_space = observation_space
+        self.action_space = action_space
+        self.reward = reward 
+        self.transitions = transitions 
+        self.max_steps = max_steps 
+        self.all_states = all_states 
+        self.steps = 0
+
+    def get_observation(self):
+        return np.array([concept(self.state) for concept in self.concept_list])
+
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+        self.state = np.random.choice(self.states)
+        self.steps = 0
+        return self.get_observation(), {}
+
+    def step(self, action):
+        reward = self.rewards[self.state][action]
+        self.state = np.random.choice(self.all_states, p=self.transitions[self.state][action])        
+        obs = self.get_observation()
+
+        self.steps += 1
+        done = self.steps >= self.max_steps
+        return obs, reward, done, False, {}
+
+    def render(self):
+        pass 
+
+    def close(self):
+        pass
+
+def create_cyclic_env(num_nodes,concept_list):
     """Simple Environment that captures a cyclic structure between states
     0 -> 1 -> 2 -> 3 -> 0
     
@@ -20,88 +58,37 @@ class Cyclic4StateEnv(gym.Env):
         [0,3],[1,2]
         [0,1,2], [3]"""
 
-    metadata = {"render_modes": ["human"], "render_fps": 4}
+    environment_nodes = num_nodes 
+    action_space = spaces.Discrete(3)
+    observation_space = spaces.MultiBinary(len(concept_list))
+    all_states = list(range(environment_nodes))
+    max_steps = 20
 
-    def __init__(self,environment_nodes,concept_list=[],acc_by_concept=None):
-        super().__init__()
-        self.environment_nodes = environment_nodes 
-        self.concept_list = sorted(concept_list)
-        self.acc_by_concept = acc_by_concept 
+    rewards = np.zeros((environment_nodes,3)) 
+    for i in range(environment_nodes):
+        if i%2 == 0:
+            rewards[i,0] = rewards[i,1] = 1
+        else:
+            rewards[i,2] = 1
+    rewards = np.array(rewards)
 
-        self.observation_space = spaces.MultiBinary(len(self.concept_list))
-        self.action_space = spaces.Discrete(3)
-        self.all_states = list(range(environment_nodes))
-        self.max_steps = 20
-        self.state = np.random.randint(0,self.environment_nodes)
-        self.steps = 0
+    transitions = []
+    for i in range(len(all_states)):
+        transitions_by_state = []
+        for action in range(3):
+            next_probs = [0.0 for i in range(len(all_states))]
+            if action == 0:
+                next_probs[(i - 1) % environment_nodes] = 1.0
+            if action == 1:
+                next_probs[(i + 1) % environment_nodes] = 1.0
+            if action == 2:
+                next_probs[(i) % environment_nodes] = 1.0
+            transitions_by_state.append(next_probs)
+        transitions.append(transitions_by_state)
+    transitions = np.array(transitions)
+    return ConceptEnv(concept_list,observation_space,action_space,rewards,transitions,all_states,max_steps)
 
-        self.rewards = np.zeros((environment_nodes,3)) 
-        for i in range(environment_nodes):
-            if i%2 == 0:
-                self.rewards[i,0] = self.rewards[i,1] = 1
-            else:
-                self.rewards[i,2] = 1
-        self.rewards = np.array(self.rewards)
-
-        self.transitions = []
-        for i in range(len(self.all_states)):
-            transitions_by_state = []
-            for action in range(self.action_space.n):
-                next_probs = [0.0 for i in range(len(self.all_states))]
-                if action == 0:
-                    next_probs[(i - 1) % self.environment_nodes] = 1.0
-                if action == 1:
-                    next_probs[(i + 1) % self.environment_nodes] = 1.0
-                if action == 2:
-                    next_probs[(i) % self.environment_nodes] = 1.0
-                transitions_by_state.append(next_probs)
-            self.transitions.append(transitions_by_state)
-        self.transitions = np.array(self.transitions)
-
-        self.concepts = []
-        for i in range(2,environment_nodes+1):
-            concept_vals = [int((j+1)%i == 0) for j in range(environment_nodes)]
-            self.concepts.append(concept_vals)
-        self.concepts = np.array(self.concepts)
-        
-    def get_observation(self):
-        current_concepts = self.concepts[self.concept_list,self.state].copy()
-        for i in range(len(current_concepts)):
-            concept_num = self.concept_list[i]
-            if self.acc_by_concept is not None and np.random.random() > self.acc_by_concept[concept_num]:
-                current_concepts[i] = 1-current_concepts[i]         
-        return current_concepts 
-
-    def reset(self, seed=None, options=None):
-        super().reset(seed=seed)
-        self.state = np.random.randint(0,self.environment_nodes)
-        self.steps = 0
-        return self.get_observation(), {}
-
-    def step(self, action):
-        # Reward
-        reward = self.rewards[self.state][action]
-
-        # State 
-        next_state_probs = self.transitions[self.state][action]
-        self.state = np.random.choice(self.all_states, p=next_state_probs)        
-        
-        # Observation
-        obs = self.get_observation()
-
-        # Termination
-        self.steps += 1
-        done = self.steps >= self.max_steps
-        return obs, reward, done, False, {}
-
-    def render(self):
-        pass 
-
-    def close(self):
-        pass
-
-
-class TreeRepeatEnv(gym.Env):
+def create_tree_env(num_nodes,concept_list):
     """Simple Environment that captures a tree structure between states
     0 -> (1,2)
     1 -> (3,4)
@@ -121,90 +108,34 @@ class TreeRepeatEnv(gym.Env):
         2nd Digit: [0,1,4,5],...
         etc."""
 
+    environment_nodes = num_nodes 
+    concept_list = sorted(concept_list)
+    acc_by_concept = acc_by_concept 
+    num_layers = int(np.log2(environment_nodes+1))
+    all_states = list(range(environment_nodes))
+    action_space = spaces.Discrete(2)
+    observation_space = spaces.MultiBinary(len(concept_list))
+    max_steps = 20
 
-    def __init__(self,environment_nodes,concept_list=[],acc_by_concept=None):
-        super().__init__()
-        self.environment_nodes = environment_nodes 
-        self.concept_list = sorted(concept_list)
-        self.acc_by_concept = acc_by_concept 
+    rewards = np.zeros((environment_nodes,action_space.n))
+    for i in range(num_layers):
+        rewards[2**i-1][0] = 1
+    rewards[:,1] = 0.5
 
-        self.num_layers = int(np.log2(self.environment_nodes+1))
-        self.all_states = list(range(environment_nodes))
-        self.action_space = spaces.Discrete(2)
-        self.observation_space = spaces.MultiBinary(len(self.concept_list))
-        self.steps = 0
-        self.state = 0
-        self.max_steps = 20
-
-        self.rewards = np.zeros((self.environment_nodes,self.action_space.n))
-        for i in range(self.num_layers):
-            self.rewards[2**i-1][0] = 1
-        self.rewards[:,1] = 0.5
-
-        self.transitions = np.zeros((len(self.all_states),
-                                    self.action_space.n,
-                                    len(self.all_states)))
-        for state in range(len(self.transitions)):
-            for action in range(len(self.transitions[state])):
-                if state >= self.environment_nodes//2:
-                    if state == self.environment_nodes//2:
-                        self.transitions[state][action][0] = 1
-                    else:
-                        self.transitions[state][action][2] = 1
+    transitions = np.zeros((len(all_states),
+                                action_space.n,
+                                len(all_states)))
+    for state in range(len(transitions)):
+        for action in range(len(transitions[state])):
+            if state >= environment_nodes//2:
+                if state == environment_nodes//2:
+                    transitions[state][action][0] = 1
                 else:
-                    self.transitions[state][action][2 * (state+1) + action - 1] = 1
+                    transitions[state][action][2] = 1
+            else:
+                transitions[state][action][2 * (state+1) + action - 1] = 1
 
-        self.concepts = []
-        for i in range(self.num_layers):
-            curr_concept = []
-            for state in range(1,self.environment_nodes+1):
-                binary_rep = bin(state)[2:]
-                binary_rep = '0'*(self.num_layers-len(binary_rep)) + binary_rep
-                curr_concept.append(int(binary_rep[i]))
-            self.concepts.append(curr_concept)
-        final_concept = [0 for i in range(2**self.num_layers-1)]
-        for i in range(self.num_layers):
-            final_concept[2**i-1] = 1
-        self.concepts.append(final_concept)
-        self.concepts = np.array(self.concepts)
-
-    def get_observation(self):
-        current_concepts = self.concepts[self.concept_list,self.state].copy()
-
-        for i in range(len(current_concepts)):
-            concept_num = self.concept_list[i]
-            if self.acc_by_concept is not None and np.random.random() > self.acc_by_concept[concept_num]:
-                current_concepts[i] = 1-current_concepts[i]         
-        return current_concepts 
-
-    def reset(self, seed=None,options=None):
-        super().reset(seed=seed)
-        self.steps = 0
-        self.state = 0
-        return self.get_observation(), {}
-
-    def step(self, action): 
-        # Reward 
-        reward = self.rewards[self.state][action]
-
-        # State 
-        next_state_probs = self.transitions[self.state][action]
-        self.state = np.random.choice(self.all_states,p=next_state_probs)
-
-        # Observation
-        obs = self.get_observation()
-
-        # Termination
-        self.steps += 1
-        done = self.steps >= self.max_steps  
-
-        return obs, reward, done, False, {}
-
-    def render(self):
-        pass 
-
-    def close(self):
-        pass
+    return ConceptEnv(concept_list,observation_space,action_space,rewards,transitions,all_states,max_steps)
 
 class ObservationSubsetWrapper(gym.ObservationWrapper):
     """Wrapper to allow us to select subsets of observations

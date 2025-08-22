@@ -225,8 +225,27 @@ def get_average_reward(env,model):
             # End episode if done
             if terminated or truncated:
                 break
+    env.close()
     total_reward /= 10000
     return total_reward
+
+def get_average_reward_gym(env, model, n_episodes=10):
+    total_reward = 0
+    episode_count = 0
+
+    while episode_count < n_episodes:
+        obs = env.reset()  # VecEnv: returns batch of obs
+        done = [False] * env.num_envs
+
+        while not all(done):
+            action, _ = model.predict(obs, deterministic=True)
+            obs, rewards, dones, infos = env.step(action)
+            total_reward += sum(rewards)
+            done = dones
+        episode_count += 1
+
+    env.close()
+    return total_reward / n_episodes
 
 
 def list_to_string(obs):

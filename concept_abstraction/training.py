@@ -18,7 +18,7 @@ def train_model(env,total_timesteps=10000):
     model.learn(total_timesteps=total_timesteps, log_interval=4)
     return model 
 
-def train_ppo_model(env,total_timesteps=150_000):
+def train_ppo_model(env,total_timesteps=150_000,policy="MlpPolicy",batch_size=256, n_steps=128):
     """Train an environment according to a stable baseline policy
     
     Arguments:
@@ -26,7 +26,7 @@ def train_ppo_model(env,total_timesteps=150_000):
     
     Returns: Stable Baseline3 PPO Model"""
 
-    model = PPO("MlpPolicy", env, verbose=0)
+    model = PPO(policy, env, verbose=0)
     model.learn(total_timesteps=total_timesteps)  
     return model 
 
