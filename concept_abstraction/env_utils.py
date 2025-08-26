@@ -1,5 +1,3 @@
-from concept_abstraction.environments import TreeRepeatEnv, Cyclic4StateEnv, get_custom_binary_features, RewardPerturbationWrapper, ObservationSubsetWrapper, DiscretizeObservationWrapper, BinaryObservationSubsetWrapper, CustomBinaryFeatureWrapper, get_binary_subset_env
-from concept_abstraction.training import train_ppo_model
 import numpy as np
 import numpy as np
 import gymnasium as gym
@@ -7,55 +5,55 @@ import os
 from stable_baselines3 import PPO
 
 
-def create_environment_from_string(environment_string,environment_nodes,concept_list,error):
-    """Initialize an environment based on a string
+# def create_environment_from_string(environment_string,environment_nodes,concept_list,error):
+#     """Initialize an environment based on a string
     
-    Arguments:
-        environment_string: String, e.g., tree or cycle
-        concept_list: List of concepts which are used to define the state
-        error: float, erorr in concept prediction
+#     Arguments:
+#         environment_string: String, e.g., tree or cycle
+#         concept_list: List of concepts which are used to define the state
+#         error: float, erorr in concept prediction
     
-    Returns: Gymasium Environment"""
+#     Returns: Gymasium Environment"""
     
-    models_by_string = {
-        'tree': TreeRepeatEnv, 
-        'cycle': Cyclic4StateEnv,
-    }
+#     models_by_string = {
+#         'tree': TreeRepeatEnv, 
+#         'cycle': Cyclic4StateEnv,
+#     }
     
-    return models_by_string[environment_string](environment_nodes,concept_list,error)
+#     return models_by_string[environment_string](environment_nodes,concept_list,error)
 
-def create_environment_from_string_real_world(environment_string,concept_list,accuracies=None,reward_error=0):
-    """Initialize an environment based on a string
+# def create_environment_from_string_real_world(environment_string,concept_list,accuracies=None,reward_error=0):
+#     """Initialize an environment based on a string
     
-    Arguments:
-        environment_string: String, e.g., tree or cycle
-        concept_list: List of concepts which are used to define the state
-        error: float, erorr in concept prediction
+#     Arguments:
+#         environment_string: String, e.g., tree or cycle
+#         concept_list: List of concepts which are used to define the state
+#         error: float, erorr in concept prediction
     
-    Returns: Gymasium Environment"""
+#     Returns: Gymasium Environment"""
 
-    env = gym.make("CartPole-v1")
+#     env = gym.make("CartPole-v1")
 
-    if environment_string == "cart_pole":
-        env = ObservationSubsetWrapper(env, indices=concept_list)
-    elif environment_string == "cart_pole_binary":
-        env = DiscretizeObservationWrapper(env, bins_per_feature=4)
-        env = BinaryObservationSubsetWrapper(env, concept_list,accuracies)
-    elif environment_string == "cart_pole_post_hoc":
-        golden_model = get_golden_model(environment_string)
-        env = get_binary_subset_env(golden_model, env, concept_list,accuracies=accuracies)
-    elif environment_string == "cart_pole_llm":
-        env = CustomBinaryFeatureWrapper(env)
-        env = BinaryObservationSubsetWrapper(env, concept_list,accuracies=accuracies)
-    else:
-        raise Exception("Environment {} not implemented".format(environment_string))
+#     if environment_string == "cart_pole":
+#         env = ObservationSubsetWrapper(env, indices=concept_list)
+#     elif environment_string == "cart_pole_binary":
+#         env = DiscretizeObservationWrapper(env, bins_per_feature=4)
+#         env = BinaryObservationSubsetWrapper(env, concept_list,accuracies)
+#     elif environment_string == "cart_pole_post_hoc":
+#         golden_model = get_golden_model(environment_string)
+#         env = get_binary_subset_env(golden_model, env, concept_list,accuracies=accuracies)
+#     elif environment_string == "cart_pole_llm":
+#         env = CustomBinaryFeatureWrapper(env)
+#         env = BinaryObservationSubsetWrapper(env, concept_list,accuracies=accuracies)
+#     else:
+#         raise Exception("Environment {} not implemented".format(environment_string))
     
-    env.concepts = get_all_concepts(environment_string)
+#     env.concepts = get_all_concepts(environment_string)
 
-    if reward_error > 0:
-        env = RewardPerturbationWrapper(env,reward_error)
+#     if reward_error > 0:
+#         env = RewardPerturbationWrapper(env,reward_error)
 
-    return env
+#     return env
 
 def get_all_concepts(environment_string):
     """Get the list of all concepts from a string
@@ -90,55 +88,13 @@ def get_golden_model(environment_string,reward_error=0):
         if os.path.exists(model_path):
             model = PPO.load(model_path)
             return model 
-        else:
-            env = create_environment_from_string_real_world("cart_pole",[0,1,2,3],None,reward_error)
-            golden_model = train_ppo_model(env,total_timesteps=100000)
-            golden_model.save(model_path)
-            return golden_model 
+        # else:
+        #     env = create_environment_from_string_real_world("cart_pole",[0,1,2,3],None,reward_error)
+        #     golden_model = train_ppo_model(env,total_timesteps=100000)
+        #     golden_model.save(model_path)
+        #     return golden_model 
     else:
         raise Exception("Environment {} not applicable for golden model".format(environment_string))
-
-def convert_env_state_to_concept(environment_string,env,state):
-    """Given a state as a 4-vector, convert this 
-        to a concept vector, depending on the representation
-    
-    Arguments:
-        environment_string: One of 
-            cart_pole
-            cart_pole_binary
-            cart_pole_post_hoc
-            cart_pole_llm
-        env: A gymnasium environment
-        state: 4 tuple state in CartPole
-
-    Returns: Vector representing the 
-        corresponding concept(s)"""
-
-    if environment_string == "cart_pole_binary":
-        bins_per_feature = 4
-        n_features =  4
-        bin_edges = [
-            np.linspace(-4.8, 4.8, bins_per_feature + 1),         # Cart position
-            np.linspace(-3.0, 3.0, bins_per_feature + 1),         # Cart velocity
-            np.linspace(-0.418, 0.418, bins_per_feature + 1),     # Pole angle
-            np.linspace(-3.5, 3.5, bins_per_feature + 1)          # Pole angular velocity
-        ]
-
-        binary_obs = np.zeros(n_features * bins_per_feature, dtype=np.int8)
-        for i in range(n_features):
-            bin_index = np.digitize(state[i], bin_edges[i]) - 1
-            bin_index = np.clip(bin_index, 0, bins_per_feature - 1)
-            offset = i * bins_per_feature
-            binary_obs[offset + bin_index] = 1
-        return binary_obs
-    elif environment_string == "cart_pole_post_hoc":
-        observation_2d = state.reshape(1, -1)
-        binary_obs = env.feature_extractor.convert_to_binary(observation_2d)
-        return binary_obs[0]
-    elif environment_string == "cart_pole_llm":
-        return get_custom_binary_features(state)
-    else:
-        return state 
 
 def get_baseline_concept_sets(environment_string,environment_nodes):
     """Retrieve a list of potential concept sets from a string

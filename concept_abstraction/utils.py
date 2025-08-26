@@ -162,3 +162,17 @@ def aggregate_normalize_data(results,baseline=None):
                         data_point[key][0] /= float(avg_by_type[data_type])
 
     return aggregate_data(results_copy)
+
+
+def one_hot_state(state,n_states):
+    """Helper function to one hot encode a state given a total # of states
+    
+    Arguments:
+        state: Integer, the state identifier number
+        n_states: Total number of states, integer
+    
+    Returns: One-Hot vector of size n_states"""
+
+    vec = np.zeros(n_states, dtype=np.float32)
+    vec[state] = 1.0
+    return vec
