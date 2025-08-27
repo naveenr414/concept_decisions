@@ -21,7 +21,7 @@ def get_average_reward(env,model):
         observation, info = env.reset()
         for _ in range(1000):
             # Random action: 0 (left) or 1 (right)
-            action = model.predict(observation[None,:])[0]
+            action = model.predict(observation)[0]
 
             # Take a step in the environment
             observation, reward, terminated, truncated, info = env.step(action)

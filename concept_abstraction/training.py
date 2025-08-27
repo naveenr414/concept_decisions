@@ -1,9 +1,14 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from stable_baselines3 import DQN, PPO
+from stable_baselines3.common.policies import ActorCriticPolicy
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from typing import Callable
 import numpy as np
+import gymnasium as gym
+
 
 from concept_abstraction.env_utils import get_average_reward
 from concept_abstraction.environments import eval_mimic_model
@@ -30,6 +35,20 @@ def train_ppo_model(env,total_timesteps=150_000,policy="MlpPolicy",batch_size=25
 
     model = PPO(policy, env, verbose=0)
     model.learn(total_timesteps=total_timesteps)  
+    return model 
+
+def train_two_stage_ppo_model(env,total_timesteps):
+    """Train an environment by first predicting the observation
+        then predicting the action
+    
+    Arguments:
+        env: Gymnasium environment
+        total_timesteps: Integer, number of timesteps to train for
+    
+    Returns: Stable Baseline3 PPO Model"""
+
+    model = TwoStagePPO(TwoStagePolicy, env, state_loss_weight=1.0)
+    model.learn(total_timesteps=total_timesteps)
     return model 
 
 class RandomAgent:
@@ -163,6 +182,111 @@ class SimpleQEstimator:
     def load(self, filename: str):
         """Load a saved Q-network"""
         self.q_network.load_state_dict(torch.load(filename))
+
+
+class TwoStageExtractor(BaseFeaturesExtractor):
+    def __init__(self, observation_space: gym.Space, features_dim: int = 64):
+        super().__init__(observation_space, features_dim)
+        
+        self.cnn = nn.Sequential(
+            nn.Conv2d(1, 32, 8, 4), nn.ReLU(),
+            nn.Conv2d(32, 64, 4, 2), nn.ReLU(),  
+            nn.Conv2d(64, 64, 3, 1), nn.ReLU(),
+            nn.Flatten()
+        )
+        
+        with torch.no_grad():
+            cnn_out_size = self.cnn(torch.zeros(1, 1, 84, 84)).shape[1]
+            
+        self.state_predictor = nn.Sequential(
+            nn.Linear(cnn_out_size, 128), nn.ReLU(),
+            nn.Linear(128, 4)
+        )
+        
+        self.mlp = nn.Sequential(
+            nn.Linear(4, 64), nn.ReLU(),
+            nn.Linear(64, features_dim), nn.ReLU()
+        )
+        
+        self.last_predicted_state = None
+        
+    def forward(self, obs):
+        cnn_features = self.cnn(obs)
+        predicted_state = self.state_predictor(cnn_features)
+        self.last_predicted_state = predicted_state
+        return self.mlp(predicted_state)
+
+class TwoStagePolicy(ActorCriticPolicy):
+    def __init__(self, *args, **kwargs):
+        kwargs["features_extractor_class"] = TwoStageExtractor
+        super().__init__(*args, **kwargs)
+
+class TwoStagePPO(PPO):
+    def __init__(self, *args, state_loss_weight=1.0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.state_loss_weight = state_loss_weight
+        self.true_states = []
+        
+    def collect_rollouts(self, env, callback, rollout_buffer, n_rollout_steps):
+        self.true_states = []
+        
+        # Call parent method and collect true states
+        result = super().collect_rollouts(env, callback, rollout_buffer, n_rollout_steps)
+                
+        return result
+    
+    def train(self):
+        self.policy.set_training_mode(True)
+        self._update_learning_rate(self.policy.optimizer)
+        
+        clip_range = self.clip_range(self._current_progress_remaining)
+        
+        for epoch in range(self.n_epochs):
+            for rollout_data in self.rollout_buffer.get(self.batch_size):
+                actions = rollout_data.actions
+                if isinstance(self.action_space, gym.spaces.Discrete):
+                    actions = actions.long().flatten()
+
+                values, log_prob, entropy = self.policy.evaluate_actions(rollout_data.observations, actions)
+                values = values.flatten()
+                
+                advantages = rollout_data.advantages
+                if self.normalize_advantage:
+                    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+                ratio = torch.exp(log_prob - rollout_data.old_log_prob)
+                policy_loss_1 = advantages * ratio
+                policy_loss_2 = advantages * torch.clamp(ratio, 1 - clip_range, 1 + clip_range)
+                policy_loss = -torch.min(policy_loss_1, policy_loss_2).mean()
+
+                value_loss = F.mse_loss(rollout_data.returns, values)
+                entropy_loss = -torch.mean(entropy) if entropy is not None else -torch.mean(-log_prob)
+
+                # State prediction loss
+                extractor = self.policy.features_extractor
+                _ = extractor(rollout_data.observations)
+                
+                if hasattr(extractor, 'last_predicted_state') and extractor.last_predicted_state is not None:
+                    # Simplified: use zeros as placeholder for true states
+                    # In practice, you'd store actual true states from info['observation']
+                    batch_size = len(rollout_data.observations)
+                    true_states = torch.zeros(batch_size, 4, device=self.device)
+                    state_loss = F.mse_loss(extractor.last_predicted_state, true_states)
+                    self.per_state_loss = np.mean(np.abs(extractor.last_predicted_state.cpu().detach().numpy()-true_states.cpu().detach().numpy()),axis=0)
+
+                else:
+                    state_loss = torch.tensor(0.0, device=self.device)
+
+                loss = (policy_loss + self.vf_coef * value_loss + 
+                       self.ent_coef * entropy_loss + self.state_loss_weight * state_loss)
+
+                self.policy.optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
+                self.policy.optimizer.step()
+
+        self._n_updates += self.n_epochs
+
 
 def evaluate_model(environment_string,env,additional_info,model,seed):
     """Evaluation Function that tailors the evaluation

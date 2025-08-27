@@ -45,9 +45,24 @@ class ConceptEnv(gym.Env):
         super().reset(seed=seed)
         self.state = np.random.choice(self.all_states,p=self.state_distro)
         self.steps = 0
-        return self.get_observation(), {}
+        return self.get_observation(), {'observation': self.state}
+
+    def is_scalar_like(self,x):
+        # Python int or NumPy integer scalar
+        if isinstance(x, (int, np.integer)):
+            return True
+        
+        # 0-d NumPy array
+        if isinstance(x, np.ndarray) and x.shape == ():
+            return True
+        
+        return False
+
 
     def step(self, action):
+        if not self.is_scalar_like(action):
+            action = action[0]
+
         reward = self.rewards[self.state][action]
         if np.sum(self.transitions[self.state][action]) == 0:
             reward = -10
@@ -57,7 +72,7 @@ class ConceptEnv(gym.Env):
         obs = self.get_observation()
 
         done = self.steps >= self.max_steps or self.done_map(self.state)
-        return obs, reward, done, False, {}
+        return obs, reward, done, False, {'observation': self.state}
 
     def render(self):
         pass 
@@ -77,7 +92,7 @@ class ConceptWrapper(gym.ObservationWrapper):
         return self._process(obs), {'observation': obs}
 
     def observation(self, obs):
-        processed = self._process(obs)
+        processed = np.array(self._process(obs))
         return processed
 
     def step(self, action):
@@ -178,6 +193,29 @@ class RewardPerturbationWrapper(gym.Wrapper):
         perturbed_reward = reward + np.random.normal(0, self.noise_std)
         return obs, perturbed_reward, terminated, truncated, info
 
+    def reset(self, **kwargs):
+        if "seed" in kwargs or "options" in kwargs:
+            return self.env.reset()
+        return self.env.reset(**kwargs)
+
+class InfoTransformWrapper(gym.Wrapper):
+    """
+    Wrap an environment and transform the `info` dict
+    according to a user-provided function.
+    """
+    def __init__(self, env, concept_list):
+        super().__init__(env)
+        self.concept_list = concept_list
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        info['observation'] = [concept(info['observation']) for concept in self.concept_list]
+        return obs, info
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        info['observation'] = [concept(info['observation']) for concept in self.concept_list]
+        return obs, reward, terminated, truncated, info
 
 
 def create_cyclic_env(num_nodes,concept_list):
@@ -197,7 +235,11 @@ def create_cyclic_env(num_nodes,concept_list):
 
     environment_nodes = num_nodes 
     action_space = spaces.Discrete(3)
-    observation_space = spaces.MultiBinary(len(concept_list))
+
+    if concept_list is None:
+        observation_space = spaces.Discrete(num_nodes)
+    else:
+        observation_space = spaces.MultiBinary(len(concept_list))
     all_states = list(range(environment_nodes))
     max_steps = 20
 
@@ -475,6 +517,19 @@ def make_ocenv(env_name,concept_list,observation_space,seed=0):
     env.reset(seed=seed)
     return env
 
+class LazyFramesToNumpy(gym.ObservationWrapper):
+    def __init__(self, env):
+        super().__init__(env)
+        self.observation_space = env.observation_space
+
+    def observation(self, obs):
+        obs = np.array(obs, copy=False)
+
+        if obs.ndim == 4 and obs.shape[1] == 1:
+            obs = obs.squeeze(1)
+        return obs
+
+
 def get_n_atari_env(n_envs,atari_env_name,concept_list,observation_space):
     """Create a series of parallel Atari environments 
     
@@ -498,6 +553,7 @@ def get_n_atari_env(n_envs,atari_env_name,concept_list,observation_space):
 
         if concept_list is None:
             env = FrameStack(env, num_stack=4)
+            env = LazyFramesToNumpy(env)
         vec_env = env
     return vec_env
 
@@ -546,7 +602,7 @@ def get_environment(environment_string,concept_list):
     elif environment_string == "cart_pole":
         if concept_list is None:
             env = gym.make("CartPole-v1",render_mode="rgb_array")
-            env = ConceptWrapper(env,None,spaces.Box(
+            env = eval_env = ConceptWrapper(env,None,spaces.Box(
                     low=0, high=255,
                     shape=(1,84,84),  # Height x Width, no color channel
                     dtype=np.uint8
@@ -564,7 +620,7 @@ def get_environment(environment_string,concept_list):
                 ))
             eval_env = get_n_atari_env(1,"BoxingNoFrameskip-v4",None,gym.spaces.Box(
                     low=0, high=255,
-                    shape=(1,84,84),  # Height x Width, no color channel
+                    shape=(84,84),  # Height x Width, no color channel
                     dtype=np.uint8
                 ))      
         else:
@@ -581,12 +637,11 @@ def get_environment(environment_string,concept_list):
                 ))        
             eval_env = get_n_atari_env(1,"PongNoFrameskip-v4",None,spaces.Box(
                     low=0, high=255,
-                    shape=(1,84,84),  # Height x Width, no color channel
+                    shape=(84,84),  # Height x Width, no color channel
                     dtype=np.uint8
                 ))        
         else:
             env = get_n_atari_env(8,"PongNoFrameskip-v4",concept_list,gym.spaces.Box(low=-255, high=255, shape=(len(concept_list),), dtype=np.float32))
             eval_env = get_n_atari_env(1,"PongNoFrameskip-v4",concept_list,gym.spaces.Box(low=-255, high=255, shape=(len(concept_list),), dtype=np.float32))
-        eval_env = eval_env.envs[0]
 
     return env, eval_env, additional_info

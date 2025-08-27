@@ -1,9 +1,18 @@
 import numpy as np
 import gurobipy as gp
-from gurobipy import GRB
+from gurobipy import Model, GRB, quicksum
 import scipy
+import gymnasium.spaces as spaces
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import r2_score
+from skopt import Optimizer
+from copy import deepcopy
 
 from concept_abstraction.env_utils import rollout_q_estimates
+from concept_abstraction.concept_bank import inaccurate_concepts_continuous
+from concept_abstraction.training import train_two_stage_ppo_model, evaluate_model
+from concept_abstraction.environments import InfoTransformWrapper
 
 
 def random_selection(concept_list,num_concepts):
@@ -39,96 +48,332 @@ def greedy_selection(env,concept_list,num_concepts_selected,reference_model,sele
     q_estimates = rollout_q_estimates(reference_model,env,concept_list)
     unique_actions = list(set([int(i[1]) for i in q_estimates]))
 
-    correlation_by_concept = []
-    if selection_function == "q_value":
-        for idx in range(len(concept_list)):
-            correlations = []
-            num_by_action = []
+    # Continuous
+    if type(env.observation_space) is spaces.Box:
+        correlation_by_concept = []
+        if selection_function == "q_value":
+            for idx in range(len(concept_list)):
+                correlations = []
+                num_by_action = []
 
-            for action in unique_actions:
-                x_y_pair = [(i[0][idx],i[2]) for i in q_estimates if int(i[1]) == action]
+                for action in unique_actions:
+                    x_y_pair = [(i[0][idx],i[2]) for i in q_estimates if int(i[1]) == action]
+                    x,y = zip(*x_y_pair)
+                    num_by_action.append(len(x))
+                    correlations.append(scipy.stats.pearsonr(x,y).statistic**2)
+                avg_correlation = np.sum(np.array(correlations)*np.array(num_by_action))/np.sum(num_by_action)
+                correlation_by_concept.append(avg_correlation)
+        elif selection_function == "policy":
+            for idx in range(len(concept_list)):
+                x_y_pair = [(i[0][idx],i[1]) for i in q_estimates]
                 x,y = zip(*x_y_pair)
-                num_by_action.append(len(x))
-                correlations.append(scipy.stats.pearsonr(x,y).statistic**2)
-            avg_correlation = np.sum(np.array(correlations)*np.array(num_by_action))/np.sum(num_by_action)
-            correlation_by_concept.append(avg_correlation)
-    elif selection_function == "policy":
-        for idx in range(len(concept_list)):
-            x_y_pair = [(i[0][idx],i[1]) for i in q_estimates]
-            x,y = zip(*x_y_pair)
-            avg_correlation = scipy.stats.pearsonr(x,y).statistic**2
-            correlation_by_concept.append(avg_correlation)
-    correlation_by_concept = np.array(correlation_by_concept)
-    idx = np.argpartition(-correlation_by_concept, num_concepts_selected)[:num_concepts_selected]
-    idx = idx[np.argsort(-correlation_by_concept[idx])]
-    concepts = [concept_list[i] for i in idx]
+                avg_correlation = scipy.stats.pearsonr(x,y).statistic**2
+                correlation_by_concept.append(avg_correlation)
+        correlation_by_concept = np.array(correlation_by_concept)
+        idx = np.argpartition(-correlation_by_concept, num_concepts_selected)[:num_concepts_selected]
+        idx = idx[np.argsort(-correlation_by_concept[idx])]
+        concepts = [concept_list[i] for i in idx]
+    else:
+        # TODO: Implement this
+        pass 
 
-    return concepts 
+    return concepts, idx
 
-def greedy_selection_real_world(env,num_concepts,concept_list,state_maps,metric='std'):
+
+def greedy_iterative_selection(env,concept_list,num_concepts_selected,reference_model,selection_function):
     """Select {num_concepts} greedily
-        by selecting those that reduce the reward range within each partition
-        For example, first select the concept
-            so that, c_{i} = 0 and c_{i} = 1 each have
-                small differences between max and min reward
-
+        by first learning the Q(s,a) values from a rollout
+        Then selecting the concepts that reduce the standard deviation 
+        across all partitions
+    
     Arguments:
         env: Gymasium environment
-        num_concepts: Integer, number of concepts to select
-        concept_list: Map of those states to concepts
-        state_maps: Either the actions (\pi(s)), Q values ([Q(s,0),Q(s,1)], or reward/transition [Transition List for each concept])
-            for each of the state seen
+        concept_list: List of functions
+        num_concepts_selected: Integer, number of concepts to select
+        reference_model: A policy that performs well
+            which we are trying to distill
+        selection_function: String, whether we're selecting according to 
+            Q value, etc."""
     
-    Returns: List of size {num_concepts} of integers
-        each representing a concept"""
+    q_estimates = rollout_q_estimates(reference_model,env,concept_list)
+    unique_actions = list(set([int(i[1]) for i in q_estimates]))
 
-    total_concepts = []
-    all_concepts = env.concepts
-    groups = [0 for i in range(len(concept_list))]
+    # Continuous
+    if type(env.observation_space) is spaces.Box:
+        curr_concepts = []
+        for _ in range(num_concepts_selected):
+            val_by_next_concept = []
+            for idx in range(len(concept_list)):
+                if idx in curr_concepts:
+                    val_by_next_concept.append(-10000)
+                else:
+                    if selection_function == "q_value":
+                        correlations = []
+                        num_by_action = []
 
-    for _ in range(num_concepts):
-        scores_by_group = []
-        for k in range(len(all_concepts)):
-            if k in total_concepts:
-                scores_by_group.append(np.inf)
-                continue   
-            total_groups = max(groups)
-            total_score = 0
-            for g in range(total_groups+1):
-                states_in_group = [i for i in range(len(groups)) if groups[i] == g]
-                partition_0 = [i for i in states_in_group if concept_list[i][k] == 0]
-                rewards_0 = np.array([state_maps[i] for i in partition_0])
-                partition_1 = [i for i in states_in_group if concept_list[i][k] == 1]
-                rewards_1 = np.array([state_maps[i] for i in partition_1])
+                        for action in unique_actions:
+                            X_list, y_list = [], []
+                            for i in q_estimates:
+                                if int(i[1]) == action:
+                                    features = [i[0][idx]] + [i[0][j] for j in curr_concepts]
+                                    X_list.append(features)
+                                    y_list.append(i[2])
 
-                if len(rewards_0) > 0:
-                    for action in range(len(rewards_0[0])):
-                        if metric == 'min_max':
-                            total_score = max(np.max(rewards_0[:,action])-np.min(rewards_0[:,action]),total_score) 
-                        elif metric == 'std':
-                            total_score = max(np.std(rewards_0[:,action]),total_score) 
+                            X = np.array(X_list)
+                            y = np.array(y_list)
+                            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=0)
 
-                if len(rewards_1) > 0:
-                    for action in range(len(rewards_1[0])):
-                        if metric == 'min_max':
-                            total_score = max(np.max(rewards_1[:,action])-np.min(rewards_1[:,action]),total_score) 
-                        elif metric == 'std':
-                            total_score = max(np.std(rewards_1[:,action]),total_score) 
-            scores_by_group.append(total_score)
-        selected_idx = int(np.argmin(scores_by_group))
+                            model = LinearRegression()
+                            model.fit(X_train, y_train)
+                            # Predict
+                            y_pred = model.predict(X_test)
+                            # Evaluate
+                            r2 = r2_score(y_test, y_pred)
+                            correlations.append(r2)
+                            num_by_action.append(len(X))
+                        avg_correlation = np.sum(np.array(correlations)*np.array(num_by_action))/np.sum(num_by_action)
+                        val_by_next_concept.append(avg_correlation)
+                    elif selection_function == "policy":
+                        X_list, y_list = [], []
+                        for i in q_estimates:
+                            features = [i[0][idx]] + [i[0][j] for j in curr_concepts]
+                            X_list.append(features)
+                            y_list.append(i[1])
 
-        total_groups = max(groups)
-        new_groups = max(groups)
-        for g in range(total_groups+1):
-            states_in_group = [i for i in range(len(groups)) if groups[i] == g]
-            partition_0 = [i for i in states_in_group if concept_list[i][selected_idx] == 0]
-            partition_1 = [i for i in states_in_group if concept_list[i][selected_idx] == 1]
-            if len(partition_0) > 0 and len(partition_1) > 0:
-                for i in partition_1:
-                    groups[i] = new_groups + 1
-                new_groups += 1
-        total_concepts.append(selected_idx)
-    return total_concepts 
+                        X = np.array(X_list)
+                        y = np.array(y_list)
+                        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=0)
+
+                        model = LinearRegression()
+                        model.fit(X_train, y_train)
+                        # Predict
+                        y_pred = model.predict(X_test)
+                        # Evaluate
+                        r2 = r2_score(y_test, y_pred)
+                        val_by_next_concept.append(r2)
+            curr_concepts.append(np.argmax(val_by_next_concept))     
+        idx = curr_concepts    
+        concepts = [concept_list[i] for i in idx]
+    else:
+        # TODO: Implement this
+        pass 
+
+    return concepts, idx
+
+def max_prefix_gurobi(final_vals, num_concepts_selected):
+    """Arguments:
+        final_vals: list of tuples (value, elements_covering_value)
+                    assumed sorted in decreasing priority (top first)
+        num_concepts_selected: budget
+    Returns: 
+        List of concepet indexes
+
+    """
+    U = set()
+    for _, elems in final_vals:
+        U.update(elems)
+    U = list(U)  # universe of elements
+    elem_to_idx = {e:i for i,e in enumerate(U)}
+    
+    n = len(final_vals)
+    m = len(U)
+    
+    model = gp.Model("max_prefix_hitting")
+    model.Params.OutputFlag = 0  # silence solver
+    
+    # Binary vars: x[e] = 1 if element e selected
+    x = model.addVars(m, vtype=GRB.BINARY, name="x")
+    
+    # Binary vars: y[i] = 1 if value i is covered
+    y = model.addVars(n, vtype=GRB.BINARY, name="y")
+    
+    # Link y[i] to coverage by selected elements
+    for i, (_, elems) in enumerate(final_vals):
+        if elems:  # make sure not empty
+            model.addConstr(
+                y[i] <= gp.quicksum(x[elem_to_idx[e]] for e in elems),
+                name=f"cover_{i}"
+            )
+        else:
+            model.addConstr(y[i] == 0)  # cannot be covered
+    
+    # Prefix constraints: enforce consecutive coverage
+    # y[i] <= y[i-1] for i>0
+    for i in range(1, n):
+        model.addConstr(y[i] <= y[i-1], name=f"prefix_{i}")
+    
+    model.addConstr(gp.quicksum(x[i] for i in range(m)) <= num_concepts_selected, name="budget")
+    model.setObjective(gp.quicksum(y[i] for i in range(n)), GRB.MAXIMIZE)    
+    model.optimize()
+    
+    selected_elements = [U[i] for i in range(m) if x[i].X > 0.5]
+    max_prefix_len = sum(1 for i in range(n) if y[i].X > 0.5)
+
+    return selected_elements, max_prefix_len
+
+
+def lp_based_selection(env,concept_list,num_concepts_selected,reference_model,selection_function,target_abstraction):
+    """Select {num_concepts} greedily
+        by first learning the Q(s,a) values from a rollout
+        Then selecting the concepts that reduce the standard deviation 
+        across all partitions
+    
+    Arguments:
+        env: Gymasium environment
+        concept_list: List of functions
+        num_concepts_selected: Integer, number of concepts to select
+        reference_model: A policy that performs well
+            which we are trying to distill
+        selection_function: String, whether we're selecting according to 
+            Q value, etc."""
+    
+    q_estimates = rollout_q_estimates(reference_model,env,concept_list)
+    unique_actions = list(set([int(i[1]) for i in q_estimates]))
+    q_values = np.array([i[2] for i in q_estimates])
+    actions = np.array([i[1] for i in q_estimates])
+
+    # Continuous
+    if type(env.observation_space) is spaces.Box:
+        # Discrete relaxation
+        all_concepts = np.array([i[0] for i in q_estimates])
+        median_by_column = np.median(all_concepts,axis=0)
+        discretized_X = (all_concepts < median_by_column).astype(np.int8)
+    else:
+        discretized_X = np.array([i[0] for i in q_estimates])
+
+    k = int(np.sqrt(len(discretized_X)))
+
+    if selection_function == "q_value":
+        vals_by_action = []
+        for a in unique_actions:
+            relevant_q_estimates = q_values[actions == a]
+            relevant_threshold = np.argsort(relevant_q_estimates)
+            lower_list = list(relevant_threshold)[:k]
+            higher_list = list(relevant_threshold)[-k:]
+            
+            final_vals = []
+
+            for low_idx in lower_list:
+                for high_idx in higher_list:
+                    if abs(relevant_q_estimates[low_idx]-relevant_q_estimates[high_idx]) > target_abstraction:
+                        tup = (abs(relevant_q_estimates[low_idx]-relevant_q_estimates[high_idx]),[i for i in range(len(concept_list)) if discretized_X[low_idx][i] != discretized_X[high_idx][i]])
+                        final_vals.append(tup)
+            final_vals = sorted(final_vals,reverse=True)
+            selected_concepts, max_prefix_len = max_prefix_gurobi(final_vals,num_concepts_selected)
+            vals_by_action.append((max_prefix_len,selected_concepts))
+
+        idx = vals_by_action[np.argmin([i[0] for i in vals_by_action])][1]
+        concepts = [concept_list[i] for i in idx]
+    elif selection_function == "policy":
+        # TODO: Implement policy version
+        pass
+
+    return concepts, idx
+
+def max_accuracy_selection(final_vals,accuracies,direction):
+    """Select the set of concepts (where there are len(accuracies)
+        total concepts)
+        So that the average accuracy is maximized (if direction = 'max')
+            or minimized (if direction = 'min')
+        Subject to each list in final_vals having at least 1 element selected
+    
+    Arguments:
+        final_vals: List of lists, where each number corresponds
+            to a concept/constraint
+        accuracies: Float values for each concept
+        direction: String, 'max' or 'min'
+    
+    Returns: Indices for the selected concepts"""
+
+    n = len(accuracies)
+    best_avg = -float('inf')
+    best_selection = []
+
+    # Compute feasible range for number of selected concepts
+    # Minimum number of concepts = max number of disjoint sets in final_vals
+    min_k = max(len(lst) for lst in final_vals)  # conservative lower bound
+    max_k = n  # upper bound: all concepts
+
+    for k in range(min_k, max_k + 1):
+        m = Model()
+        m.Params.OutputFlag = 0  # silent
+
+        x = m.addVars(n, vtype=GRB.BINARY)
+        for lst in final_vals:
+            m.addConstr(quicksum(x[i] for i in lst) >= 1)
+        m.addConstr(quicksum(x[i] for i in range(n)) == k)
+        if direction == 'max':
+            m.setObjective(quicksum(accuracies[i] * x[i] for i in range(n)), GRB.MAXIMIZE)
+        else:
+            m.setObjective(quicksum(accuracies[i] * x[i] for i in range(n)), GRB.MINIMIZE)
+        m.optimize()
+
+        if m.Status == GRB.OPTIMAL:
+            selected = [i for i in range(n) if x[i].X > 0.5]
+            avg_acc = sum(accuracies[i] for i in selected) / k
+            if avg_acc > best_avg:
+                best_avg = avg_acc
+                best_selection = selected
+
+    return best_selection, best_avg
+
+def imperfect_lp_selection(env,concept_list,reference_model,selection_function,target_abstraction,accuracies,direction='max'):
+    """Select {num_concepts} through an LP policy
+        by first learning the Q(s,a) values from a rollout
+        Then selecting the concepts that maximize the average accuracy
+            While selecting according to the target abstraction
+    
+    Arguments:
+        env: Gymasium environment
+        concept_list: List of functions
+        num_concepts_selected: Integer, number of concepts to select
+        reference_model: A policy that performs well
+            which we are trying to distill
+        selection_function: String, whether we're selecting according to 
+            Q value, etc."""
+    
+    q_estimates = rollout_q_estimates(reference_model,env,concept_list)
+    unique_actions = list(set([int(i[1]) for i in q_estimates]))
+    q_values = np.array([i[2] for i in q_estimates])
+    actions = np.array([i[1] for i in q_estimates])
+    # Continuous
+    if type(env.observation_space) is spaces.Box:
+        # Discrete relaxation
+        all_concepts = np.array([i[0] for i in q_estimates])
+        median_by_column = np.median(all_concepts,axis=0)
+        discretized_X = (all_concepts < median_by_column).astype(np.int8)
+    else:
+        discretized_X = np.array([i[0] for i in q_estimates])
+
+    k = int(np.sqrt(len(discretized_X)))
+
+    if selection_function == "q_value":
+        vals_by_action = []
+        for a in unique_actions:
+            relevant_q_estimates = q_values[actions == a]
+            relevant_threshold = np.argsort(relevant_q_estimates)
+            lower_list = list(relevant_threshold)[:k]
+            higher_list = list(relevant_threshold)[-k:]
+            
+            final_vals = []
+
+            for low_idx in lower_list:
+                for high_idx in higher_list:
+                    if abs(relevant_q_estimates[low_idx]-relevant_q_estimates[high_idx]) > target_abstraction:
+                        tup = (abs(relevant_q_estimates[low_idx]-relevant_q_estimates[high_idx]),[i for i in range(len(concept_list)) if discretized_X[low_idx][i] != discretized_X[high_idx][i]])
+                        if tup[-1] == []:
+                            return concept_list, list(range(len(concept_list)))
+                        final_vals.append(tup[-1])
+            selected_concepts, avg_acc = max_accuracy_selection(final_vals,accuracies,direction)
+            vals_by_action.append((avg_acc,selected_concepts))
+
+        idx = vals_by_action[np.argmin([i[0] for i in vals_by_action])][1]
+        concepts = [concept_list[i] for i in idx]
+    elif selection_function == "policy":
+        # TODO: Implement policy selection
+        pass 
+
+    return concepts, idx
 
 def greedy_selection_supervised(train_matrix,labels,num_concepts):
     """Select {num_concepts} greedily
@@ -144,168 +389,118 @@ def greedy_selection_supervised(train_matrix,labels,num_concepts):
     Returns: List of size {num_concepts} of integers
         each representing a concept"""
 
+    train_matrix = np.asarray(train_matrix)
+    labels = np.asarray(labels)
+    n_samples, n_features = train_matrix.shape
+    label_size = labels.max() + 1
+    all_prefixes = []
+
     total_concepts = []
-    all_concepts = train_matrix.shape[1]
-    groups = [0 for i in range(len(labels))]
+    remaining_concepts = set(range(n_features))
+    
+    # Initially, all samples in one group
+    groups = {0: np.arange(n_samples)}
+    
+    for iteration in range(num_concepts):
+        print("On iteration {}".format(iteration))
+        best_score = np.inf
+        best_concept = -1
+        best_partition = None  # store how groups would look if we choose this concept
+        
+        for k in remaining_concepts:
+            score = 0
+            candidate_groups = {}
+            gid = 0
+            
+            # Split each current group by this concept
+            for indices in groups.values():
+                col_values = train_matrix[indices, k]
+                for val in np.unique(col_values):
+                    sub_idx = indices[col_values == val]
+                    # label counts for this subgroup
+                    lbl_counts = np.bincount(labels[sub_idx], minlength=label_size)
+                    score += lbl_counts.sum() - lbl_counts.max()
+                    candidate_groups[gid] = sub_idx
+                    gid += 1
+            
+            if score < best_score:
+                best_score = score
+                best_concept = k
+                best_partition = candidate_groups
+        
+        # Update chosen groups
+        groups = best_partition
+        total_concepts.append(best_concept)
+        remaining_concepts.remove(best_concept)
+        all_prefixes.append(deepcopy(total_concepts))
+    
+    return all_prefixes
 
-    for _ in range(num_concepts):
-        scores_by_group = []
-        for k in range(all_concepts):
-            if k in total_concepts:
-                scores_by_group.append(np.inf)
-                continue   
-            total_groups = max(groups)
-            total_score = 0
-            for g in range(total_groups+1):
-                states_in_group = [i for i in range(len(groups)) if groups[i] == g]
-                partition_0 = [i for i in states_in_group if train_matrix[i][k] == 0]
-                rewards_0 = np.array([labels[i] for i in partition_0])
-                partition_1 = [i for i in states_in_group if train_matrix[i][k] == 1]
-                rewards_1 = np.array([labels[i] for i in partition_1])
-
-                total_score = 0 
-                
-                if len(rewards_0) > 0:
-                    total_score += float((1-np.max(np.bincount(rewards_0)) / len(rewards_0))*len(rewards_0))
-                if len(rewards_1) > 0:
-                    total_score += (1-np.max(np.bincount(rewards_1)) / len(rewards_1))*len(rewards_1)
-
-            scores_by_group.append(total_score)
-        selected_idx = int(np.argmin(scores_by_group))
-
-        total_groups = max(groups)
-        new_groups = max(groups)
-        for g in range(total_groups+1):
-            states_in_group = [i for i in range(len(groups))  if groups[i] == g]
-            partition_0 = [i for i in states_in_group if train_matrix[i][selected_idx] == 0]
-            partition_1 = [i for i in states_in_group if train_matrix[i][selected_idx] == 1]
-            if len(partition_0) > 0 and len(partition_1) > 0:
-                for i in partition_1:
-                    groups[i] = new_groups + 1
-                new_groups += 1
-        total_concepts.append(selected_idx)
-    return total_concepts 
-
-
-def human_centered_selection(env,accuracy_by_concept,target_abstraction):
-    """Select concepts based on human skill
-        Solve a fractional linear programming problem
-        that optimizes for the average accuracy
-        subject to range <= target_abstraction
-
+def ucb(mu_hat,N,n,c=0.1):
+    """UCB upper bound
+    
     Arguments:
-        env: Gymasium environment
-        accuracy_by_concept: List of floats, accuracy of 
-            humans for each concept
-        target_abstraction: float, threshold for 
-            range of concepts
+        mu_hat: Float, Mean seen so far
+        N: Integer, total number of trials
+        n: Total triasl with arm i
+        c: Exploration constant, default 0.1
     
-    Returns: List of size {num_concepts} of integers
-        each representing a concept"""
-    
-    rewards = env.rewards
-    state_pairs = []
-    for i in range(len(rewards)):
-        for j in range(i):
-            state_pairs.append((max(abs(rewards[i]-rewards[j])),np.where(env.concepts[:,i] != env.concepts[:,j])[0]))
-    state_pairs = [i for i in state_pairs if i[0] > target_abstraction]
-    
-    m = gp.Model("fractional_lp")
-    n = len(accuracy_by_concept)
-    y = m.addVars(n, lb=0.0, name="y")
-    t = m.addVar(lb=0.0, name="t")
+    Returns: Float, upper bound on \mu"""
+    if n == 0:
+        return 1
+    return mu_hat + c*np.sqrt(np.log(N)/n)
 
-    # Maximize average accuracy
-    m.setObjective(gp.quicksum(accuracy_by_concept[i] * y[i] for i in range(n)), GRB.MAXIMIZE)
-
-    # Ensure minimum coverage
-    m.addConstr(gp.quicksum(y[i] for i in range(n)) == 1, name="normalize")
-    for i in range(n):
-        m.addConstr(y[i] <= t, name=f"upper_bound_y_{i}")
-    for idx, pair in enumerate(state_pairs):
-        m.addConstr(gp.quicksum(y[i] for i in pair[1]) >= t, name=f"coverage_{idx}_{pair}")
-    m.setParam(gp.GRB.Param.DualReductions, 0)
-    m.optimize()
-
-    if m.status == gp.GRB.INFEASIBLE:
-        print("Model is infeasible")
-        m.computeIIS()
-        m.write("model.ilp")
-        m.write("model.lp")
-        m.write("model.mps")
-        raise RuntimeError("Model infeasible")
-    elif m.status != gp.GRB.OPTIMAL:
-        raise RuntimeError(f"Solver ended with status {m.status}")
-
-    # Extract solution
-    t_val = t.X
-    x_vals = [y[i].X / t_val for i in range(n)] if t_val > 0 else [0.0] * n
-
-    return np.array(x_vals)
-
-
-def human_centered_selection_real_world(env,accuracy_by_concept,target_abstraction,concept_list,state_maps,sample=10):
-    """Select concepts based on human skill
-        Solve a fractional linear programming problem
-        that optimizes for the average accuracy
-        subject to range <= target_abstraction
-
+def iterative_selection(env,concept_list,groundtruth_model,selection_function,target_abstraction,num_iterations,training_timesteps):
+    """Iteratively select which concepts to run based on true values
+        for concept performance
+        
     Arguments:
-        env: Gymasium environment
-        accuracy_by_concept: List of floats, accuracy of 
-            humans for each concept
-        target_abstraction: float, threshold for 
-            range of concepts
-            concept_list: Map of those states to concepts
-        state_maps: Either the actions (\pi(s)), Q values ([Q(s,0),Q(s,1)], or reward/transition [Transition List for each concept])
-            for each of the state seen
-
-    Returns: List of size {num_concepts} of integers
-        each representing a concept"""
+        env: Gymnasium environment
+        concept_list: List of potential concepts
+        groundtruth_model: Model trained on the raw states
+        selection_function: String, q_value or policy
+        target_abstraction: Float, how much of the state space we need to cover
+        num_iterations: Total iterations we run for
     
-    if len(concept_list) > sample:
-        indices = np.random.choice(len(concept_list), size=sample, replace=True)
+    Returns: List of concepts and their indices"""
+    trials = [[] for i in range(len(concept_list))]
 
-        # Apply the same indices to both lists
-        concept_list = np.array([concept_list[i] for i in indices])
-        state_maps = np.array([state_maps[i] for i in indices])
+    for iteration in range(num_iterations):
+        predicted_state_loss = [ucb(np.mean(t),iteration,len(t)) for t in trials]
+        modified_concept_predictors = [inaccurate_concepts_continuous(func,0,std) for func,std in zip(concept_list,predicted_state_loss)]
+        subset_concept, imperfect_idx = imperfect_lp_selection(env,modified_concept_predictors,groundtruth_model,selection_function,target_abstraction,predicted_state_loss,direction='min')
 
-    rewards = state_maps
-    state_pairs = []
-    for i in range(len(rewards)):
-        for j in range(i):
-            state_pairs.append((max(abs(rewards[i]-rewards[j])),np.where(concept_list[i,:] != concept_list[j,:])[0]))
-    state_pairs = [i for i in state_pairs if i[0] > target_abstraction and len(i[1]) > 0]
-    
-    m = gp.Model("fractional_lp")
-    n = len(accuracy_by_concept)
-    y = m.addVars(n, lb=0.0, name="y")
-    t = m.addVar(lb=0.0, name="t")
+        if iteration == num_iterations-1:
+            return subset_concept, imperfect_idx
+        ground_truth_concept_env = InfoTransformWrapper(env,[concept_list[i] for i in imperfect_idx])
+        model = train_two_stage_ppo_model(ground_truth_concept_env,total_timesteps=training_timesteps)
+        per_state_loss = model.per_state_loss
+        for idx,i in enumerate(imperfect_idx):
+            trials[i].append(per_state_loss[idx])
 
-    # Maximize average accuracy
-    m.setObjective(gp.quicksum(accuracy_by_concept[i] * y[i] for i in range(n)), GRB.MAXIMIZE)
 
-    # Ensure minimum coverage
-    m.addConstr(gp.quicksum(y[i] for i in range(n)) == 1, name="normalize")
-    for i in range(n):
-        m.addConstr(y[i] <= t, name=f"upper_bound_y_{i}")
-    for idx, pair in enumerate(state_pairs):
-        m.addConstr(gp.quicksum(y[i] for i in pair[1]) >= t, name=f"coverage_{idx}_{pair}")
-    m.setParam(gp.GRB.Param.DualReductions, 0)
-    m.optimize()
+def bayesian_iterative_selection(env,eval_env,environment_string,additional_info,seed,concept_list,num_iterations,training_timesteps):
+    def run(concept_idx):
+        ground_truth_concept_env = InfoTransformWrapper(env,[concept_list[i] for i in concept_idx])
+        ground_truth_eval_concept_env = InfoTransformWrapper(eval_env,[concept_list[i] for i in concept_idx])
+        model = train_two_stage_ppo_model(ground_truth_concept_env,total_timesteps=training_timesteps)
+        reward = evaluate_model(environment_string,ground_truth_eval_concept_env,additional_info,model,seed)
+        return reward
 
-    if m.status == gp.GRB.INFEASIBLE:
-        print("Model is infeasible")
-        m.computeIIS()
-        m.write("model.ilp")
-        m.write("model.lp")
-        m.write("model.mps")
-        raise RuntimeError("Model infeasible")
-    elif m.status != gp.GRB.OPTIMAL:
-        raise RuntimeError(f"Solver ended with status {m.status}")
+    n_concepts = len(concept_list)
+    space = [(0.0, 1.0)] * n_concepts
+    opt = Optimizer(space, base_estimator="GP")  # Gaussian Process
 
-    # Extract solution
-    t_val = t.X
-    x_vals = [y[i].X / t_val for i in range(n)] if t_val > 0 else [0.0] * n
-
-    return np.array(x_vals)
+    for _ in range(num_iterations):
+        x = opt.ask()
+        concept_idx = [i for i, xi in enumerate(x) if xi > 0.5]
+        
+        reward = run(concept_idx)
+        print(reward)
+        
+        opt.tell(x, -reward)
+        
+    # Best subset found
+    best_x = opt.Xi[np.argmin(opt.yi)]
+    best_subset = [i for i, xi in enumerate(best_x) if xi > 0.5]
+    return [concept_list[i] for i in best_subset],best_subset 

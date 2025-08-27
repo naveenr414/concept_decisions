@@ -265,3 +265,42 @@ def get_concepts(environment_string,concept_source,seed):
 
     if concept_source == 'human_selected':
         return human_selected[environment_string]
+
+def inaccurate_concepts_binary(concept_function,accuracy):
+    """Creates a new concept function that only agrees with the
+        concept function x% of the time
+    
+    Arguments:
+        concept_function: Some map from state -> observation
+            Here, observation must be binary
+        accuracy: Float, the accuracy of the predictor
+    
+    Returns: New Concept Function"""
+
+    def pred_function(state):
+        seed = hash(str(state)) % (2**32)
+        rand_number = np.random.default_rng(seed).random()
+        pred = concept_function(state)
+        if rand_number > accuracy:
+            return 1-pred 
+        return pred 
+    return pred_function
+
+def inaccurate_concepts_continuous(concept_function,error_mean,error_std):
+    """Creates a new concept function that only agrees with the
+        concept function x% of the time
+    
+    Arguments:
+        concept_function: Some map from state -> observation
+            Here, observation must be binary
+        accuracy: Float, the accuracy of the predictor
+    
+    Returns: New Concept Function"""
+
+    def pred_function(state):
+        seed = hash(str(state)) % (2**32)
+        rand_number = np.random.default_rng(seed).normal(error_mean,error_std)
+        pred = concept_function(state)
+        pred += rand_number
+        return pred 
+    return pred_function
