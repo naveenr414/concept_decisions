@@ -3,159 +3,7 @@ import numpy as np
 import gymnasium as gym
 import os 
 from stable_baselines3 import PPO
-
-
-# def create_environment_from_string(environment_string,environment_nodes,concept_list,error):
-#     """Initialize an environment based on a string
-    
-#     Arguments:
-#         environment_string: String, e.g., tree or cycle
-#         concept_list: List of concepts which are used to define the state
-#         error: float, erorr in concept prediction
-    
-#     Returns: Gymasium Environment"""
-    
-#     models_by_string = {
-#         'tree': TreeRepeatEnv, 
-#         'cycle': Cyclic4StateEnv,
-#     }
-    
-#     return models_by_string[environment_string](environment_nodes,concept_list,error)
-
-# def create_environment_from_string_real_world(environment_string,concept_list,accuracies=None,reward_error=0):
-#     """Initialize an environment based on a string
-    
-#     Arguments:
-#         environment_string: String, e.g., tree or cycle
-#         concept_list: List of concepts which are used to define the state
-#         error: float, erorr in concept prediction
-    
-#     Returns: Gymasium Environment"""
-
-#     env = gym.make("CartPole-v1")
-
-#     if environment_string == "cart_pole":
-#         env = ObservationSubsetWrapper(env, indices=concept_list)
-#     elif environment_string == "cart_pole_binary":
-#         env = DiscretizeObservationWrapper(env, bins_per_feature=4)
-#         env = BinaryObservationSubsetWrapper(env, concept_list,accuracies)
-#     elif environment_string == "cart_pole_post_hoc":
-#         golden_model = get_golden_model(environment_string)
-#         env = get_binary_subset_env(golden_model, env, concept_list,accuracies=accuracies)
-#     elif environment_string == "cart_pole_llm":
-#         env = CustomBinaryFeatureWrapper(env)
-#         env = BinaryObservationSubsetWrapper(env, concept_list,accuracies=accuracies)
-#     else:
-#         raise Exception("Environment {} not implemented".format(environment_string))
-    
-#     env.concepts = get_all_concepts(environment_string)
-
-#     if reward_error > 0:
-#         env = RewardPerturbationWrapper(env,reward_error)
-
-#     return env
-
-def get_all_concepts(environment_string):
-    """Get the list of all concepts from a string
-    
-    Arguments:
-        environment_string: String, e.g., tree or cycle
-    
-    Returns: List with indices into all concepts"""
-
-    if environment_string == "cart_pole":
-        return list(range(4))
-    elif environment_string == "cart_pole_binary":
-        return list(range(16))
-    elif environment_string == "cart_pole_post_hoc":
-        return list(range(16))
-    elif environment_string == "cart_pole_llm":
-        return list(range(13))
-    else:
-        raise Exception("Environment {} not implemented".format(environment_string))
-
-def get_golden_model(environment_string,reward_error=0):
-    """Get the optimal model for a given environment
-    
-    Arguments:
-        environment_string: String representing the environment
-            which we want to instantiate
-    
-    Returns: StableBaseline model"""
-
-    if "cart_pole" in environment_string:
-        model_path = f"../../models/cart_pole/cart_pole_{reward_error}.zip"
-        if os.path.exists(model_path):
-            model = PPO.load(model_path)
-            return model 
-        # else:
-        #     env = create_environment_from_string_real_world("cart_pole",[0,1,2,3],None,reward_error)
-        #     golden_model = train_ppo_model(env,total_timesteps=100000)
-        #     golden_model.save(model_path)
-        #     return golden_model 
-    else:
-        raise Exception("Environment {} not applicable for golden model".format(environment_string))
-
-def get_baseline_concept_sets(environment_string,environment_nodes):
-    """Retrieve a list of potential concept sets from a string
-    
-    Arguments:
-        environment_string: String, e.g., tree or cycle
-    
-    Returns: List of lists, representing different concept 
-        combinations"""
-    
-    baseline_concepts_by_string = {
-        'tree': [list(range(int(np.log2(environment_nodes+1)))),[int(np.log2(environment_nodes+1))]],
-        'cycle': [list(range(0,environment_nodes-1))] + [[j] for j in list(range(0,environment_nodes-1))]
-    }
-
-    return baseline_concepts_by_string[environment_string]
-
-def get_values(env, q_net, num_rollouts=10, max_steps=100, gamma=1):
-    """
-    Estimate V^{π}(s) for all states using rollouts from each state under the policy implied by q_net.
-        Currently it does so with no discounting, but with average reward
-
-    Args:
-        env: The environment with .all_states and .state access.
-        q_net: Trained Q-network (maps obs to Q-values).
-        num_rollouts: Number of rollouts per state.
-        max_steps: Max steps per rollout.
-        gamma: Discount factor.
-    
-    Returns:
-        List of value estimates V(s) for each s in env.all_states.
-    """
-    values = []
-
-    for s in env.all_states:
-        total_return = 0.0
-
-        for _ in range(num_rollouts):
-            env.reset()
-            try:
-                env.unwrapped.state = s
-            except AttributeError:
-                raise AttributeError("env must support setting env.unwrapped.state directly")
-            total_reward = 0.0
-            done = False
-            steps = 0
-
-            while not done and steps < max_steps:
-                obs = env.get_observation()
-                action, _ = q_net.predict(obs, deterministic=True)
-                obs, reward, done, _, _ = env.step(action)
-
-                total_reward += reward
-                steps += 1
-
-            avg_reward = total_reward / steps
-            total_return += avg_reward
-
-        values.append(total_return / num_rollouts)
-
-    return values
+import torch 
 
 def get_average_reward(env,model):
     """Given an environment, get the average reward following a
@@ -173,7 +21,7 @@ def get_average_reward(env,model):
         observation, info = env.reset()
         for _ in range(1000):
             # Random action: 0 (left) or 1 (right)
-            action = model.predict(observation)[0]
+            action = model.predict(observation[None,:])[0]
 
             # Take a step in the environment
             observation, reward, terminated, truncated, info = env.step(action)
@@ -184,6 +32,49 @@ def get_average_reward(env,model):
     env.close()
     total_reward /= 10000
     return total_reward
+
+def rollout_q_estimates(model, env, concept_list,n_steps=100, gamma=0.99):
+    """Estimate a list of Q values, along with concept values
+        For a given groundtruth model + groundtruth environment
+        combination
+    
+    Arguments:
+        model: Groundtruth model that operates on the raw state space
+        env: Groundtruth environment with no concepts
+        concept_list: List of potential concepts from a concept bnak
+    
+    Returns: List of (concepts,action,Q_estimate) values"""
+    
+    q_estimates = []
+
+    for _ in range(100):
+        obs, info = env.reset()
+        for _ in range(n_steps):
+            # get action from PPO policy
+            action, _ = model.predict(obs, deterministic=False)
+
+            # step env
+            next_obs, reward, terminated, truncated, info = env.step(action)
+
+            # convert to tensor for value prediction
+            next_obs_tensor = torch.tensor(next_obs, dtype=torch.float32).unsqueeze(0).to(model.device)
+
+            with torch.no_grad():
+                v_next = model.policy.predict_values(next_obs_tensor).cpu().numpy()[0][0]
+            # TD estimate of Q(s,a)
+            q_val = reward + (0 if (terminated or truncated) else gamma * v_next)
+            
+
+            concepts = [concept(info['observation']) for concept in concept_list]
+
+            q_estimates.append((concepts, action, q_val))
+
+            obs = next_obs
+            if terminated or truncated:
+                obs, info = env.reset()
+
+    return q_estimates
+
 
 def get_average_reward_gym(env, model, n_episodes=10):
     total_reward = 0

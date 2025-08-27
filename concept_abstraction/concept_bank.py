@@ -175,34 +175,93 @@ class CustomBinaryFeatureWrapper(gym.ObservationWrapper):
             if value:
                 print(f"  {i:2d}: {name} = True")
 
-
-### Pong Concepts
-def paddle_y(obs):
+### Boxing Concepts
+def boxing_player_x(obs):
     obs = np.array(obs)
-    return obs[-1,1] 
+    return obs[-1,0]
 
-def ball_x(obs):
+def boxing_player_y(obs):
     obs = np.array(obs)
-    return obs[-1,2] 
+    return obs[-1,1]
 
-def ball_y(obs):
+def boxing_enemy_x(obs):
+    obs = np.array(obs)
+    return obs[-1,2]
+
+def boxing_enemy_y(obs):
     obs = np.array(obs)
     return obs[-1,3]
 
-def ball_v_x(obs):
+def boxing_player_v_x(obs):
+    obs = np.array(obs)
+    return obs[-1,0]-obs[-2,0]
+
+def boxing_player_v_y(obs):
+    obs = np.array(obs)
+    return obs[-1,1]-obs[-2,1]
+
+def boxing_enemy_v_x(obs):
     obs = np.array(obs)
     return obs[-1,2]-obs[-2,2]
 
-def ball_v_y(obs):
+def boxing_enemy_v_y(obs):
     obs = np.array(obs)
     return obs[-1,3]-obs[-2,3]
 
-def enemy_y(obs):
+
+### Pong Concepts
+def pong_paddle_y(obs):
+    obs = np.array(obs)
+    return obs[-1,1] 
+
+def pong_ball_x(obs):
+    obs = np.array(obs)
+    return obs[-1,2] 
+
+def pong_ball_y(obs):
+    obs = np.array(obs)
+    return obs[-1,3]
+
+def pong_ball_v_x(obs):
+    obs = np.array(obs)
+    return obs[-1,2]-obs[-2,2]
+
+def pong_ball_v_y(obs):
+    obs = np.array(obs)
+    return obs[-1,3]-obs[-2,3]
+
+def pong_enemy_y(obs):
     obs = np.array(obs)
     return obs[-1,5]
 
-def enemy_v_y(obs):
+def pong_enemy_v_y(obs):
     obs = np.array(obs)
     return obs[-2,5]-obs[-1,5]
 
- 
+def get_concepts(environment_string,concept_source,seed):
+    """Get concepts depending on the source
+    
+    Arguments:
+        environment_string: String, such as Pong or Boxing
+        num_concepts: The number of concepts to select from this environment
+        concept_source: String, human_selected, llm_generated, etc.
+        seed: Integer, random_state
+    
+    Returns: List of functions, each being a concept"""
+
+    human_selected = {}
+
+    for num_nodes in [4,8,16,32]:
+        human_selected['cyclic_{}'.format(num_nodes)] = get_all_cyclic_concepts(num_nodes)
+
+    for num_nodes in [7,15,31,63]:
+        num_layers = len(bin(num_nodes+1))-3
+        human_selected['tree_{}'.format(num_nodes)] = get_all_tree_concepts(num_layers)
+
+    human_selected['mimic'] = [clustering_concept_mimic(25,seed)]
+    human_selected['cart_pole'] = [get_cart_pole_concept(i) for i in range(4)]
+    human_selected['boxing'] = [boxing_player_x,boxing_player_y,boxing_enemy_x,boxing_enemy_y,boxing_player_v_x,boxing_player_v_y,boxing_enemy_v_x,boxing_enemy_v_y]
+    human_selected['pong'] = [pong_paddle_y,pong_ball_x,pong_ball_y,pong_ball_v_x,pong_ball_v_y,pong_enemy_y,pong_enemy_v_y]
+
+    if concept_source == 'human_selected':
+        return human_selected[environment_string]

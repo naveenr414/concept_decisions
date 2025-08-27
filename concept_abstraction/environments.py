@@ -7,8 +7,9 @@ import ocatari
 import cv2 
 from collections import Counter
 from sklearn.model_selection import train_test_split
+from gymnasium.wrappers import FrameStack  # gym’s own for single envs
 
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecFrameStack, VecEnvWrapper
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecFrameStack, DummyVecEnv
 from concept_abstraction.post_hoc import BinaryFeatureEnvironmentWrapper, CartPoleBinaryFeatureExtractor
 from concept_abstraction.utils import one_hot_state
 from concept_abstraction.mimic import *
@@ -73,11 +74,18 @@ class ConceptWrapper(gym.ObservationWrapper):
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
-        return self._process(obs), info
+        return self._process(obs), {'observation': obs}
 
     def observation(self, obs):
         processed = self._process(obs)
         return processed
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        processed_obs = self._process(obs)
+        info = dict(info)
+        info["observation"] = obs
+        return processed_obs, reward, terminated, truncated, info
 
     def _process(self, obs):
         if self.concept_list is None:
@@ -478,13 +486,21 @@ def get_n_atari_env(n_envs,atari_env_name,concept_list,observation_space):
     
     Returns: SubprocVecEnv with all the environments"""
     
-    vec_env = SubprocVecEnv([
-        lambda seed=i: make_ocenv(atari_env_name,concept_list,observation_space,seed=seed) for i in range(n_envs)
-    ], start_method='spawn')
+    if n_envs > 1:
+        vec_env = SubprocVecEnv([
+            lambda seed=i: make_ocenv(atari_env_name, concept_list, observation_space, seed=seed)
+            for i in range(n_envs)
+        ], start_method='spawn')
+        if concept_list is None:
+            vec_env = VecFrameStack(vec_env, n_stack=4)
+    else:
+        env = make_ocenv(atari_env_name, concept_list, observation_space, seed=0)
 
-    if concept_list is None:
-        vec_env = VecFrameStack(vec_env, n_stack=4)
-    return vec_env 
+        if concept_list is None:
+            env = FrameStack(env, num_stack=4)
+        vec_env = env
+    return vec_env
+
 
 
 def get_binary_subset_env(golden_model, env, indices,accuracies=None):
@@ -505,3 +521,72 @@ def get_binary_subset_env(golden_model, env, indices,accuracies=None):
     subset_env = BinaryObservationSubsetWrapper(binary_env, indices,accuracies=accuracies)    
     return subset_env
 
+def get_environment(environment_string,concept_list):
+    """Get a specific environment based on a string + concept list
+    
+    Arguments:
+        environment_string: String, mapping to one environment
+        concept_list: List of functions mapping state -> concept, or None
+    
+    Returns: Gymasium environment, and a dictionary of additional information"""
+
+    additional_info = {}
+
+    if "cyclic" in environment_string:
+        num_nodes = int(environment_string.split("_")[-1])
+        env = eval_env = create_cyclic_env(num_nodes,concept_list)
+    elif "tree" in environment_string:
+        num_nodes = int(environment_string.split("_")[-1])
+        env = eval_env = create_tree_env(num_nodes,concept_list)
+        return env, {}
+    elif environment_string == "mimic":
+        physpol, env = create_mimic_environment(concept_list,42)
+        eval_env = env
+        additional_info = {'physpol': physpol, 'concept_list': concept_list}
+    elif environment_string == "cart_pole":
+        if concept_list is None:
+            env = gym.make("CartPole-v1",render_mode="rgb_array")
+            env = ConceptWrapper(env,None,spaces.Box(
+                    low=0, high=255,
+                    shape=(1,84,84),  # Height x Width, no color channel
+                    dtype=np.uint8
+                ),get_raw_pixels_cartpole)
+        else:
+            env = gym.make("CartPole-v1")
+            env = eval_env = ConceptWrapper(env,concept_list,spaces.MultiBinary(len(concept_list)),get_raw_state_cartpole)
+
+    elif environment_string == "boxing":
+        if concept_list is None:
+            env = get_n_atari_env(8,"BoxingNoFrameskip-v4",None,gym.spaces.Box(
+                    low=0, high=255,
+                    shape=(1,84,84),  # Height x Width, no color channel
+                    dtype=np.uint8
+                ))
+            eval_env = get_n_atari_env(1,"BoxingNoFrameskip-v4",None,gym.spaces.Box(
+                    low=0, high=255,
+                    shape=(1,84,84),  # Height x Width, no color channel
+                    dtype=np.uint8
+                ))      
+        else:
+            env = get_n_atari_env(8,"BoxingNoFrameskip-v4",concept_list,spaces.Box(low=-255, high=255, shape=(len(concept_list),), dtype=np.float32))
+            eval_env = get_n_atari_env(1,"BoxingNoFrameskip-v4",concept_list,spaces.Box(low=-255, high=255, shape=(len(concept_list),), dtype=np.float32))
+        eval_env = eval_env.envs[0]
+
+    elif environment_string == "pong":
+        if concept_list is None:
+            env = get_n_atari_env(8,"PongNoFrameskip-v4",None,spaces.Box(
+                    low=0, high=255,
+                    shape=(1,84,84),  # Height x Width, no color channel
+                    dtype=np.uint8
+                ))        
+            eval_env = get_n_atari_env(1,"PongNoFrameskip-v4",None,spaces.Box(
+                    low=0, high=255,
+                    shape=(1,84,84),  # Height x Width, no color channel
+                    dtype=np.uint8
+                ))        
+        else:
+            env = get_n_atari_env(8,"PongNoFrameskip-v4",concept_list,gym.spaces.Box(low=-255, high=255, shape=(len(concept_list),), dtype=np.float32))
+            eval_env = get_n_atari_env(1,"PongNoFrameskip-v4",concept_list,gym.spaces.Box(low=-255, high=255, shape=(len(concept_list),), dtype=np.float32))
+        eval_env = eval_env.envs[0]
+
+    return env, eval_env, additional_info

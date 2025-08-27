@@ -1,10 +1,12 @@
-from stable_baselines3 import DQN, PPO
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from stable_baselines3 import DQN, PPO
 from typing import Callable
 import numpy as np
-import gymnasium as gym
+
+from concept_abstraction.env_utils import get_average_reward
+from concept_abstraction.environments import eval_mimic_model
 
 
 def train_model(env,total_timesteps=10000):
@@ -29,6 +31,15 @@ def train_ppo_model(env,total_timesteps=150_000,policy="MlpPolicy",batch_size=25
     model = PPO(policy, env, verbose=0)
     model.learn(total_timesteps=total_timesteps)  
     return model 
+
+class RandomAgent:
+    """Random policy that randomly selections actions"""
+    def __init__(self, env):
+        self.action_space = env.action_space
+
+    def predict(self, observation, state=None, episode_start=None, deterministic=False):
+        action = self.action_space.sample()
+        return action, None
 
 
 class SimpleQEstimator:
@@ -152,3 +163,21 @@ class SimpleQEstimator:
     def load(self, filename: str):
         """Load a saved Q-network"""
         self.q_network.load_state_dict(torch.load(filename))
+
+def evaluate_model(environment_string,env,additional_info,model,seed):
+    """Evaluation Function that tailors the evaluation
+        based on the environment
+        
+    Arguments:
+        environment_string: String, such as cart_pole, describing the environment
+        env: Environment where we are evaluating the polciy
+        additional_info: Any additional info needed to evaluate
+            For example, for MIMIC, we need the Physician policy
+        model: Policy function \pi
+    
+    Returns: Average Reward (for most environments) or MIMIC WIQ score"""
+
+    if environment_string == "mimic":
+        return eval_mimic_model(additional_info['physpol'],model,additional_info['concept_list'],seed) 
+    else:
+        return get_average_reward(env,model)

@@ -1,76 +1,69 @@
 import numpy as np
 import gurobipy as gp
 from gurobipy import GRB
+import scipy
+
+from concept_abstraction.env_utils import rollout_q_estimates
 
 
-def random_selection(env,num_concepts):
+def random_selection(concept_list,num_concepts):
     """Randomly select {num_concepts} from env.concepts
     
     Arguments:
-        env: Gymasium environment
+        concept_list: Gymasium environment
         num_concepts: Integer, number of concepts to select
     
-    Returns: List of size {num_concepts} of integers
-        each representing a concept"""
+    Returns: List of size {num_concepts} of functions,
+            each representing a concept"""
     
-    total_concepts = len(env.concepts)
-    return np.random.choice(list(range(total_concepts)),num_concepts,replace=False)
+    total_concepts = len(concept_list)
+    idx = np.random.choice(list(range(total_concepts)),num_concepts,replace=False)
+    idx = sorted(idx)
+    return [concept_list[i] for i in idx]
 
-def greedy_selection(env,num_concepts):
+def greedy_selection(env,concept_list,num_concepts_selected,reference_model,selection_function):
     """Select {num_concepts} greedily
-        by selecting those that reduce the reward range within each partition
-        For example, first select the concept
-            so that, c_{i} = 0 and c_{i} = 1 each have
-                small differences between max and min reward
-
+        by first learning the Q(s,a) values from a rollout
+        Then selecting the concepts that reduce the standard deviation 
+        across all partitions
+    
     Arguments:
         env: Gymasium environment
-        num_concepts: Integer, number of concepts to select
+        concept_list: List of functions
+        num_concepts_selected: Integer, number of concepts to select
+        reference_model: A policy that performs well
+            which we are trying to distill
+        selection_function: String, whether we're selecting according to 
+            Q value, etc."""
     
-    Returns: List of size {num_concepts} of integers
-        each representing a concept"""
+    q_estimates = rollout_q_estimates(reference_model,env,concept_list)
+    unique_actions = list(set([int(i[1]) for i in q_estimates]))
 
-    total_concepts = []
-    all_concepts = env.concepts
-    reward_by_state = env.rewards
-    groups = [0 for i in range(len(reward_by_state))]
+    correlation_by_concept = []
+    if selection_function == "q_value":
+        for idx in range(len(concept_list)):
+            correlations = []
+            num_by_action = []
 
-    for _ in range(num_concepts):
-        scores_by_group = []
-        for k in range(len(all_concepts)):
-            if k in total_concepts:
-                scores_by_group.append(np.inf)
-                continue   
-            total_groups = max(groups)
-            total_score = 0
-            for g in range(total_groups+1):
-                states_in_group = [i for i in range(len(groups)) if groups[i] == g]
-                partition_0 = [i for i in states_in_group if env.concepts[k][i] == 0]
-                rewards_0 = np.array([reward_by_state[i] for i in partition_0])
-                partition_1 = [i for i in states_in_group if env.concepts[k][i] == 1]
-                rewards_1 = np.array([reward_by_state[i] for i in partition_1])
+            for action in unique_actions:
+                x_y_pair = [(i[0][idx],i[2]) for i in q_estimates if int(i[1]) == action]
+                x,y = zip(*x_y_pair)
+                num_by_action.append(len(x))
+                correlations.append(scipy.stats.pearsonr(x,y).statistic**2)
+            avg_correlation = np.sum(np.array(correlations)*np.array(num_by_action))/np.sum(num_by_action)
+            correlation_by_concept.append(avg_correlation)
+    elif selection_function == "policy":
+        for idx in range(len(concept_list)):
+            x_y_pair = [(i[0][idx],i[1]) for i in q_estimates]
+            x,y = zip(*x_y_pair)
+            avg_correlation = scipy.stats.pearsonr(x,y).statistic**2
+            correlation_by_concept.append(avg_correlation)
+    correlation_by_concept = np.array(correlation_by_concept)
+    idx = np.argpartition(-correlation_by_concept, num_concepts_selected)[:num_concepts_selected]
+    idx = idx[np.argsort(-correlation_by_concept[idx])]
+    concepts = [concept_list[i] for i in idx]
 
-                if len(rewards_0) > 0:
-                    for action in range(len(rewards_0[0])):
-                        total_score = max(np.max(rewards_0[:,action])-np.min(rewards_0[:,action]),total_score) 
-                if len(rewards_1) > 0:
-                    for action in range(len(rewards_1[0])):
-                        total_score = max(np.max(rewards_1[:,action])-np.min(rewards_1[:,action]),total_score) 
-            scores_by_group.append(total_score)
-        selected_idx = int(np.argmin(scores_by_group))
-
-        total_groups = max(groups)
-        new_groups = max(groups)
-        for g in range(total_groups+1):
-            states_in_group = [i for i in range(len(groups))  if groups[i] == g]
-            partition_0 = [i for i in states_in_group if env.concepts[selected_idx][i] == 0]
-            partition_1 = [i for i in states_in_group if env.concepts[selected_idx][i] == 1]
-            if len(partition_0) > 0 and len(partition_1) > 0:
-                for i in partition_1:
-                    groups[i] = new_groups + 1
-                new_groups += 1
-        total_concepts.append(selected_idx)
-    return total_concepts 
+    return concepts 
 
 def greedy_selection_real_world(env,num_concepts,concept_list,state_maps,metric='std'):
     """Select {num_concepts} greedily
