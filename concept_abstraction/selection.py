@@ -8,6 +8,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
 from skopt import Optimizer
 from copy import deepcopy
+import random
+from math import ceil
 
 from concept_abstraction.env_utils import rollout_q_estimates
 from concept_abstraction.concept_bank import inaccurate_concepts_continuous
@@ -74,9 +76,26 @@ def greedy_selection(env,concept_list,num_concepts_selected,reference_model,sele
         idx = idx[np.argsort(-correlation_by_concept[idx])]
         concepts = [concept_list[i] for i in idx]
     else:
-        # TODO: Implement this
-        pass 
-
+        correlation_by_concept = []
+        selection_function = "policy"
+        if selection_function == "q_value":
+            for idx in range(len(concept_list)):
+                total_variance = 0
+                for action in unique_actions:
+                    x_0 = [i[2] for i in q_estimates if i[0][idx] == 0 and int(i[1]) == action]
+                    x_1 = [i[2] for i in q_estimates if i[0][idx] == 1 and int(i[1]) == action]
+                    total_variance += np.std(x_0)*len(x_0) + np.std(x_1)*len(x_1)
+                correlation_by_concept.append(total_variance)
+        elif selection_function == "policy":
+            for idx in range(len(concept_list)):
+                x_0 = [i[1] for i in q_estimates if i[0][idx] == 0]
+                x_1 = [i[1] for i in q_estimates if i[0][idx] == 1]
+                total_variance = np.std(x_0)*len(x_0) + np.std(x_1)*len(x_1)
+                correlation_by_concept.append(total_variance)
+        correlation_by_concept = np.array(correlation_by_concept)
+        idx = np.argpartition(correlation_by_concept, num_concepts_selected)[:num_concepts_selected]
+        idx = idx[np.argsort(correlation_by_concept[idx])]
+        concepts = [concept_list[i] for i in idx]
     return concepts, idx
 
 
@@ -155,12 +174,36 @@ def greedy_iterative_selection(env,concept_list,num_concepts_selected,reference_
         idx = curr_concepts    
         concepts = [concept_list[i] for i in idx]
     else:
-        # TODO: Implement this
-        pass 
+        selected_concepts = []
+        for i in range(num_concepts_selected):
+            correlation_by_concept = []
+            for idx in range(len(concept_list)):
+                if idx in selected_concepts:
+                    correlation_by_concept.append(1000000)
+                    continue 
+                full_concepts = selected_concepts + [idx]
+                total_variance = 0
+                if selection_function == "q_value":
+                    for action in unique_actions:
+                        group_pairs = [(str(np.array(i[0])[full_concepts]),i[2]) for i in q_estimates if int(i[1]) == action]
+                        valid_str = set([i[0] for i in group_pairs])
+                        for concept in valid_str:
+                            subset = [i[1] for i in group_pairs if i[0] == concept]
+                            total_variance += np.std(subset) * len(subset)
+                elif selection_function == "policy":
+                    group_pairs = [(str(np.array(i[0])[full_concepts]),i[1]) for i in q_estimates]
+                    valid_str = set([i[0] for i in group_pairs])
+                    for concept in valid_str:
+                        subset = [i[1] for i in group_pairs if i[0] == concept]
+                        total_variance += np.std(subset) * len(subset)
+                correlation_by_concept.append(total_variance)
+            selected_concepts.append(np.argmin(correlation_by_concept))
+        idx = selected_concepts 
+        concepts = [concept_list[i] for i in idx]
 
     return concepts, idx
 
-def max_prefix_gurobi(final_vals, num_concepts_selected):
+def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True):
     """Arguments:
         final_vals: list of tuples (value, elements_covering_value)
                     assumed sorted in decreasing priority (top first)
@@ -199,8 +242,9 @@ def max_prefix_gurobi(final_vals, num_concepts_selected):
     
     # Prefix constraints: enforce consecutive coverage
     # y[i] <= y[i-1] for i>0
-    for i in range(1, n):
-        model.addConstr(y[i] <= y[i-1], name=f"prefix_{i}")
+    if in_order:
+        for i in range(1, n):
+            model.addConstr(y[i] <= y[i-1], name=f"prefix_{i}")
     
     model.addConstr(gp.quicksum(x[i] for i in range(m)) <= num_concepts_selected, name="budget")
     model.setObjective(gp.quicksum(y[i] for i in range(n)), GRB.MAXIMIZE)    
@@ -208,7 +252,7 @@ def max_prefix_gurobi(final_vals, num_concepts_selected):
     
     selected_elements = [U[i] for i in range(m) if x[i].X > 0.5]
     max_prefix_len = sum(1 for i in range(n) if y[i].X > 0.5)
-
+    print(max_prefix_len)
     return selected_elements, max_prefix_len
 
 
@@ -246,6 +290,7 @@ def lp_based_selection(env,concept_list,num_concepts_selected,reference_model,se
     if selection_function == "q_value":
         vals_by_action = []
         for a in unique_actions:
+            discretized_subset = discretized_X[actions == a]
             relevant_q_estimates = q_values[actions == a]
             relevant_threshold = np.argsort(relevant_q_estimates)
             lower_list = list(relevant_threshold)[:k]
@@ -256,7 +301,7 @@ def lp_based_selection(env,concept_list,num_concepts_selected,reference_model,se
             for low_idx in lower_list:
                 for high_idx in higher_list:
                     if abs(relevant_q_estimates[low_idx]-relevant_q_estimates[high_idx]) > target_abstraction:
-                        tup = (abs(relevant_q_estimates[low_idx]-relevant_q_estimates[high_idx]),[i for i in range(len(concept_list)) if discretized_X[low_idx][i] != discretized_X[high_idx][i]])
+                        tup = (abs(relevant_q_estimates[low_idx]-relevant_q_estimates[high_idx]),[i for i in range(len(concept_list)) if discretized_subset[low_idx][i] != discretized_subset[high_idx][i]])
                         final_vals.append(tup)
             final_vals = sorted(final_vals,reverse=True)
             selected_concepts, max_prefix_len = max_prefix_gurobi(final_vals,num_concepts_selected)
@@ -265,12 +310,35 @@ def lp_based_selection(env,concept_list,num_concepts_selected,reference_model,se
         idx = vals_by_action[np.argmin([i[0] for i in vals_by_action])][1]
         concepts = [concept_list[i] for i in idx]
     elif selection_function == "policy":
-        # TODO: Implement policy version
-        pass
+        if target_abstraction > 1:
+            return [],[] 
+        elif target_abstraction == 0:
+            return concept_list, list(range(len(concept_list)))
+
+
+        sample_by_action = []
+
+        for a in unique_actions:
+            X_reduced = discretized_X[actions == a]
+            sample_by_action.append(X_reduced)
+        weights = [len(lst) for lst in sample_by_action]
+
+        pairs = []
+        for i in range(100):
+            i, j = random.choices(range(len(sample_by_action)), weights=weights, k=2)
+            while i == j:  # ensure different lists
+                j = random.choices(range(len(sample_by_action)), weights=weights, k=1)[0]
+            a = random.choice(sample_by_action[i])
+            b = random.choice(sample_by_action[j])
+            pairs.append([i for i in range(len(a)) if a[i] != b[i]])
+
+        pairs = [(0,i) for i in pairs]
+        idx, _ = max_prefix_gurobi(pairs,num_concepts_selected,in_order=False)
+        concepts = [concept_list[i] for i in idx]
 
     return concepts, idx
 
-def max_accuracy_selection(final_vals,accuracies,direction):
+def max_accuracy_selection(final_vals,accuracies,direction,target_abstraction_percentage=1):
     """Select the set of concepts (where there are len(accuracies)
         total concepts)
         So that the average accuracy is maximized (if direction = 'max')
@@ -286,21 +354,25 @@ def max_accuracy_selection(final_vals,accuracies,direction):
     Returns: Indices for the selected concepts"""
 
     n = len(accuracies)
-    best_avg = -float('inf')
+    if direction == "max":
+        best_avg = -float('inf')
+    else:
+        best_avg = float('inf')
     best_selection = []
 
     # Compute feasible range for number of selected concepts
     # Minimum number of concepts = max number of disjoint sets in final_vals
-    min_k = max(len(lst) for lst in final_vals)  # conservative lower bound
-    max_k = n  # upper bound: all concepts
-
+    min_k = 1
+    max_k = n
     for k in range(min_k, max_k + 1):
         m = Model()
         m.Params.OutputFlag = 0  # silent
 
         x = m.addVars(n, vtype=GRB.BINARY)
-        for lst in final_vals:
-            m.addConstr(quicksum(x[i] for i in lst) >= 1)
+        y = m.addVars(len(final_vals), vtype=GRB.BINARY)  # y[j] = 1 if list j has >=1 selected
+        for j, lst in enumerate(final_vals):
+            m.addConstr(quicksum(x[i] for i in lst) >= 1 * y[j])
+        m.addConstr(quicksum(y[j] for j in range(len(final_vals))) >= ceil(target_abstraction_percentage * len(final_vals)))
         m.addConstr(quicksum(x[i] for i in range(n)) == k)
         if direction == 'max':
             m.setObjective(quicksum(accuracies[i] * x[i] for i in range(n)), GRB.MAXIMIZE)
@@ -311,9 +383,14 @@ def max_accuracy_selection(final_vals,accuracies,direction):
         if m.Status == GRB.OPTIMAL:
             selected = [i for i in range(n) if x[i].X > 0.5]
             avg_acc = sum(accuracies[i] for i in selected) / k
-            if avg_acc > best_avg:
-                best_avg = avg_acc
-                best_selection = selected
+            if direction == "max":
+                if avg_acc > best_avg:
+                    best_avg = avg_acc
+                    best_selection = selected
+            else:
+                if avg_acc < best_avg:
+                    best_avg = avg_acc
+                    best_selection = selected
 
     return best_selection, best_avg
 
@@ -370,8 +447,28 @@ def imperfect_lp_selection(env,concept_list,reference_model,selection_function,t
         idx = vals_by_action[np.argmin([i[0] for i in vals_by_action])][1]
         concepts = [concept_list[i] for i in idx]
     elif selection_function == "policy":
-        # TODO: Implement policy selection
-        pass 
+        if target_abstraction > 1:
+            return [],[] 
+        elif target_abstraction == 0:
+            return concept_list, list(range(len(concept_list)))
+
+        sample_by_action = []
+
+        for a in unique_actions:
+            X_reduced = discretized_X[actions == a]
+            sample_by_action.append(X_reduced)
+        weights = [len(lst) for lst in sample_by_action]
+
+        pairs = []
+        for i in range(100):
+            i, j = random.choices(range(len(sample_by_action)), weights=weights, k=2)
+            while i == j:  # ensure different lists
+                j = random.choices(range(len(sample_by_action)), weights=weights, k=1)[0]
+            a = random.choice(sample_by_action[i])
+            b = random.choice(sample_by_action[j])
+            pairs.append([i for i in range(len(a)) if a[i] != b[i]])
+        idx, _ = max_accuracy_selection(pairs,accuracies,direction,target_abstraction_percentage=target_abstraction)
+        concepts = [concept_list[i] for i in idx]
 
     return concepts, idx
 
