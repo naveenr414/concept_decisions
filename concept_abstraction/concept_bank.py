@@ -32,7 +32,7 @@ def get_all_tree_concepts(num_layers):
     return [get_binary_tree_concept(i,num_layers) for i in range(num_layers)]+[get_final_tree_concept]
 
 ### MIMIC Concepts
-def clustering_concept_mimic(n_clusters,seed):
+def clustering_concept_mimic(X_train_concepts,n_clusters,seed):
     """Concept for MIMIC derived from clustering
     
     Arguments:
@@ -41,22 +41,13 @@ def clustering_concept_mimic(n_clusters,seed):
     
     Returns: Function that maps state to cluster (integer)"""
 
-    MIMICzs = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/MIMICzs.csv")
-    metadata = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/metadata.csv")
-
-    C_ICUSTAYID = "icustayid"
-    unique_icu_stays = metadata[C_ICUSTAYID].unique()
-
-    train_ids, _ = train_test_split(unique_icu_stays, test_size=0.1,random_state=seed)
-    train_indexes = metadata[metadata[C_ICUSTAYID].isin(train_ids)].index
-
-    X_train = MIMICzs.iloc[train_indexes]
-    state_data = X_train.values
+    state_data = X_train_concepts
     sample = state_data[np.random.choice(len(state_data),
                                             size=int(len(state_data) * 0.25),
                                             replace=False)]
     clusterer = MiniBatchKMeans(n_clusters=n_clusters,
                                 max_iter=30,n_init=32).fit(sample)
+    centers = clusterer.cluster_centers_
 
     def cluster_concept(state_data):
         """
@@ -67,7 +58,19 @@ def clustering_concept_mimic(n_clusters,seed):
             and an array of clustering indexes ranging from 0 to n_clusters.
         """
         return clusterer.predict([state_data])[0]
-    return cluster_concept
+    return cluster_concept, centers
+
+def mimic_concept(i):
+    """Get the ith index of a concept
+    
+    Arguments:
+        i: Integer, idx
+    
+    Returns: Function that returns the ith index into a vector"""
+    def mimic_index(obs):
+        return obs[i] 
+    
+    return mimic_index
 
 ### CartPole Concepts
 def get_cart_pole_concept(i):
@@ -258,7 +261,7 @@ def get_concepts(environment_string,concept_source,seed):
         num_layers = len(bin(num_nodes+1))-3
         human_selected['tree_{}'.format(num_nodes)] = get_all_tree_concepts(num_layers)
 
-    human_selected['mimic'] = [clustering_concept_mimic(25,seed)]
+    human_selected['mimic'] = [mimic_concept(i) for i in range(47)]
     human_selected['cart_pole'] = [get_cart_pole_concept(i) for i in range(4)]
     human_selected['boxing'] = [boxing_player_x,boxing_player_y,boxing_enemy_x,boxing_enemy_y,boxing_player_v_x,boxing_player_v_y,boxing_enemy_v_x,boxing_enemy_v_y]
     human_selected['pong'] = [pong_paddle_y,pong_ball_x,pong_ball_y,pong_ball_v_x,pong_ball_v_y,pong_enemy_y,pong_enemy_v_y]

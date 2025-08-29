@@ -13,7 +13,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv, VecFrameStack, Dummy
 from concept_abstraction.post_hoc import BinaryFeatureEnvironmentWrapper, CartPoleBinaryFeatureExtractor
 from concept_abstraction.utils import one_hot_state
 from concept_abstraction.mimic import *
-from concept_abstraction.mimic import C_INPUT_STEP, C_MAX_DOSE_VASO
+from concept_abstraction.concept_bank import clustering_concept_mimic, mimic_concept
 
 class ConceptEnv(gym.Env):
     """Build a new concept-based environment"""
@@ -327,6 +327,8 @@ def create_mimic_environment(concept_list,seed):
         
     Returns: ConceptEnv"""
 
+    N_CLUSTERS = 750
+
     MIMICraw = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/MIMICraw.csv")
     MIMICzs = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/MIMICzs.csv")
     metadata = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/metadata.csv")
@@ -350,7 +352,11 @@ def create_mimic_environment(concept_list,seed):
     metadata_train = metadata.iloc[train_indexes]
     actions_train = all_actions[train_indexes]
 
-    states_train = np.array([concept_list[0](i) for i in X_train.values])
+    cluster_concept, centers = clustering_concept_mimic(X_train.values,N_CLUSTERS,seed)
+    zeros = np.zeros((2, centers.shape[1]))
+    centers = np.vstack([centers, zeros])
+
+    states_train = np.array([cluster_concept(i) for i in X_train.values])
 
     n_cluster_states = np.max(states_train)+1
     absorbing_states =  [n_cluster_states + 1, n_cluster_states]
@@ -383,19 +389,26 @@ def create_mimic_environment(concept_list,seed):
         transition_threshold=transition_threshold
     )
 
-    observation_space = spaces.Box(0,1, shape=(n_states,))
+    if concept_list == None:
+        concept_list = [mimic_concept(i) for i in range(47)]
+        modified_concept_list = [lambda s, concept=concept: concept(centers[s]) 
+                            for concept in concept_list]
+    else:
+        modified_concept_list = concept_list
+
+    observation_space = spaces.Box(0,1, shape=(len(concept_list),))
     action_space = spaces.Discrete(25)
     rewards = R
     transitions = transitionr.transpose((1,2,0)) 
     max_steps = 10000
     all_states = list(range(n_states)) 
-    
+
     done_map = lambda s: s in [n_cluster_states,n_cluster_states+1]
     state_distro = state_distro
-    env = ConceptEnv([lambda s: one_hot_state(s,n_states)],observation_space,action_space,rewards,transitions,all_states,max_steps,state_distro=state_distro,done_map=done_map)
-    return physpol, env 
+    env = ConceptEnv(modified_concept_list,observation_space,action_space,rewards,transitions,all_states,max_steps,state_distro=state_distro,done_map=done_map)
+    return physpol, env, cluster_concept, modified_concept_list
 
-def eval_mimic_model(physpol,model,concept_list,seed):
+def eval_mimic_model(physpol,model,cluster_concept,concept_list,seed):
     """Evaluate a MIMIC policy via the WIS score
     
     Arguments:
@@ -438,13 +451,11 @@ def eval_mimic_model(physpol,model,concept_list,seed):
     metadata_val = metadata.iloc[val_indexes]
     actions_val = all_actions[val_indexes]
 
-    states_train = np.array([concept_list[0](i) for i in X_train.values])
-    states_val = np.array([concept_list[0](i) for i in X_val.values])
-
-    n_states = np.max(states_train)+3
+    states_train = np.array([cluster_concept(i) for i in X_train.values])
+    states_val = np.array([cluster_concept(i) for i in X_val.values])
 
     phys_probs = compute_physician_probabilities(physpol,np.max(states_train)+1,states=states_val, actions=actions_val)
-    model_probs = compute_model_probabilities(model,[lambda s: one_hot_state(s,n_states)],states=states_val, actions=actions_val)
+    model_probs = compute_model_probabilities(model,concept_list,states=states_val, actions=actions_val)
     val_bootwis, _,  _ = evaluate_policy_wis(
         metadata_val,
         phys_probs,
@@ -577,7 +588,7 @@ def get_binary_subset_env(golden_model, env, indices,accuracies=None):
     subset_env = BinaryObservationSubsetWrapper(binary_env, indices,accuracies=accuracies)    
     return subset_env
 
-def get_environment(environment_string,concept_list):
+def get_environment(environment_string,concept_list,seed):
     """Get a specific environment based on a string + concept list
     
     Arguments:
@@ -596,9 +607,9 @@ def get_environment(environment_string,concept_list):
         env = eval_env = create_tree_env(num_nodes,concept_list)
         return env, {}
     elif environment_string == "mimic":
-        physpol, env = create_mimic_environment(concept_list,42)
+        physpol, env, cluster_concept,new_concept_list = create_mimic_environment(concept_list,seed)
         eval_env = env
-        additional_info = {'physpol': physpol, 'concept_list': concept_list}
+        additional_info = {'physpol': physpol, 'cluster_concept': cluster_concept, 'concept_list': new_concept_list}
     elif environment_string == "cart_pole":
         if concept_list is None:
             env = gym.make("CartPole-v1",render_mode="rgb_array")

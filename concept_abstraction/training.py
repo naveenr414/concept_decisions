@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+import torch.distributions as D
 from stable_baselines3 import DQN, PPO
 from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
@@ -50,15 +51,37 @@ def train_two_stage_ppo_model(env,total_timesteps):
     model = TwoStagePPO(TwoStagePolicy, env, state_loss_weight=1.0)
     model.learn(total_timesteps=total_timesteps)
     return model 
+class DistributionWrapper:
+    def __init__(self, logits):
+        # logits = unnormalized scores (before softmax)
+        self.logits = logits
+        self.distribution = D.Categorical(logits=logits)
+
+
+class Policy:
+    def __init__(self, num_actions):
+        self.num_actions = num_actions
+
+    def get_distribution(self, obs):
+        batch_size = len(obs)
+        # uniform logits: shape (batch_size, num_actions)
+        logits = torch.zeros((batch_size, self.num_actions))
+        return DistributionWrapper(logits)
+
 
 class RandomAgent:
-    """Random policy that randomly selections actions"""
+    """Random policy that randomly selects actions"""
+
     def __init__(self, env):
         self.action_space = env.action_space
+        self.device = "cuda"
+        self.policy = Policy(self.action_space.n)
 
     def predict(self, observation, state=None, episode_start=None, deterministic=False):
         action = self.action_space.sample()
         return action, None
+
+    
 
 
 class SimpleQEstimator:
@@ -302,6 +325,6 @@ def evaluate_model(environment_string,env,additional_info,model,seed):
     Returns: Average Reward (for most environments) or MIMIC WIQ score"""
 
     if environment_string == "mimic":
-        return eval_mimic_model(additional_info['physpol'],model,additional_info['concept_list'],seed) 
+        return eval_mimic_model(additional_info['physpol'],model,additional_info['cluster_concept'],additional_info['concept_list'],seed) 
     else:
         return get_average_reward(env,model)

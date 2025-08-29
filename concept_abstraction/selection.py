@@ -252,7 +252,6 @@ def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True):
     
     selected_elements = [U[i] for i in range(m) if x[i].X > 0.5]
     max_prefix_len = sum(1 for i in range(n) if y[i].X > 0.5)
-    print(max_prefix_len)
     return selected_elements, max_prefix_len
 
 
@@ -287,6 +286,7 @@ def lp_based_selection(env,concept_list,num_concepts_selected,reference_model,se
 
     k = int(np.sqrt(len(discretized_X)))
 
+    # TODO: Change the q_value formulation, so we select the max min across all actions
     if selection_function == "q_value":
         vals_by_action = []
         for a in unique_actions:
@@ -305,6 +305,7 @@ def lp_based_selection(env,concept_list,num_concepts_selected,reference_model,se
                         final_vals.append(tup)
             final_vals = sorted(final_vals,reverse=True)
             selected_concepts, max_prefix_len = max_prefix_gurobi(final_vals,num_concepts_selected)
+            print(selected_concepts,max_prefix_len)
             vals_by_action.append((max_prefix_len,selected_concepts))
 
         idx = vals_by_action[np.argmin([i[0] for i in vals_by_action])][1]
@@ -424,6 +425,7 @@ def imperfect_lp_selection(env,concept_list,reference_model,selection_function,t
 
     k = int(np.sqrt(len(discretized_X)))
 
+    # TODO: Modify this so we select the max-min across q_values
     if selection_function == "q_value":
         vals_by_action = []
         for a in unique_actions:
@@ -499,7 +501,6 @@ def greedy_selection_supervised(train_matrix,labels,num_concepts):
     groups = {0: np.arange(n_samples)}
     
     for iteration in range(num_concepts):
-        print("On iteration {}".format(iteration))
         best_score = np.inf
         best_concept = -1
         best_partition = None  # store how groups would look if we choose this concept
@@ -593,7 +594,6 @@ def bayesian_iterative_selection(env,eval_env,environment_string,additional_info
         concept_idx = [i for i, xi in enumerate(x) if xi > 0.5]
         
         reward = run(concept_idx)
-        print(reward)
         
         opt.tell(x, -reward)
         
