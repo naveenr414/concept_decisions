@@ -16,7 +16,7 @@ def get_all_cyclic_concepts(env_nodes):
 ### Tree Concepts
 def get_binary_tree_concept(i,num_layers):
     def get_concept(state):
-        binary_rep = bin(state)[2:]
+        binary_rep = bin(state+1)[2:]
         binary_rep = '0'*(num_layers-len(binary_rep)) + binary_rep
         return int(binary_rep[i])
     return get_concept 
@@ -215,15 +215,15 @@ def boxing_enemy_v_y(obs):
 ### Pong Concepts
 def pong_paddle_y(obs):
     obs = np.array(obs)
-    return obs[-1,1] 
+    return obs[-1,1]/255
 
 def pong_ball_x(obs):
     obs = np.array(obs)
-    return obs[-1,2] 
+    return obs[-1,2]/255
 
 def pong_ball_y(obs):
     obs = np.array(obs)
-    return obs[-1,3]
+    return obs[-1,3]/255
 
 def pong_ball_v_x(obs):
     obs = np.array(obs)
@@ -235,7 +235,7 @@ def pong_ball_v_y(obs):
 
 def pong_enemy_y(obs):
     obs = np.array(obs)
-    return obs[-1,5]
+    return obs[-1,5]/255
 
 def pong_enemy_v_y(obs):
     obs = np.array(obs)

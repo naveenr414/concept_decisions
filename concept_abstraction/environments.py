@@ -9,7 +9,7 @@ from collections import Counter
 from sklearn.model_selection import train_test_split
 from gymnasium.wrappers import FrameStack  # gym’s own for single envs
 
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecFrameStack, DummyVecEnv
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecFrameStack, DummyVecEnv, VecNormalize
 from concept_abstraction.post_hoc import BinaryFeatureEnvironmentWrapper, CartPoleBinaryFeatureExtractor
 from concept_abstraction.utils import one_hot_state
 from concept_abstraction.mimic import *
@@ -37,7 +37,7 @@ class ConceptEnv(gym.Env):
 
     def get_observation(self):
         if self.concept_list is None:
-            return self.state 
+            return one_hot_state(self.state,len(self.all_states))
         else:
             return np.array([concept(self.state) for concept in self.concept_list])
 
@@ -237,7 +237,7 @@ def create_cyclic_env(num_nodes,concept_list):
     action_space = spaces.Discrete(3)
 
     if concept_list is None:
-        observation_space = spaces.Discrete(num_nodes)
+        observation_space = spaces.MultiBinary(environment_nodes)
     else:
         observation_space = spaces.MultiBinary(len(concept_list))
     all_states = list(range(environment_nodes))
@@ -291,7 +291,10 @@ def create_tree_env(num_nodes,concept_list):
     num_layers = int(np.log2(environment_nodes+1))
     all_states = list(range(environment_nodes))
     action_space = spaces.Discrete(2)
-    observation_space = spaces.MultiBinary(len(concept_list))
+    if concept_list is None:
+        observation_space = spaces.MultiBinary(environment_nodes)
+    else:
+        observation_space = spaces.MultiBinary(len(concept_list))
     max_steps = 20
 
     rewards = np.zeros((environment_nodes,action_space.n))
@@ -306,7 +309,8 @@ def create_tree_env(num_nodes,concept_list):
         for action in range(len(transitions[state])):
             if state >= environment_nodes//2:
                 if state == environment_nodes//2:
-                    transitions[state][action][0] = 1
+                    transitions[state][0][0] = 1
+                    transitions[state][1][2] = 1
                 else:
                     transitions[state][action][2] = 1
             else:
@@ -465,7 +469,7 @@ def eval_mimic_model(physpol,model,cluster_concept,concept_list,seed):
         200
     )
 
-    return np.quantile(val_bootwis, 0.05)
+    return np.mean(val_bootwis)
 
 
 def get_raw_pixels_cartpole(env, obs=None):
@@ -504,7 +508,7 @@ def get_raw_state_atari(env,obs):
     small_pixels = resize(pixels, (84, 84), anti_aliasing=True)
     return (small_pixels*255).astype(np.uint8).reshape((1,84,84))
 
-def make_ocenv(env_name,concept_list,observation_space,seed=0):
+def make_ocenv(env_name,concept_list,observation_space,seed=0,recordable=False):
     """Create an OCAtari environment for a given concept list
     
     Arguments:
@@ -514,13 +518,22 @@ def make_ocenv(env_name,concept_list,observation_space,seed=0):
         observation_space: Type of environment observation
     
     Returns: Gym Environment wrapped with Concepts"""
-    env = ocatari.OCAtari(
-        env_name,
-        mode="ram",
-        render_mode=None,
-        frameskip=1,  # Keep frameskip=1 so consecutive frames actually differ
-        difficulty=0  # easiest opponent
-    )
+    if recordable:
+        env = ocatari.OCAtari(
+            env_name,
+            mode="ram",
+            render_mode="rgb_array",
+            frameskip=1,  # Keep frameskip=1 so consecutive frames actually differ
+            difficulty=0  # easiest opponent
+        )
+    else:
+        env = ocatari.OCAtari(
+            env_name,
+            mode="ram",
+            render_mode=None,
+            frameskip=1,  # Keep frameskip=1 so consecutive frames actually differ
+            difficulty=0  # easiest opponent
+        )
     env.ale = env._ale 
     
     # Apply ConceptWrapper (assuming it returns the pixel observations)
@@ -540,8 +553,27 @@ class LazyFramesToNumpy(gym.ObservationWrapper):
             obs = obs.squeeze(1)
         return obs
 
+class ActionMaskWrapper(gym.Wrapper):
+    """
+    Restrict action space to a subset of original actions.
+    For Pong: keep only [UP, DOWN] (originally 2 and 3).
+    """
 
-def get_n_atari_env(n_envs,atari_env_name,concept_list,observation_space):
+    def __init__(self, env, allowed_actions=(2, 3)):
+        super().__init__(env)
+        self.allowed_actions = allowed_actions
+        self.action_space = spaces.Discrete(len(allowed_actions))
+
+    def step(self, action):
+        real_action = self.allowed_actions[action]
+        ret = self.env.step(real_action)
+        return ret
+
+    def reset(self, **kwargs):
+        return self.env.reset(**kwargs)
+
+
+def get_n_atari_env(n_envs,atari_env_name,concept_list,observation_space,recordable=False):
     """Create a series of parallel Atari environments 
     
     Arguments:
@@ -552,6 +584,7 @@ def get_n_atari_env(n_envs,atari_env_name,concept_list,observation_space):
     
     Returns: SubprocVecEnv with all the environments"""
     
+    # TODO: Remove the action mask wrapper
     if n_envs > 1:
         vec_env = SubprocVecEnv([
             lambda seed=i: make_ocenv(atari_env_name, concept_list, observation_space, seed=seed)
@@ -560,12 +593,12 @@ def get_n_atari_env(n_envs,atari_env_name,concept_list,observation_space):
         if concept_list is None:
             vec_env = VecFrameStack(vec_env, n_stack=4)
     else:
-        env = make_ocenv(atari_env_name, concept_list, observation_space, seed=0)
-
+        env = make_ocenv(atari_env_name, concept_list, observation_space, seed=0,recordable=recordable)
+        # env = ActionMaskWrapper(env,allowed_actions=(0,2, 3))
         if concept_list is None:
             env = FrameStack(env, num_stack=4)
             env = LazyFramesToNumpy(env)
-        vec_env = env
+        vec_env = env 
     return vec_env
 
 
@@ -605,7 +638,6 @@ def get_environment(environment_string,concept_list,seed):
     elif "tree" in environment_string:
         num_nodes = int(environment_string.split("_")[-1])
         env = eval_env = create_tree_env(num_nodes,concept_list)
-        return env, {}
     elif environment_string == "mimic":
         physpol, env, cluster_concept,new_concept_list = create_mimic_environment(concept_list,seed)
         eval_env = env
@@ -637,7 +669,6 @@ def get_environment(environment_string,concept_list,seed):
         else:
             env = get_n_atari_env(8,"BoxingNoFrameskip-v4",concept_list,spaces.Box(low=-255, high=255, shape=(len(concept_list),), dtype=np.float32))
             eval_env = get_n_atari_env(1,"BoxingNoFrameskip-v4",concept_list,spaces.Box(low=-255, high=255, shape=(len(concept_list),), dtype=np.float32))
-        eval_env = eval_env.envs[0]
 
     elif environment_string == "pong":
         if concept_list is None:

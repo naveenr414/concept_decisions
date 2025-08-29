@@ -9,6 +9,7 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from typing import Callable
 import numpy as np
 import gymnasium as gym
+import random 
 
 
 from concept_abstraction.env_utils import get_average_reward
@@ -324,6 +325,8 @@ def evaluate_model(environment_string,env,additional_info,model,seed):
     
     Returns: Average Reward (for most environments) or MIMIC WIQ score"""
 
+    np.random.seed(seed)
+    random.seed(seed)
     if environment_string == "mimic":
         return eval_mimic_model(additional_info['physpol'],model,additional_info['cluster_concept'],additional_info['concept_list'],seed) 
     else:

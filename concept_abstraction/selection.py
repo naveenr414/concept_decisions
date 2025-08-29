@@ -11,7 +11,7 @@ from copy import deepcopy
 import random
 from math import ceil
 
-from concept_abstraction.env_utils import rollout_q_estimates
+from concept_abstraction.env_utils import rollout_q_estimates_td, rollout_pi_estimates
 from concept_abstraction.concept_bank import inaccurate_concepts_continuous
 from concept_abstraction.training import train_two_stage_ppo_model, evaluate_model
 from concept_abstraction.environments import InfoTransformWrapper
@@ -47,7 +47,10 @@ def greedy_selection(env,concept_list,num_concepts_selected,reference_model,sele
         selection_function: String, whether we're selecting according to 
             Q value, etc."""
     
-    q_estimates = rollout_q_estimates(reference_model,env,concept_list)
+    if selection_function == "q_value":
+        q_estimates = rollout_q_estimates_td(reference_model,env,concept_list)
+    elif selection_function == "policy":
+        q_estimates = rollout_pi_estimates(reference_model,env,concept_list)
     unique_actions = list(set([int(i[1]) for i in q_estimates]))
 
     # Continuous
@@ -62,7 +65,10 @@ def greedy_selection(env,concept_list,num_concepts_selected,reference_model,sele
                     x_y_pair = [(i[0][idx],i[2]) for i in q_estimates if int(i[1]) == action]
                     x,y = zip(*x_y_pair)
                     num_by_action.append(len(x))
-                    correlations.append(scipy.stats.pearsonr(x,y).statistic**2)
+                    if len(x) <= 2:
+                        correlations.append(0)
+                    else:
+                        correlations.append(scipy.stats.pearsonr(x,y).statistic**2)
                 avg_correlation = np.sum(np.array(correlations)*np.array(num_by_action))/np.sum(num_by_action)
                 correlation_by_concept.append(avg_correlation)
         elif selection_function == "policy":
@@ -77,7 +83,6 @@ def greedy_selection(env,concept_list,num_concepts_selected,reference_model,sele
         concepts = [concept_list[i] for i in idx]
     else:
         correlation_by_concept = []
-        selection_function = "policy"
         if selection_function == "q_value":
             for idx in range(len(concept_list)):
                 total_variance = 0
@@ -114,7 +119,10 @@ def greedy_iterative_selection(env,concept_list,num_concepts_selected,reference_
         selection_function: String, whether we're selecting according to 
             Q value, etc."""
     
-    q_estimates = rollout_q_estimates(reference_model,env,concept_list)
+    if selection_function == "q_value":
+        q_estimates = rollout_q_estimates_td(reference_model,env,concept_list)
+    elif selection_function == "policy":
+        q_estimates = rollout_pi_estimates(reference_model,env,concept_list)
     unique_actions = list(set([int(i[1]) for i in q_estimates]))
 
     # Continuous
@@ -140,14 +148,17 @@ def greedy_iterative_selection(env,concept_list,num_concepts_selected,reference_
 
                             X = np.array(X_list)
                             y = np.array(y_list)
-                            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=0)
+                            if len(X) <= 2:
+                                r2 = 0
+                            else:
+                                X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=0)
 
-                            model = LinearRegression()
-                            model.fit(X_train, y_train)
-                            # Predict
-                            y_pred = model.predict(X_test)
-                            # Evaluate
-                            r2 = r2_score(y_test, y_pred)
+                                model = LinearRegression()
+                                model.fit(X_train, y_train)
+                                # Predict
+                                y_pred = model.predict(X_test)
+                                # Evaluate
+                                r2 = r2_score(y_test, y_pred)
                             correlations.append(r2)
                             num_by_action.append(len(X))
                         avg_correlation = np.sum(np.array(correlations)*np.array(num_by_action))/np.sum(num_by_action)
@@ -270,44 +281,54 @@ def lp_based_selection(env,concept_list,num_concepts_selected,reference_model,se
         selection_function: String, whether we're selecting according to 
             Q value, etc."""
     
-    q_estimates = rollout_q_estimates(reference_model,env,concept_list)
+    if selection_function == "q_value":
+        q_estimates = rollout_q_estimates_td(reference_model,env,concept_list)
+    elif selection_function == "policy":
+        q_estimates = rollout_pi_estimates(reference_model,env,concept_list)
     unique_actions = list(set([int(i[1]) for i in q_estimates]))
-    q_values = np.array([i[2] for i in q_estimates])
     actions = np.array([i[1] for i in q_estimates])
 
     # Continuous
     if type(env.observation_space) is spaces.Box:
-        # Discrete relaxation
         all_concepts = np.array([i[0] for i in q_estimates])
         median_by_column = np.median(all_concepts,axis=0)
         discretized_X = (all_concepts < median_by_column).astype(np.int8)
     else:
         discretized_X = np.array([i[0] for i in q_estimates])
 
-    k = int(np.sqrt(len(discretized_X)))
 
-    # TODO: Change the q_value formulation, so we select the max min across all actions
     if selection_function == "q_value":
+        q_values = np.array([i[2] for i in q_estimates])
+
+        k = int(np.sqrt(len(discretized_X)))
+
         vals_by_action = []
+
+        all_lower_list = []
+        all_higher_list = []
+
         for a in unique_actions:
-            discretized_subset = discretized_X[actions == a]
-            relevant_q_estimates = q_values[actions == a]
-            relevant_threshold = np.argsort(relevant_q_estimates)
-            lower_list = list(relevant_threshold)[:k]
-            higher_list = list(relevant_threshold)[-k:]
-            
-            final_vals = []
+            relevant_idx = np.where(actions == a)[0]
+            relevant_q = q_values[relevant_idx]
+            order = np.argsort(relevant_q)
+            lower_list = relevant_idx[order[:k]]
+            higher_list = relevant_idx[order[-k:]]
+            all_lower_list.append(lower_list)
+            all_higher_list.append(higher_list)
 
-            for low_idx in lower_list:
-                for high_idx in higher_list:
-                    if abs(relevant_q_estimates[low_idx]-relevant_q_estimates[high_idx]) > target_abstraction:
-                        tup = (abs(relevant_q_estimates[low_idx]-relevant_q_estimates[high_idx]),[i for i in range(len(concept_list)) if discretized_subset[low_idx][i] != discretized_subset[high_idx][i]])
-                        final_vals.append(tup)
-            final_vals = sorted(final_vals,reverse=True)
-            selected_concepts, max_prefix_len = max_prefix_gurobi(final_vals,num_concepts_selected)
-            print(selected_concepts,max_prefix_len)
-            vals_by_action.append((max_prefix_len,selected_concepts))
+        final_vals = []
 
+        for a in range(len(unique_actions)):
+            for low_idx in all_lower_list[a]:
+                for high_idx in all_higher_list[a]:
+                    if abs(q_values[low_idx]-q_values[high_idx]) > target_abstraction:
+                        tup = (abs(q_values[low_idx]-q_values[high_idx]),[i for i in range(len(concept_list)) if discretized_X[low_idx][i] != discretized_X[high_idx][i]])
+                        if tup not in final_vals:
+                            final_vals.append(tup)
+        final_vals = sorted(final_vals,reverse=True)
+
+        selected_concepts, max_prefix_len = max_prefix_gurobi(final_vals,num_concepts_selected)
+        vals_by_action.append((max_prefix_len,selected_concepts))
         idx = vals_by_action[np.argmin([i[0] for i in vals_by_action])][1]
         concepts = [concept_list[i] for i in idx]
     elif selection_function == "policy":
@@ -315,7 +336,6 @@ def lp_based_selection(env,concept_list,num_concepts_selected,reference_model,se
             return [],[] 
         elif target_abstraction == 0:
             return concept_list, list(range(len(concept_list)))
-
 
         sample_by_action = []
 
@@ -327,7 +347,7 @@ def lp_based_selection(env,concept_list,num_concepts_selected,reference_model,se
         pairs = []
         for i in range(100):
             i, j = random.choices(range(len(sample_by_action)), weights=weights, k=2)
-            while i == j:  # ensure different lists
+            while i == j: 
                 j = random.choices(range(len(sample_by_action)), weights=weights, k=1)[0]
             a = random.choice(sample_by_action[i])
             b = random.choice(sample_by_action[j])
@@ -410,9 +430,11 @@ def imperfect_lp_selection(env,concept_list,reference_model,selection_function,t
         selection_function: String, whether we're selecting according to 
             Q value, etc."""
     
-    q_estimates = rollout_q_estimates(reference_model,env,concept_list)
+    if selection_function == "q_value":
+        q_estimates = rollout_q_estimates_td(reference_model,env,concept_list)
+    elif selection_function == "policy":
+        q_estimates = rollout_pi_estimates(reference_model,env,concept_list)
     unique_actions = list(set([int(i[1]) for i in q_estimates]))
-    q_values = np.array([i[2] for i in q_estimates])
     actions = np.array([i[1] for i in q_estimates])
     # Continuous
     if type(env.observation_space) is spaces.Box:
@@ -425,8 +447,9 @@ def imperfect_lp_selection(env,concept_list,reference_model,selection_function,t
 
     k = int(np.sqrt(len(discretized_X)))
 
-    # TODO: Modify this so we select the max-min across q_values
     if selection_function == "q_value":
+        q_values = np.array([i[2] for i in q_estimates])
+
         vals_by_action = []
         for a in unique_actions:
             relevant_q_estimates = q_values[actions == a]
