@@ -584,7 +584,6 @@ def get_n_atari_env(n_envs,atari_env_name,concept_list,observation_space,recorda
     
     Returns: SubprocVecEnv with all the environments"""
     
-    # TODO: Remove the action mask wrapper
     if n_envs > 1:
         vec_env = SubprocVecEnv([
             lambda seed=i: make_ocenv(atari_env_name, concept_list, observation_space, seed=seed)
