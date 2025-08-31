@@ -14,6 +14,7 @@ from concept_abstraction.post_hoc import BinaryFeatureEnvironmentWrapper, CartPo
 from concept_abstraction.utils import one_hot_state
 from concept_abstraction.mimic import *
 from concept_abstraction.concept_bank import clustering_concept_mimic, mimic_concept
+import minigrid
 
 class ConceptEnv(gym.Env):
     """Build a new concept-based environment"""
@@ -485,6 +486,19 @@ def get_raw_pixels_cartpole(env, obs=None):
     small_pixels = resize(gray, (84, 84), anti_aliasing=True)  # float 0-1
     return (small_pixels * 255).astype(np.uint8).reshape((1, 84, 84))
 
+def get_raw_state_mini_grid(env,obs=None):
+    """In mini_grid Environment, return the pixels
+    
+    Arguments:
+        env: CartPole environment
+    
+    Returns: Numpy array of size 1x84x84"""
+    obs_ch_first = np.transpose(obs['image'], (2, 0, 1))  # 3x7x7
+    obs_ch_first = obs_ch_first.flatten()
+
+    obs_ch_first = np.append(obs_ch_first,np.array([env.unwrapped.agent_pos[0],env.unwrapped.agent_pos[1],env.unwrapped.agent_dir]))
+    return obs_ch_first
+
 def get_raw_state_cartpole(env,obs):
     """Get the raw underlying state in a CartPole environment
     Arguments:
@@ -641,6 +655,24 @@ def get_environment(environment_string,concept_list,seed):
         physpol, env, cluster_concept,new_concept_list = create_mimic_environment(concept_list,seed)
         eval_env = env
         additional_info = {'physpol': physpol, 'cluster_concept': cluster_concept, 'concept_list': new_concept_list}
+    elif environment_string  == "mini_grid":
+        if concept_list == None:
+            env = gym.make("MiniGrid-DoorKey-5x5-v0")
+            env = eval_env = ConceptWrapper(env,None,spaces.Box(
+                    low=0, high=8,
+                    shape=(150,),  # Height x Width, no color channel
+                    dtype=np.uint8
+                ),get_raw_state_mini_grid)
+        else:
+            env = gym.make("MiniGrid-DoorKey-5x5-v0")
+            env = ConceptWrapper(env,None,spaces.Box(
+                    low=0, high=8,
+                    shape=(150,),  # Height x Width, no color channel
+                    dtype=np.uint8
+                ),get_raw_state_mini_grid)
+
+            env = eval_env = ConceptWrapper(env,concept_list,spaces.MultiBinary(len(concept_list)),get_raw_state_mini_grid)
+
     elif environment_string == "cart_pole":
         if concept_list is None:
             env = gym.make("CartPole-v1",render_mode="rgb_array")

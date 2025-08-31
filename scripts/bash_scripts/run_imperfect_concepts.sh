@@ -48,7 +48,7 @@ do
         tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder imperfect --concept_source human_selected_binary --run_basic --cbm_accuracy_by_concept ${cbm_accuracy} >> ${LOGFILE} 2>&1"  ENTER 
     done 
 
-    env=tree_15
+    env=tree_31
     training=${training_timesteps[$env]}
     for fixed_accuracy in 0.1 0.25 0.5 0.75 0.9 0.99
     do 

@@ -181,19 +181,19 @@ class CustomBinaryFeatureWrapper(gym.ObservationWrapper):
 ### Boxing Concepts
 def boxing_player_x(obs):
     obs = np.array(obs)
-    return obs[-1,0]
+    return obs[-1,0]/255
 
 def boxing_player_y(obs):
     obs = np.array(obs)
-    return obs[-1,1]
+    return obs[-1,1]/255
 
 def boxing_enemy_x(obs):
     obs = np.array(obs)
-    return obs[-1,2]
+    return obs[-1,2]/255
 
 def boxing_enemy_y(obs):
     obs = np.array(obs)
-    return obs[-1,3]
+    return obs[-1,3]/255
 
 def boxing_player_v_x(obs):
     obs = np.array(obs)
@@ -241,6 +241,57 @@ def pong_enemy_v_y(obs):
     obs = np.array(obs)
     return obs[-2,5]-obs[-1,5]
 
+def obj_row(obs,i,obj_id):
+    obs = obs[:147].reshape((3,7,7))[0,:,:]
+    return int(obj_id in list(obs[i,:]))
+
+def obj_column(obs,i,obj_id):
+    obs = obs[:147].reshape((3,7,7))[0,:,:]
+    return int(obj_id in list(obs[:,i]))
+
+def door_open(obs,obj_id):
+    door_loc = (-1,-1)
+    obs = obs[:147].reshape((3,7,7))
+
+    for i in range(len(obs[0])):
+        for j in range(len(obs[0][i])):
+            if obs[0][i][j] == obj_id:
+                door_loc = (i,j)
+    return int(obs[1][door_loc[0]][door_loc[1]] == 1)
+
+def mini_grid_position_x(obs,i):
+    return int(obs[-3] == i)
+
+def mini_grid_position_y(obs,j):
+    return int(obs[-2] == j)
+
+def mini_grid_direction(obs,d):
+    return int(obs[-1] == d)
+
+def get_all_mini_grid_concepts():
+    object_concepts = [lambda obs: obj_row(obs,i,1) for i in range(7)]+[lambda obs: obj_row(obs,i,2) for i in range(7)]+[lambda obs: obj_row(obs,i,4) for i in range(7)]+[lambda obs: obj_row(obs,i,5) for i in range(7)]+[lambda obs: obj_row(obs,i,8) for i in range(7)]
+    object_concepts += [lambda obs: obj_column(obs,i,1) for i in range(7)]+[lambda obs: obj_column(obs,i,2) for i in range(7)]+[lambda obs: obj_column(obs,i,4) for i in range(7)]+[lambda obs: obj_column(obs,i,5) for i in range(7)]+[lambda obs: obj_column(obs,i,8) for i in range(7)]
+    door_concepts = [lambda obs: door_open(obs,4)]
+    agent_concepts = [lambda obs: mini_grid_position_x(obs,i) for i in range(7)] + [lambda obs: mini_grid_position_y(obs,i) for i in range(7)]+[lambda obs: mini_grid_direction(obs,i) for i in range(4)]
+    all_concepts = object_concepts + door_concepts + agent_concepts
+    return all_concepts
+
+def binarize_function(func,threshold):
+    def f_greater(obs):
+        return int(func(obs)>=threshold)
+    
+    def f_less(obs):
+        return int(func(obs)<threshold)
+    
+    return [f_less,f_greater]
+
+def binarize_function_list(func_list,threshold_list):
+    new_funcs = []
+    for (f,t) in zip(func_list,threshold_list):
+        new_funcs += binarize_function(f,t)
+    
+    return new_funcs
+
 def get_concepts(environment_string,concept_source,seed):
     """Get concepts depending on the source
     
@@ -253,21 +304,32 @@ def get_concepts(environment_string,concept_source,seed):
     Returns: List of functions, each being a concept"""
 
     human_selected = {}
+    human_selected_binary = {}
 
     for num_nodes in [4,8,16,32]:
         human_selected['cyclic_{}'.format(num_nodes)] = get_all_cyclic_concepts(num_nodes)
+        human_selected_binary['cyclic_{}'.format(num_nodes)] = get_all_cyclic_concepts(num_nodes)
 
     for num_nodes in [7,15,31,63]:
         num_layers = len(bin(num_nodes+1))-3
         human_selected['tree_{}'.format(num_nodes)] = get_all_tree_concepts(num_layers)
+        human_selected_binary['tree_{}'.format(num_nodes)] = get_all_tree_concepts(num_layers)
 
     human_selected['mimic'] = [mimic_concept(i) for i in range(47)]
     human_selected['cart_pole'] = [get_cart_pole_concept(i) for i in range(4)]
     human_selected['boxing'] = [boxing_player_x,boxing_player_y,boxing_enemy_x,boxing_enemy_y,boxing_player_v_x,boxing_player_v_y,boxing_enemy_v_x,boxing_enemy_v_y]
     human_selected['pong'] = [pong_paddle_y,pong_ball_x,pong_ball_y,pong_ball_v_x,pong_ball_v_y,pong_enemy_y,pong_enemy_v_y]
+    human_selected['mini_grid'] = get_all_mini_grid_concepts()
+
+    human_selected_binary['mimic'] = binarize_function([mimic_concept(i) for i in range(47)],[0 for i in range(47)])
+    human_selected_binary['cart_pole'] = binarize_function( [get_cart_pole_concept(i) for i in range(4)],[0,0,0,0])
+    human_selected_binary['boxing'] = binarize_function([boxing_player_x,boxing_player_y,boxing_enemy_x,boxing_enemy_y,boxing_player_v_x,boxing_player_v_y,boxing_enemy_v_x,boxing_enemy_v_y],[0.5,0.5,0.5,0.5,0,0,0,0])
+    human_selected_binary['pong'] = binarize_function([pong_paddle_y,pong_ball_x,pong_ball_y,pong_ball_v_x,pong_ball_v_y,pong_enemy_y,pong_enemy_v_y],[0.5,0.5,0.5,0,0,0,0])
 
     if concept_source == 'human_selected':
         return human_selected[environment_string]
+    elif concept_source == 'human_selected_binary':
+        return human_selected_binary[environment_string]
 
 def inaccurate_concepts_binary(concept_function,accuracy):
     """Creates a new concept function that only agrees with the
