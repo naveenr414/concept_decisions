@@ -9,7 +9,7 @@ tmux send-keys -t concepts "cd scripts/notebooks" ENTER
 
 for seed in 42
 do 
-    env=door_key
+    env=mini_grid
     training=10000
     for num_concepts_selected in 1 2 3 4 
     do 

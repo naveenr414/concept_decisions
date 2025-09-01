@@ -82,14 +82,18 @@ class ConceptEnv(gym.Env):
         pass
 
 class ConceptWrapper(gym.ObservationWrapper):
-    def __init__(self, env,concept_list,observation_space,get_raw_state):
+    def __init__(self, env,concept_list,observation_space,get_raw_state,pass_raw_state=False):
         super().__init__(env)
         self.observation_space = observation_space
         self.concept_list = concept_list 
         self.get_raw_state = get_raw_state
+        self.pass_raw_state = pass_raw_state
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
+        if self.pass_raw_state:
+            obs = self._process(obs)
+            return obs, {'observation': obs}
         return self._process(obs), {'observation': obs}
 
     def observation(self, obs):
@@ -100,7 +104,10 @@ class ConceptWrapper(gym.ObservationWrapper):
         obs, reward, terminated, truncated, info = self.env.step(action)
         processed_obs = self._process(obs)
         info = dict(info)
-        info["observation"] = obs
+        if self.pass_raw_state:
+            info["observation"] = processed_obs
+        else:
+            info["observation"] = obs
         return processed_obs, reward, terminated, truncated, info
 
     def _process(self, obs):
@@ -209,13 +216,13 @@ class InfoTransformWrapper(gym.Wrapper):
         self.concept_list = concept_list
 
     def reset(self, **kwargs):
-        obs, info = self.env.reset(**kwargs)
+        obs, info = self.env.reset()
         info['observation'] = [concept(info['observation']) for concept in self.concept_list]
         return obs, info
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
-        info['observation'] = [concept(info['observation']) for concept in self.concept_list]
+        # info['observation'] = [concept(info['observation']) for concept in self.concept_list]
         return obs, reward, terminated, truncated, info
 
 
@@ -598,9 +605,18 @@ def get_n_atari_env(n_envs,atari_env_name,concept_list,observation_space,recorda
     
     Returns: SubprocVecEnv with all the environments"""
     
+    def safe_make_env(seed):
+        try:
+            return make_ocenv(atari_env_name, concept_list, observation_space, seed=seed)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            raise e
+
+
     if n_envs > 1:
         vec_env = SubprocVecEnv([
-            lambda seed=i: make_ocenv(atari_env_name, concept_list, observation_space, seed=seed)
+            lambda seed=i: safe_make_env(seed=seed)
             for i in range(n_envs)
         ], start_method='spawn')
         if concept_list is None:
@@ -662,7 +678,7 @@ def get_environment(environment_string,concept_list,seed):
                     low=0, high=8,
                     shape=(150,),  # Height x Width, no color channel
                     dtype=np.uint8
-                ),get_raw_state_mini_grid)
+                ),get_raw_state_mini_grid,pass_raw_state=True)
         else:
             env = gym.make("MiniGrid-DoorKey-5x5-v0")
             env = ConceptWrapper(env,None,spaces.Box(
@@ -671,7 +687,7 @@ def get_environment(environment_string,concept_list,seed):
                     dtype=np.uint8
                 ),get_raw_state_mini_grid)
 
-            env = eval_env = ConceptWrapper(env,concept_list,spaces.MultiBinary(len(concept_list)),get_raw_state_mini_grid)
+            env = eval_env = ConceptWrapper(env,concept_list,spaces.MultiBinary(len(concept_list)),get_raw_state_mini_grid,pass_raw_state=True)
 
     elif environment_string == "cart_pole":
         if concept_list is None:

@@ -1,6 +1,6 @@
-bash run_basic_comparison.sh
-bash run_imperfect_concepts.sh
-# bash run_llm.sh
-bash run_iterative.sh
-bash run_cub.sh
-bash run_ablation.sh
+bash scripts/bash_scripts/run_basic_comparison.sh
+bash scripts/bash_scripts/run_imperfect_concepts.sh
+# bash scripts/bash_scripts/run_llm.sh
+bash scripts/bash_scripts/run_iterative.sh
+# bash scripts/bash_scripts/run_cub.sh
+# bash scripts/bash_scripts/run_ablation.sh

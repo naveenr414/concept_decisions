@@ -1,8 +1,13 @@
 import numpy as np
 import gymnasium as gym
-from collections import defaultdict
+from collections import deque
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import random
 
-def get_average_reward(env,model):
+
+def get_average_reward(env,model,num_restarts=10,max_steps = 10000):
     """Given an environment, get the average reward following a
         policy, model
         
@@ -13,9 +18,7 @@ def get_average_reward(env,model):
     Returns: Float, the average reward"""
 
     total_reward = 0
-    steps = 0
-    num_restarts = 10
-    max_steps = 10000
+    steps = 0    
 
     for restart in range(num_restarts):
         observation, info = env.reset()
@@ -31,7 +34,7 @@ def get_average_reward(env,model):
     env.close()
     return total_reward/num_restarts
 
-def rollout_pi_estimates(model,env,concept_list,num_rollouts=100, max_steps=1000):
+def rollout_pi_estimates(model,env,concept_list,num_rollouts=10, max_steps=2500):
     """Estimate the policy/action for different states"""
 
     pair_list = []
@@ -46,21 +49,13 @@ def rollout_pi_estimates(model,env,concept_list,num_rollouts=100, max_steps=1000
 
         while not done and steps < max_steps:
             action, _ = model.predict(obs, deterministic=True)
-            pair_list.append((concept,action))
+            pair_list.append((concept,int(action)))
             obs, reward, terminated, truncated, info = env.step(action)
             concept = [c(info['observation']) for c in concept_list]
 
             done = terminated or truncated
             steps += 1
     return pair_list
-
-import numpy as np
-from collections import defaultdict
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from collections import deque
-import random
 
 
 class QNetwork(nn.Module):
@@ -146,7 +141,7 @@ class TDQLearning:
         self.optimizer.step()
 
 def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99, 
-                          num_episodes=100, max_steps=1000, epsilon=0.05,
+                          num_episodes=10, max_steps=2500, epsilon=0.05,
                           learning_rate=0.001, update_freq=10):
     """
     Estimate Q-values using TD learning instead of Monte Carlo rollouts.
@@ -206,7 +201,8 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
                 else:
                     action, _ = model.predict(obs, deterministic=True)
                     action = int(action)
-            
+            action = int(action)
+
             # Store current state-action for later Q-value extraction
             all_state_actions.add((tuple(concept), action))
             

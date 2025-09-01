@@ -32,7 +32,7 @@ def random_selection(concept_list,num_concepts):
     idx = sorted(idx)
     return [concept_list[i] for i in idx]
 
-def greedy_selection(env,concept_list,num_concepts_selected,reference_model,selection_function):
+def greedy_selection(env,concept_list,num_concepts_selected,reference_model,selection_function,q_estimates):
     """Select {num_concepts} greedily
         by first learning the Q(s,a) values from a rollout
         Then selecting the concepts that reduce the standard deviation 
@@ -47,10 +47,6 @@ def greedy_selection(env,concept_list,num_concepts_selected,reference_model,sele
         selection_function: String, whether we're selecting according to 
             Q value, etc."""
     
-    if selection_function == "q_value":
-        q_estimates = rollout_q_estimates_td(reference_model,env,concept_list)
-    elif selection_function == "policy":
-        q_estimates = rollout_pi_estimates(reference_model,env,concept_list)
     unique_actions = list(set([int(i[1]) for i in q_estimates]))
 
     # Continuous
@@ -75,11 +71,15 @@ def greedy_selection(env,concept_list,num_concepts_selected,reference_model,sele
             for idx in range(len(concept_list)):
                 x_y_pair = [(i[0][idx],i[1]) for i in q_estimates]
                 x,y = zip(*x_y_pair)
-                avg_correlation = scipy.stats.pearsonr(x,y).statistic**2
-                correlation_by_concept.append(avg_correlation)
+                if len(x) <= 2:
+                    correlation_by_concept.append(0)
+                else:
+                    avg_correlation = scipy.stats.pearsonr(x,y).statistic**2
+                    correlation_by_concept.append(avg_correlation)
         correlation_by_concept = np.array(correlation_by_concept)
-        idx = np.argpartition(-correlation_by_concept, num_concepts_selected)[:num_concepts_selected]
+        idx = np.argpartition(-correlation_by_concept, num_concepts_selected-1)[:num_concepts_selected]
         idx = idx[np.argsort(-correlation_by_concept[idx])]
+        idx = np.array(idx).tolist()
         concepts = [concept_list[i] for i in idx]
     else:
         correlation_by_concept = []
@@ -98,13 +98,14 @@ def greedy_selection(env,concept_list,num_concepts_selected,reference_model,sele
                 total_variance = np.std(x_0)*len(x_0) + np.std(x_1)*len(x_1)
                 correlation_by_concept.append(total_variance)
         correlation_by_concept = np.array(correlation_by_concept)
-        idx = np.argpartition(correlation_by_concept, num_concepts_selected)[:num_concepts_selected]
+        idx = np.argpartition(correlation_by_concept, num_concepts_selected-1)[:num_concepts_selected]
         idx = idx[np.argsort(correlation_by_concept[idx])]
+        idx = np.array([int(i) for i in idx]).tolist()
         concepts = [concept_list[i] for i in idx]
     return concepts, idx
 
 
-def greedy_iterative_selection(env,concept_list,num_concepts_selected,reference_model,selection_function):
+def greedy_iterative_selection(env,concept_list,num_concepts_selected,reference_model,selection_function,q_estimates):
     """Select {num_concepts} greedily
         by first learning the Q(s,a) values from a rollout
         Then selecting the concepts that reduce the standard deviation 
@@ -119,10 +120,6 @@ def greedy_iterative_selection(env,concept_list,num_concepts_selected,reference_
         selection_function: String, whether we're selecting according to 
             Q value, etc."""
     
-    if selection_function == "q_value":
-        q_estimates = rollout_q_estimates_td(reference_model,env,concept_list)
-    elif selection_function == "policy":
-        q_estimates = rollout_pi_estimates(reference_model,env,concept_list)
     unique_actions = list(set([int(i[1]) for i in q_estimates]))
 
     # Continuous
@@ -172,17 +169,20 @@ def greedy_iterative_selection(env,concept_list,num_concepts_selected,reference_
 
                         X = np.array(X_list)
                         y = np.array(y_list)
-                        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=0)
+                        if len(X) <= 2:
+                            r2 = 0
+                        else:
+                            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=0)
 
-                        model = LinearRegression()
-                        model.fit(X_train, y_train)
-                        # Predict
-                        y_pred = model.predict(X_test)
-                        # Evaluate
-                        r2 = r2_score(y_test, y_pred)
+                            model = LinearRegression()
+                            model.fit(X_train, y_train)
+                            # Predict
+                            y_pred = model.predict(X_test)
+                            # Evaluate
+                            r2 = r2_score(y_test, y_pred)
                         val_by_next_concept.append(r2)
-            curr_concepts.append(np.argmax(val_by_next_concept))     
-        idx = curr_concepts    
+            curr_concepts.append(int(np.argmax(val_by_next_concept))  )   
+        idx = np.array(curr_concepts).tolist()    
         concepts = [concept_list[i] for i in idx]
     else:
         selected_concepts = []
@@ -208,8 +208,8 @@ def greedy_iterative_selection(env,concept_list,num_concepts_selected,reference_
                         subset = [i[1] for i in group_pairs if i[0] == concept]
                         total_variance += np.std(subset) * len(subset)
                 correlation_by_concept.append(total_variance)
-            selected_concepts.append(np.argmin(correlation_by_concept))
-        idx = selected_concepts 
+            selected_concepts.append(int(np.argmin(correlation_by_concept)))
+        idx = np.array(selected_concepts).tolist()
         concepts = [concept_list[i] for i in idx]
 
     return concepts, idx
@@ -266,7 +266,7 @@ def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True):
     return selected_elements, max_prefix_len
 
 
-def lp_based_selection(env,concept_list,num_concepts_selected,reference_model,selection_function,target_abstraction):
+def lp_based_selection(env,concept_list,num_concepts_selected,reference_model,selection_function,target_abstraction,q_estimates):
     """Select {num_concepts} greedily
         by first learning the Q(s,a) values from a rollout
         Then selecting the concepts that reduce the standard deviation 
@@ -281,10 +281,6 @@ def lp_based_selection(env,concept_list,num_concepts_selected,reference_model,se
         selection_function: String, whether we're selecting according to 
             Q value, etc."""
     
-    if selection_function == "q_value":
-        q_estimates = rollout_q_estimates_td(reference_model,env,concept_list)
-    elif selection_function == "policy":
-        q_estimates = rollout_pi_estimates(reference_model,env,concept_list)
     unique_actions = list(set([int(i[1]) for i in q_estimates]))
     actions = np.array([i[1] for i in q_estimates])
 
@@ -348,14 +344,24 @@ def lp_based_selection(env,concept_list,num_concepts_selected,reference_model,se
         for i in range(100):
             i, j = random.choices(range(len(sample_by_action)), weights=weights, k=2)
             while i == j: 
-                j = random.choices(range(len(sample_by_action)), weights=weights, k=1)[0]
+                weights_non_action = [weights[j] for j in range(len(weights)) if j!=i]
+                num_non_action = [i for i in range(len(sample_by_action)) if i!=j]
+                if len(num_non_action) == 0:
+                    break 
+                j = random.choices(num_non_action, weights=weights_non_action, k=1)[0]
+            if len(num_non_action) == 0:
+                break 
             a = random.choice(sample_by_action[i])
             b = random.choice(sample_by_action[j])
             pairs.append([i for i in range(len(a)) if a[i] != b[i]])
-
         pairs = [(0,i) for i in pairs]
         idx, _ = max_prefix_gurobi(pairs,num_concepts_selected,in_order=False)
+        idx = [int(i) for i in idx]
+        idx = np.array(idx).tolist()
         concepts = [concept_list[i] for i in idx]
+
+    if len(idx) == 0:
+        return [concept_list[0]],[0]
 
     return concepts, idx
 
@@ -434,6 +440,8 @@ def imperfect_lp_selection(env,concept_list,reference_model,selection_function,t
         q_estimates = rollout_q_estimates_td(reference_model,env,concept_list)
     elif selection_function == "policy":
         q_estimates = rollout_pi_estimates(reference_model,env,concept_list)
+
+
     unique_actions = list(set([int(i[1]) for i in q_estimates]))
     actions = np.array([i[1] for i in q_estimates])
     # Continuous
@@ -494,7 +502,7 @@ def imperfect_lp_selection(env,concept_list,reference_model,selection_function,t
             pairs.append([i for i in range(len(a)) if a[i] != b[i]])
         idx, _ = max_accuracy_selection(pairs,accuracies,direction,target_abstraction_percentage=target_abstraction)
         concepts = [concept_list[i] for i in idx]
-
+    idx = np.array(idx).tolist()
     return concepts, idx
 
 def greedy_selection_supervised(train_matrix,labels,num_concepts):
@@ -571,7 +579,7 @@ def ucb(mu_hat,N,n,c=0.1):
         return 1
     return mu_hat + c*np.sqrt(np.log(N)/n)
 
-def iterative_selection(env,concept_list,groundtruth_model,selection_function,target_abstraction,num_iterations,training_timesteps):
+def iterative_selection(environment_string,env,concept_list,groundtruth_model,selection_function,target_abstraction,num_iterations,training_timesteps):
     """Iteratively select which concepts to run based on true values
         for concept performance
         
@@ -594,7 +602,7 @@ def iterative_selection(env,concept_list,groundtruth_model,selection_function,ta
         if iteration == num_iterations-1:
             return subset_concept, imperfect_idx
         ground_truth_concept_env = InfoTransformWrapper(env,[concept_list[i] for i in imperfect_idx])
-        model = train_two_stage_ppo_model(ground_truth_concept_env,total_timesteps=training_timesteps)
+        model = train_two_stage_ppo_model(environment_string,ground_truth_concept_env,total_timesteps=training_timesteps)
         per_state_loss = model.per_state_loss
         for idx,i in enumerate(imperfect_idx):
             trials[i].append(per_state_loss[idx])
@@ -604,7 +612,7 @@ def bayesian_iterative_selection(env,eval_env,environment_string,additional_info
     def run(concept_idx):
         ground_truth_concept_env = InfoTransformWrapper(env,[concept_list[i] for i in concept_idx])
         ground_truth_eval_concept_env = InfoTransformWrapper(eval_env,[concept_list[i] for i in concept_idx])
-        model = train_two_stage_ppo_model(ground_truth_concept_env,total_timesteps=training_timesteps)
+        model = train_two_stage_ppo_model(environment_string,ground_truth_concept_env,total_timesteps=training_timesteps)
         reward = evaluate_model(environment_string,ground_truth_eval_concept_env,additional_info,model,seed)
         return reward
 

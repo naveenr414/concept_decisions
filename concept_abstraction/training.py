@@ -39,7 +39,7 @@ def train_ppo_model(env,total_timesteps=150_000,policy="MlpPolicy",batch_size=25
     model.learn(total_timesteps=total_timesteps)  
     return model 
 
-def train_two_stage_ppo_model(env,total_timesteps):
+def train_two_stage_ppo_model(environment_string,env,total_timesteps):
     """Train an environment by first predicting the observation
         then predicting the action
     
@@ -49,9 +49,13 @@ def train_two_stage_ppo_model(env,total_timesteps):
     
     Returns: Stable Baseline3 PPO Model"""
 
-    model = TwoStagePPO(TwoStagePolicy, env, state_loss_weight=1.0)
+    if environment_string in ["cart_pole"]:
+        model = TwoStagePPO(create_two_stage_policy(TwoStageCartPoleExtractor), env, state_loss_weight=1.0)
+    elif environment_string in ["pong","boxing"]:
+        model = TwoStagePPO(create_two_stage_policy(TwoStagePongExtractor), env, state_loss_weight=1.0) 
     model.learn(total_timesteps=total_timesteps)
     return model 
+
 class DistributionWrapper:
     def __init__(self, logits):
         # logits = unnormalized scores (before softmax)
@@ -208,20 +212,16 @@ class SimpleQEstimator:
         self.q_network.load_state_dict(torch.load(filename))
 
 
-class TwoStageExtractor(BaseFeaturesExtractor):
-    def __init__(self, observation_space: gym.Space, features_dim: int = 64):
+class TwoStageCartPoleExtractor(BaseFeaturesExtractor):
+    def __init__(self, observation_space: gym.Space,features_dim: int = 64):
         super().__init__(observation_space, features_dim)
         
-        self.cnn = nn.Sequential(
-            nn.Conv2d(1, 32, 8, 4), nn.ReLU(),
-            nn.Conv2d(32, 64, 4, 2), nn.ReLU(),  
-            nn.Conv2d(64, 64, 3, 1), nn.ReLU(),
-            nn.Flatten()
-        )
+        self.cnn = nn.Sequential( nn.Conv2d(1, 32, 8, 4), nn.ReLU(), nn.Conv2d(32, 64, 4, 2), nn.ReLU(), nn.Conv2d(64, 64, 3, 1), nn.ReLU(), nn.Flatten() )
+
         
         with torch.no_grad():
             cnn_out_size = self.cnn(torch.zeros(1, 1, 84, 84)).shape[1]
-            
+
         self.state_predictor = nn.Sequential(
             nn.Linear(cnn_out_size, 128), nn.ReLU(),
             nn.Linear(128, 4)
@@ -240,10 +240,51 @@ class TwoStageExtractor(BaseFeaturesExtractor):
         self.last_predicted_state = predicted_state
         return self.mlp(predicted_state)
 
-class TwoStagePolicy(ActorCriticPolicy):
-    def __init__(self, *args, **kwargs):
-        kwargs["features_extractor_class"] = TwoStageExtractor
-        super().__init__(*args, **kwargs)
+
+class TwoStagePongExtractor(BaseFeaturesExtractor):
+    def __init__(self, observation_space: gym.Space,features_dim: int = 64):
+        super().__init__(observation_space, features_dim)
+        
+        self.cnn = nn.Sequential(
+            nn.Conv2d(4, 32, kernel_size=8, stride=4),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),
+            nn.ReLU(),
+            nn.Flatten()
+        )
+
+        
+        with torch.no_grad():
+            cnn_out_size = self.cnn(torch.zeros(1, 4, 84, 84)).shape[1]
+            
+
+        self.state_predictor = nn.Sequential(
+            nn.Linear(cnn_out_size, 128), nn.ReLU(),
+            nn.Linear(128, 4)
+        )
+        
+        self.mlp = nn.Sequential(
+            nn.Linear(4, 64), nn.ReLU(),
+            nn.Linear(64, features_dim), nn.ReLU()
+        )
+        
+        self.last_predicted_state = None
+        
+    def forward(self, obs):
+        cnn_features = self.cnn(obs)
+        predicted_state = self.state_predictor(cnn_features)
+        self.last_predicted_state = predicted_state
+        return self.mlp(predicted_state)
+
+
+def create_two_stage_policy(extractor):
+    class TwoStagePolicy(ActorCriticPolicy):
+        def __init__(self,*args, **kwargs):
+            kwargs["features_extractor_class"] = extractor
+            super().__init__(*args, **kwargs)
+    return TwoStagePolicy
 
 class TwoStagePPO(PPO):
     def __init__(self, *args, state_loss_weight=1.0, **kwargs):
