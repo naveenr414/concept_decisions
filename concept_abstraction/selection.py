@@ -601,8 +601,8 @@ def iterative_selection(environment_string,env,concept_list,groundtruth_model,se
 
         if iteration == num_iterations-1:
             return subset_concept, imperfect_idx
-        ground_truth_concept_env = InfoTransformWrapper(env,[concept_list[i] for i in imperfect_idx])
-        model = train_two_stage_ppo_model(environment_string,ground_truth_concept_env,total_timesteps=training_timesteps)
+        ground_truth_concept_env = InfoTransformWrapper(env,subset_concept)
+        model = train_two_stage_ppo_model(environment_string,ground_truth_concept_env,subset_concept,total_timesteps=training_timesteps)
         per_state_loss = model.per_state_loss
         for idx,i in enumerate(imperfect_idx):
             trials[i].append(per_state_loss[idx])
@@ -612,7 +612,7 @@ def bayesian_iterative_selection(env,eval_env,environment_string,additional_info
     def run(concept_idx):
         ground_truth_concept_env = InfoTransformWrapper(env,[concept_list[i] for i in concept_idx])
         ground_truth_eval_concept_env = InfoTransformWrapper(eval_env,[concept_list[i] for i in concept_idx])
-        model = train_two_stage_ppo_model(environment_string,ground_truth_concept_env,total_timesteps=training_timesteps)
+        model = train_two_stage_ppo_model(environment_string,ground_truth_concept_env,[concept_list[i] for i in concept_idx],total_timesteps=training_timesteps)
         reward = evaluate_model(environment_string,ground_truth_eval_concept_env,additional_info,model,seed)
         return reward
 

@@ -53,16 +53,16 @@ if is_main:
     if is_jupyter: 
         # Basics 
         seed        = 42
-        environment_string = "cyclic_4"
-        training_timesteps = 1
-        num_concepts_selected = 4
+        environment_string = "cart_pole"
+        training_timesteps = 50000
+        num_concepts_selected = 2
         selection_function = "q_value"
         # Experiment #1 & #2
-        run_basic = True
-        run_iterative = False
+        run_basic = False
+        run_iterative = True
         run_two_stage = False
         # Experiment #3
-        cbm_accuracy_by_concept = [0.5, 0.5, 0.5]   
+        cbm_accuracy_by_concept = None
         cbm_std_by_concept = None 
         target_abstraction = 0.05
         reward_error = 0
@@ -313,7 +313,7 @@ if is_main:
 # ### Two-Stage Concept Predictors
 
 if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
-    model = train_two_stage_ppo_model(environment_string,ground_truth_eval_env,total_timesteps=training_timesteps)
+    model = train_two_stage_ppo_model(environment_string,ground_truth_eval_env,concept_list,total_timesteps=training_timesteps)
     two_stage_eval = evaluate_model(environment_string,ground_truth_eval_env,additional_info,model,seed)
     per_state_loss = model.per_state_loss
     results['two_stage'] = {}
@@ -321,7 +321,7 @@ if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
 if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
     ground_truth_concept_env = InfoTransformWrapper(ground_truth_eval_env,[concept_list[i] for i in greedy_idx])
     ground_truth_eval_concept_env = InfoTransformWrapper(ground_truth_eval_env,[concept_list[i] for i in greedy_idx])
-    model = train_two_stage_ppo_model(environment_string,ground_truth_concept_env,total_timesteps=training_timesteps)
+    model = train_two_stage_ppo_model(environment_string,ground_truth_concept_env,[concept_list[i] for i in greedy_idx],total_timesteps=training_timesteps)
     greedy_two_stage_reward = evaluate_model(environment_string,ground_truth_eval_concept_env,additional_info,model,seed)
 
     results['two_stage']['greedy'] = {
@@ -334,7 +334,7 @@ if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
 if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
     ground_truth_concept_env = InfoTransformWrapper(ground_truth_eval_env,[concept_list[i] for i in greedy_iterative_idx])
     ground_truth_eval_concept_env = InfoTransformWrapper(ground_truth_eval_env,[concept_list[i] for i in greedy_iterative_idx])
-    model = train_two_stage_ppo_model(environment_string,ground_truth_concept_env,total_timesteps=training_timesteps)
+    model = train_two_stage_ppo_model(environment_string,ground_truth_concept_env,[concept_list[i] for i in greedy_iterative_idx],total_timesteps=training_timesteps)
     greedy_iterative_two_stage_reward = evaluate_model(environment_string,ground_truth_eval_concept_env,additional_info,model,seed)
 
     results['two_stage']['greedy_iterative'] = {
@@ -348,7 +348,7 @@ if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
 if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
     ground_truth_concept_env = InfoTransformWrapper(ground_truth_eval_env,[concept_list[i] for i in lp_idx])
     ground_truth_eval_concept_env = InfoTransformWrapper(ground_truth_eval_env,[concept_list[i] for i in lp_idx])
-    model = train_two_stage_ppo_model(environment_string,ground_truth_concept_env,total_timesteps=training_timesteps)
+    model = train_two_stage_ppo_model(environment_string,ground_truth_concept_env,[concept_list[i] for i in lp_idx],total_timesteps=training_timesteps)
     lp_two_stage_reward = evaluate_model(environment_string,ground_truth_eval_concept_env,additional_info,model,seed)
 
     results['two_stage']['lp'] = {
@@ -362,10 +362,11 @@ if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
 if is_main and run_two_stage and not isinstance(ground_truth_env, ConceptEnv) and per_state_loss is not None:
     top_k = [(idx,std) for idx,std in enumerate(per_state_loss)]
     top_k_idx = sorted(top_k,key=lambda k: k[1])[:num_concepts_selected]
+    top_k_idx = [i[0] for i in top_k_idx]
     
     ground_truth_concept_env  = InfoTransformWrapper(ground_truth_eval_env,[concept_list[i] for i in top_k_idx])
     ground_truth_eval_concept_env = InfoTransformWrapper(ground_truth_eval_env,[concept_list[i] for i in top_k_idx])
-    model = train_two_stage_ppo_model(environment_string,ground_truth_concept_env,total_timesteps=training_timesteps)
+    model = train_two_stage_ppo_model(environment_string,ground_truth_concept_env,[concept_list[i] for i in top_k_idx],total_timesteps=training_timesteps)
     top_k_two_stage_reward = evaluate_model(environment_string,ground_truth_eval_concept_env,additional_info,model,seed)
 
     results['two_stage']['top_k'] = {
@@ -377,30 +378,12 @@ if is_main and run_two_stage and not isinstance(ground_truth_env, ConceptEnv) an
 
 # ### Iterative
 
-def create_two_stage_policy(extractor):
-    class TwoStagePolicy(ActorCriticPolicy):
-        def __init__(self,*args, **kwargs):
-            kwargs["features_extractor_class"] = extractor
-            super().__init__(*args, **kwargs)
-    return TwoStagePolicy
-
-
-
-# +
-from concept_abstraction.training import TwoStageCartPoleExtractor
-from stable_baselines3 import DQN, PPO
-from stable_baselines3.common.policies import ActorCriticPolicy
-from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
-
-create_two_stage_policy(TwoStageCartPoleExtractor)
-# -
-
 if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_iterative:
     results['iterative'] = {}
     iterative_concepts, iterative_idx = iterative_selection(environment_string,ground_truth_eval_env,concept_list,groundtruth_model,selection_function,target_abstraction,num_concepts_selected,training_timesteps)
     ground_truth_concept_env  = InfoTransformWrapper(ground_truth_eval_env,iterative_concepts)
     ground_truth_eval_concept_env = InfoTransformWrapper(ground_truth_eval_env,iterative_concepts)
-    model = train_two_stage_ppo_model(environment_string,ground_truth_concept_env,total_timesteps=training_timesteps)
+    model = train_two_stage_ppo_model(environment_string,ground_truth_concept_env,iterative_concepts,total_timesteps=training_timesteps)
     iterative_two_stage_reward = evaluate_model(environment_string,ground_truth_eval_concept_env,additional_info,model,seed)
     results['iterative']['iterative'] = {
         'reward': iterative_two_stage_reward, 
@@ -412,7 +395,7 @@ if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_iterative:
     bayesian_concepts, bayesian_idx = bayesian_iterative_selection(ground_truth_eval_env,ground_truth_eval_env,environment_string,additional_info,seed,concept_list,2,training_timesteps)
     ground_truth_concept_env  = InfoTransformWrapper(ground_truth_eval_env,bayesian_concepts)
     ground_truth_eval_concept_env = InfoTransformWrapper(ground_truth_eval_env,bayesian_concepts)
-    model = train_two_stage_ppo_model(environment_string,ground_truth_concept_env,total_timesteps=training_timesteps)
+    model = train_two_stage_ppo_model(environment_string,ground_truth_concept_env,bayesian_concepts,total_timesteps=training_timesteps)
     bayesian_two_stage_reward = evaluate_model(environment_string,ground_truth_eval_concept_env,additional_info,model,seed)
 
     results['iterative']['bayesian'] = {

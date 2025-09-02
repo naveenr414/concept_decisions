@@ -210,8 +210,12 @@ def plot_line(ax,x_values,y_values,y_confidence,labels,formatting):
 
         colors = color_schemes[formatting['color_palette']]
 
+    linewidth = 0.6
+    if 'linewidth' in formatting:
+        linewidth = formatting['linewidth']
+
     for i in range(len(x_values)):
-        ax.plot(x_values[i],y_values[i],label=labels[i],linewidth=0.6,color=colors[i])
+        ax.plot(x_values[i],y_values[i],label=labels[i],linewidth=linewidth,color=colors[i])
         ax.fill_between(x_values[i],np.array(y_values[i])-np.array(y_confidence[i]),np.array(y_values[i])+np.array(y_confidence[i]), alpha=0.2,color=colors[i])
 
 def plot_scatter(ax,x_values,y_values,formatting):

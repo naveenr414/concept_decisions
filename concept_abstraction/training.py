@@ -6,15 +6,64 @@ import torch.distributions as D
 from stable_baselines3 import DQN, PPO
 from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
+from stable_baselines3.common.buffers import RolloutBuffer, RolloutBufferSamples
+from stable_baselines3.common.utils import obs_as_tensor
 from typing import Callable
 import numpy as np
 import gymnasium as gym
 import random 
-
+from collections import namedtuple
 
 from concept_abstraction.env_utils import get_average_reward
 from concept_abstraction.environments import eval_mimic_model
 
+InfoRolloutBufferSamples = namedtuple(
+    "InfoRolloutBufferSamples",
+    ["observations", "actions", "old_values", "old_log_prob", "advantages", "returns", "infos"]
+)
+
+class InfoRolloutBuffer(RolloutBuffer):
+    def __init__(self, buffer_size, observation_space, action_space, device,
+                 gamma=0.99, gae_lambda=1.0, n_envs=1):
+        super().__init__(buffer_size, observation_space, action_space, device,
+                         gamma=gamma, gae_lambda=gae_lambda, n_envs=n_envs)
+        # One info dict per timestep
+        self.infos = [None] * buffer_size
+
+    def add(self, obs, action, reward, episode_start, value, log_prob, info=None):
+        super().add(obs, action, reward, episode_start, value, log_prob)
+        # Store info aligned with current position
+        self.infos[self.pos - 1] = info
+
+    def get(self, batch_size):
+        """
+        Mimics RolloutBuffer.get(), but attaches infos to the batch.
+        """
+        assert self.full, "Rollout buffer must be full before sampling"
+
+        # Flatten (n_steps, n_envs, *) into (buffer_size, *)
+        obs = self.observations.reshape((-1,) + self.observation_space.shape)
+        actions = self.actions.reshape((-1,) + self.action_space.shape)
+        values = self.values.flatten()
+        log_probs = self.log_probs.flatten()
+        advantages = self.advantages.flatten()
+        returns = self.returns.flatten()
+
+        indices = np.random.permutation(self.buffer_size)
+        start_idx = 0
+        while start_idx < self.buffer_size:
+            batch_inds = indices[start_idx:start_idx + batch_size]
+            start_idx += batch_size
+
+            yield InfoRolloutBufferSamples(
+                observations=torch.as_tensor(obs[batch_inds]).to(self.device),
+                actions=torch.as_tensor(actions[batch_inds]).to(self.device),
+                old_values=torch.as_tensor(values[batch_inds]).to(self.device),
+                old_log_prob=torch.as_tensor(log_probs[batch_inds]).to(self.device),
+                advantages=torch.as_tensor(advantages[batch_inds]).to(self.device),
+                returns=torch.as_tensor(returns[batch_inds]).to(self.device),
+                infos=[self.infos[i] for i in batch_inds],  # stays as list of dicts
+            )
 
 def train_model(env,total_timesteps=10000):
     """Train an environment according to a stable baseline policy
@@ -39,7 +88,7 @@ def train_ppo_model(env,total_timesteps=150_000,policy="MlpPolicy",batch_size=25
     model.learn(total_timesteps=total_timesteps)  
     return model 
 
-def train_two_stage_ppo_model(environment_string,env,total_timesteps):
+def train_two_stage_ppo_model(environment_string,env,concept_list,total_timesteps):
     """Train an environment by first predicting the observation
         then predicting the action
     
@@ -50,9 +99,9 @@ def train_two_stage_ppo_model(environment_string,env,total_timesteps):
     Returns: Stable Baseline3 PPO Model"""
 
     if environment_string in ["cart_pole"]:
-        model = TwoStagePPO(create_two_stage_policy(TwoStageCartPoleExtractor), env, state_loss_weight=1.0)
+        model = TwoStagePPO(create_two_stage_policy(TwoStageCartPoleExtractor,concept_list), env, state_loss_weight=1.0)
     elif environment_string in ["pong","boxing"]:
-        model = TwoStagePPO(create_two_stage_policy(TwoStagePongExtractor), env, state_loss_weight=1.0) 
+        model = TwoStagePPO(create_two_stage_policy(TwoStagePongExtractor,concept_list), env, state_loss_weight=1.0) 
     model.learn(total_timesteps=total_timesteps)
     return model 
 
@@ -213,7 +262,7 @@ class SimpleQEstimator:
 
 
 class TwoStageCartPoleExtractor(BaseFeaturesExtractor):
-    def __init__(self, observation_space: gym.Space,features_dim: int = 64):
+    def __init__(self, observation_space: gym.Space,concept_list,features_dim: int = 64):
         super().__init__(observation_space, features_dim)
         
         self.cnn = nn.Sequential( nn.Conv2d(1, 32, 8, 4), nn.ReLU(), nn.Conv2d(32, 64, 4, 2), nn.ReLU(), nn.Conv2d(64, 64, 3, 1), nn.ReLU(), nn.Flatten() )
@@ -224,15 +273,16 @@ class TwoStageCartPoleExtractor(BaseFeaturesExtractor):
 
         self.state_predictor = nn.Sequential(
             nn.Linear(cnn_out_size, 128), nn.ReLU(),
-            nn.Linear(128, 4)
+            nn.Linear(128, len(concept_list))
         )
         
         self.mlp = nn.Sequential(
-            nn.Linear(4, 64), nn.ReLU(),
+            nn.Linear(len(concept_list), 64), nn.ReLU(),
             nn.Linear(64, features_dim), nn.ReLU()
         )
         
         self.last_predicted_state = None
+        self.concept_list = concept_list
         
     def forward(self, obs):
         cnn_features = self.cnn(obs)
@@ -242,9 +292,10 @@ class TwoStageCartPoleExtractor(BaseFeaturesExtractor):
 
 
 class TwoStagePongExtractor(BaseFeaturesExtractor):
-    def __init__(self, observation_space: gym.Space,features_dim: int = 64):
+    def __init__(self, observation_space: gym.Space,concept_list,features_dim: int = 64):
         super().__init__(observation_space, features_dim)
         
+        self.concept_list = concept_list
         self.cnn = nn.Sequential(
             nn.Conv2d(4, 32, kernel_size=8, stride=4),
             nn.ReLU(),
@@ -262,11 +313,11 @@ class TwoStagePongExtractor(BaseFeaturesExtractor):
 
         self.state_predictor = nn.Sequential(
             nn.Linear(cnn_out_size, 128), nn.ReLU(),
-            nn.Linear(128, 4)
+            nn.Linear(128, len(concept_list))
         )
         
         self.mlp = nn.Sequential(
-            nn.Linear(4, 64), nn.ReLU(),
+            nn.Linear(len(concept_list), 64), nn.ReLU(),
             nn.Linear(64, features_dim), nn.ReLU()
         )
         
@@ -279,9 +330,13 @@ class TwoStagePongExtractor(BaseFeaturesExtractor):
         return self.mlp(predicted_state)
 
 
-def create_two_stage_policy(extractor):
+def create_two_stage_policy(extractor,concept_list):
     class TwoStagePolicy(ActorCriticPolicy):
-        def __init__(self,*args, **kwargs):
+        def __init__(self,*args,**kwargs):
+            extractor_kwargs = kwargs.get("features_extractor_kwargs", {})
+            extractor_kwargs["concept_list"] = concept_list
+            kwargs["features_extractor_kwargs"] = extractor_kwargs
+
             kwargs["features_extractor_class"] = extractor
             super().__init__(*args, **kwargs)
     return TwoStagePolicy
@@ -291,14 +346,126 @@ class TwoStagePPO(PPO):
         super().__init__(*args, **kwargs)
         self.state_loss_weight = state_loss_weight
         self.true_states = []
-        
-    def collect_rollouts(self, env, callback, rollout_buffer, n_rollout_steps):
-        self.true_states = []
-        
-        # Call parent method and collect true states
-        result = super().collect_rollouts(env, callback, rollout_buffer, n_rollout_steps)
-                
-        return result
+        self.rollout_buffer = InfoRolloutBuffer(
+            self.n_steps,
+            self.observation_space,
+            self.action_space,
+            self.device,
+            gamma=self.gamma,
+            gae_lambda=self.gae_lambda,
+            n_envs=self.n_envs,
+        )
+    
+    def collect_rollouts(
+        self,
+        env,
+        callback,
+        rollout_buffer,
+        n_rollout_steps,
+    ) -> bool:
+        """
+        Collect experiences using the current policy and fill a ``RolloutBuffer``.
+        The term rollout here refers to the model-free notion and should not
+        be used with the concept of rollout used in model-based RL or planning.
+
+        :param env: The training environment
+        :param callback: Callback that will be called at each step
+            (and at the beginning and end of the rollout)
+        :param rollout_buffer: Buffer to fill with rollouts
+        :param n_rollout_steps: Number of experiences to collect per environment
+        :return: True if function returned with at least `n_rollout_steps`
+            collected, False if callback terminated rollout prematurely.
+        """
+        assert self._last_obs is not None, "No previous observation was provided"
+        # Switch to eval mode (this affects batch norm / dropout)
+        self.policy.set_training_mode(False)
+
+        n_steps = 0
+        rollout_buffer.reset()
+        # Sample new weights for the state dependent exploration
+        if self.use_sde:
+            self.policy.reset_noise(env.num_envs)
+
+        callback.on_rollout_start()
+
+        while n_steps < n_rollout_steps:
+            if self.use_sde and self.sde_sample_freq > 0 and n_steps % self.sde_sample_freq == 0:
+                # Sample a new noise matrix
+                self.policy.reset_noise(env.num_envs)
+
+            with torch.no_grad():
+                # Convert to pytorch tensor or to TensorDict
+                obs_tensor = obs_as_tensor(self._last_obs, self.device)
+                actions, values, log_probs = self.policy(obs_tensor)
+            actions = actions.cpu().numpy()
+
+            # Rescale and perform action
+            clipped_actions = actions
+
+            if isinstance(self.action_space, gym.spaces.Box):
+                if self.policy.squash_output:
+                    # Unscale the actions to match env bounds
+                    # if they were previously squashed (scaled in [-1, 1])
+                    clipped_actions = self.policy.unscale_action(clipped_actions)
+                else:
+                    # Otherwise, clip the actions to avoid out of bound error
+                    # as we are sampling from an unbounded Gaussian distribution
+                    clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
+
+            new_obs, rewards, dones, infos = env.step(clipped_actions)
+
+            self.num_timesteps += env.num_envs
+
+            # Give access to local variables
+            callback.update_locals(locals())
+            if not callback.on_step():
+                return False
+
+            self._update_info_buffer(infos, dones)
+            n_steps += 1
+
+            if isinstance(self.action_space, gym.spaces.Discrete):
+                # Reshape in case of discrete action
+                actions = actions.reshape(-1, 1)
+
+            # Handle timeout by bootstrapping with value function
+            # see GitHub issue #633
+            for idx, done in enumerate(dones):
+                if (
+                    done
+                    and infos[idx].get("terminal_observation") is not None
+                    and infos[idx].get("TimeLimit.truncated", False)
+                ):
+                    terminal_obs = self.policy.obs_to_tensor(infos[idx]["terminal_observation"])[0]
+                    with torch.no_grad():
+                        terminal_value = self.policy.predict_values(terminal_obs)[0]  # type: ignore[arg-type]
+                    rewards[idx] += self.gamma * terminal_value
+            rollout_buffer.add(
+                self._last_obs,  # type: ignore[arg-type]
+                actions,
+                rewards,
+                self._last_episode_starts,  # type: ignore[arg-type]
+                values,
+                log_probs,
+                info=infos
+            )
+            self._last_obs = new_obs  # type: ignore[assignment]
+            self._last_episode_starts = dones
+
+        with torch.no_grad():
+            # Compute value for the last timestep
+            values = self.policy.predict_values(obs_as_tensor(new_obs, self.device))  # type: ignore[arg-type]
+
+        rollout_buffer.compute_returns_and_advantage(last_values=values, dones=dones)
+
+        callback.update_locals(locals())
+
+        callback.on_rollout_end()
+
+        return True
+
+
+
     
     def train(self):
         self.policy.set_training_mode(True)
@@ -332,10 +499,7 @@ class TwoStagePPO(PPO):
                 _ = extractor(rollout_data.observations)
                 
                 if hasattr(extractor, 'last_predicted_state') and extractor.last_predicted_state is not None:
-                    # Simplified: use zeros as placeholder for true states
-                    # In practice, you'd store actual true states from info['observation']
-                    batch_size = len(rollout_data.observations)
-                    true_states = torch.zeros(batch_size, 4, device=self.device)
+                    true_states = torch.Tensor([[c(i[0]['observation']) for c in extractor.concept_list] for i in rollout_data.infos]).to(self.device)
                     state_loss = F.mse_loss(extractor.last_predicted_state, true_states)
                     self.per_state_loss = np.mean(np.abs(extractor.last_predicted_state.cpu().detach().numpy()-true_states.cpu().detach().numpy()),axis=0)
 

@@ -33,7 +33,7 @@ declare -A training_timesteps=(
 
 for seed in 42
 do 
-    num_concepts_selected=4
+    num_concepts_selected=2
     for env in cart_pole pong boxing
     do 
         training=${training_timesteps[$env]}
