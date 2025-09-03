@@ -338,7 +338,6 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
         concepts[i] = np.array([c(info_i.get("observation", obs_i)) for c in concept_list])
 
     while steps < total_timesteps/num_envs:
-        print("On steps {}".format(steps))
         # Select actions
         actions = []
         for i in range(num_envs):

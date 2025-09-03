@@ -265,7 +265,7 @@ def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True):
     max_prefix_len = sum(1 for i in range(n) if y[i].X > 0.5)
     return selected_elements, max_prefix_len
 
-def lp_based_selection(env,concept_list,num_concepts_selected,reference_model,selection_function,target_abstraction,q_estimates):
+def lp_based_selection(env,concept_list,num_concepts_selected,selection_function,q_estimates):
     """Select {num_concepts} greedily
         by first learning the Q(s,a) values from a rollout
         Then selecting the concepts that reduce the standard deviation 
@@ -317,10 +317,9 @@ def lp_based_selection(env,concept_list,num_concepts_selected,reference_model,se
             for a in range(len(unique_actions)):
                 for low_idx in all_lower_list[a]:
                     for high_idx in all_higher_list[a]:
-                        if abs(q_values[low_idx]-q_values[high_idx]) > target_abstraction:
-                            tup = (abs(q_values[low_idx]-q_values[high_idx]),[i for i in range(len(concept_list)) if discretized_X[low_idx][i] != discretized_X[high_idx][i]])
-                            if tup not in final_vals:
-                                final_vals.append(tup)
+                        tup = (abs(q_values[low_idx]-q_values[high_idx]),[i for i in range(len(concept_list)) if discretized_X[low_idx][i] != discretized_X[high_idx][i]])
+                        if tup not in final_vals:
+                            final_vals.append(tup)
             final_vals = sorted(final_vals,reverse=True)
             selected_concepts, max_prefix_len = max_prefix_gurobi(final_vals,num_concepts_selected)
             if max_prefix_len > most_selected:
@@ -333,11 +332,6 @@ def lp_based_selection(env,concept_list,num_concepts_selected,reference_model,se
         idx = best_selection
         concepts = [concept_list[i] for i in idx]
     elif selection_function == "policy":
-        if target_abstraction > 1:
-            return [],[] 
-        elif target_abstraction == 0:
-            return concept_list, list(range(len(concept_list)))
-
         sample_by_action = []
 
         for a in unique_actions:

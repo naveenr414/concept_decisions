@@ -108,7 +108,7 @@ class ConceptWrapper(gym.ObservationWrapper):
         if self.use_info_obs:
             pass
         else:
-            info["observation"] = self.obs_function(self,obs)
+            info["observation"] = self.obs_function(self,obs,info)
         return processed_obs, reward, terminated, truncated, info
 
     def _process(self, obs,info):
@@ -561,6 +561,7 @@ def make_ocenv(env_name,concept_list,observation_space,seed=0,recordable=False,n
     env = ConceptWrapper(env, concept_list, observation_space, get_raw_state_atari)
     if concept_list is None:
         env = FrameStack(env,num_stack)
+        env = LazyFramesToNumpy(env)
     env.reset(seed=seed)
     return env
 
@@ -730,9 +731,12 @@ def get_environment(environment_string,concept_list,seed):
                 env = FrameSkipWrapper(env, skip=4, get_pixels_fn=get_raw_pixels_cartpole)
                 env = ConceptWrapper(env,None,spaces.Box(
                         low=0, high=255,
-                        shape=(150,),  # Height x Width, no color channel
+                        shape=(84,84),  # Height x Width, no color channel
                         dtype=np.uint8
-                    ),lambda env, obs: obs, obs_function=get_raw_state_mini_grid )
+                    ),lambda env, obs: obs, obs_function=lambda e,o,i: get_raw_state_mini_grid(e,o,i))
+                env = FrameStack(env,num_stack)
+                env = LazyFramesToNumpy(env)
+
             else:
                 env = gym.make("MiniGrid-DoorKey-5x5-v0")
                 env = ConceptWrapper(env,concept_list,spaces.MultiBinary(len(concept_list)),lambda env, obs: obs, obs_function=lambda env, obs, info: get_raw_state_mini_grid(env,info,{'observation': obs}))
@@ -752,6 +756,7 @@ def get_environment(environment_string,concept_list,seed):
                         dtype=np.uint8
                     ),lambda env, obs: obs,use_info_obs=True)
                 env = FrameStack(env,num_stack)
+                env = LazyFramesToNumpy(env)
             else:
                 env = gym.make("CartPole-v1")
                 env = ConceptWrapper(env,concept_list,spaces.MultiBinary(len(concept_list)),get_raw_state_cartpole)
@@ -764,7 +769,7 @@ def get_environment(environment_string,concept_list,seed):
         if concept_list is None:
             vec_env = get_n_atari_env(num_envs,"BoxingNoFrameskip-v4",None,gym.spaces.Box(
                     low=0, high=255,
-                    shape=(1,84,84),  # Height x Width, no color channel
+                    shape=(84,84),  # Height x Width, no color channel
                     dtype=np.uint8
                 ),num_stack=num_stack)
         else:
