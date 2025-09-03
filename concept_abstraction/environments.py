@@ -8,6 +8,7 @@ import cv2
 from collections import Counter
 from sklearn.model_selection import train_test_split
 from gymnasium.wrappers import FrameStack  # gym’s own for single envs
+from copy import deepcopy
 
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecFrameStack, DummyVecEnv, VecNormalize
 from concept_abstraction.post_hoc import BinaryFeatureEnvironmentWrapper, CartPoleBinaryFeatureExtractor
@@ -82,19 +83,19 @@ class ConceptEnv(gym.Env):
         pass
 
 class ConceptWrapper(gym.ObservationWrapper):
-    def __init__(self, env,concept_list,observation_space,get_raw_state,pass_raw_state=False):
+    def __init__(self, env,concept_list,observation_space,get_raw_state,use_info_obs=False,obs_function=lambda env, obs, info: obs):
         super().__init__(env)
         self.observation_space = observation_space
         self.concept_list = concept_list 
         self.get_raw_state = get_raw_state
-        self.pass_raw_state = pass_raw_state
+        self.use_info_obs = use_info_obs
+        self.obs_function = obs_function
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
-        if self.pass_raw_state:
-            obs = self._process(obs)
-            return obs, {'observation': obs}
-        return self._process(obs), {'observation': obs}
+        if self.use_info_obs:
+            return self._process(obs,info), {'observation': self.obs_function(self,info['observation'],info)}
+        return self._process(obs,info), {'observation': self.obs_function(self,obs,info)}
 
     def observation(self, obs):
         processed = np.array(self._process(obs))
@@ -102,18 +103,19 @@ class ConceptWrapper(gym.ObservationWrapper):
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
-        processed_obs = self._process(obs)
+        processed_obs = self._process(obs,info)
         info = dict(info)
-        if self.pass_raw_state:
-            info["observation"] = processed_obs
+        if self.use_info_obs:
+            pass
         else:
-            info["observation"] = obs
+            info["observation"] = self.obs_function(self,obs)
         return processed_obs, reward, terminated, truncated, info
 
-    def _process(self, obs):
+    def _process(self, obs,info):
         if self.concept_list is None:
             return self.get_raw_state(self,obs)
         else:
+            obs = self.obs_function(self,obs,info)
             obs = np.array(obs, dtype=np.float32)
             vec = [concept(obs) for concept in self.concept_list]
             return vec
@@ -480,27 +482,23 @@ def eval_mimic_model(physpol,model,cluster_concept,concept_list,seed):
     return np.mean(val_bootwis)
 
 
+small_pixels = np.empty((84,84), dtype=np.uint8)
+
 def get_raw_pixels_cartpole(env, obs=None):
-    """In CartPole Environment, return the Greyscale pixels
-    
-    Arguments:
-        env: CartPole environment
-    
-    Returns: Numpy array of size 1x84x84"""
+    pixels = env.render()
+    gray = cv2.cvtColor(pixels, cv2.COLOR_RGB2GRAY)
+    cv2.resize(gray, (84,84), dst=small_pixels[0], interpolation=cv2.INTER_NEAREST)
+    return small_pixels
 
-    pixels = env.render()  # RGB uint8
-    gray = cv2.cvtColor(pixels, cv2.COLOR_RGB2GRAY)  # still uint8
-    small_pixels = resize(gray, (84, 84), anti_aliasing=True)  # float 0-1
-    return (small_pixels * 255).astype(np.uint8).reshape((1, 84, 84))
-
-def get_raw_state_mini_grid(env,obs=None):
+def get_raw_state_mini_grid(env,obs,info):
     """In mini_grid Environment, return the pixels
     
     Arguments:
         env: CartPole environment
     
     Returns: Numpy array of size 1x84x84"""
-    obs_ch_first = np.transpose(obs['image'], (2, 0, 1))  # 3x7x7
+
+    obs_ch_first = np.transpose(info['observation']['image'], (2, 0, 1))  # 3x7x7
     obs_ch_first = obs_ch_first.flatten()
 
     obs_ch_first = np.append(obs_ch_first,np.array([env.unwrapped.agent_pos[0],env.unwrapped.agent_pos[1],env.unwrapped.agent_dir]))
@@ -516,6 +514,8 @@ def get_raw_state_cartpole(env,obs):
 
     return obs 
 
+small_pixels = np.empty((84,84), dtype=np.uint8)
+
 def get_raw_state_atari(env,obs):
     """Get the raw underlying state in an Atari environment
     
@@ -526,10 +526,10 @@ def get_raw_state_atari(env,obs):
     Returns: A 1x84x84 numpy array representing the screen"""
 
     pixels = env.ale.getScreenGrayscale().astype(np.uint8)
-    small_pixels = resize(pixels, (84, 84), anti_aliasing=True)
-    return (small_pixels*255).astype(np.uint8).reshape((1,84,84))
+    cv2.resize(pixels, (84,84), dst=small_pixels[0], interpolation=cv2.INTER_NEAREST)
+    return small_pixels
 
-def make_ocenv(env_name,concept_list,observation_space,seed=0,recordable=False):
+def make_ocenv(env_name,concept_list,observation_space,seed=0,recordable=False,num_stack=4):
     """Create an OCAtari environment for a given concept list
     
     Arguments:
@@ -559,6 +559,8 @@ def make_ocenv(env_name,concept_list,observation_space,seed=0,recordable=False):
     
     # Apply ConceptWrapper (assuming it returns the pixel observations)
     env = ConceptWrapper(env, concept_list, observation_space, get_raw_state_atari)
+    if concept_list is None:
+        env = FrameStack(env,num_stack)
     env.reset(seed=seed)
     return env
 
@@ -573,6 +575,56 @@ class LazyFramesToNumpy(gym.ObservationWrapper):
         if obs.ndim == 4 and obs.shape[1] == 1:
             obs = obs.squeeze(1)
         return obs
+
+class FrameSkipWrapper(gym.Wrapper):
+    """
+    Only renders pixels every `skip` frames, repeats last observation otherwise.
+    """
+    def __init__(self, env, skip=2, get_pixels_fn=None):
+        super().__init__(env)
+        self.skip = skip
+        self.get_pixels = get_pixels_fn
+        self._last_obs = None
+        self._frame_counter = 0
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        info['observation'] = obs
+        self._frame_counter = 0
+        self._last_obs = self.get_pixels(self.env, obs)
+        return self._last_obs, info
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        info['observation'] = obs
+        self._frame_counter += 1
+        if self._frame_counter % self.skip == 0:
+            self._last_obs = self.get_pixels(self.env, obs)
+        return self._last_obs, reward, terminated, truncated, info
+
+class GymnasiumWrapper:
+    def __init__(self, vec_env):
+        self.vec_env = vec_env
+        self.num_envs = vec_env.num_envs
+        self.observation_space = vec_env.observation_space
+        self.action_space = vec_env.action_space
+    
+    def reset(self, **kwargs):
+        obs = self.vec_env.reset(**kwargs)
+        infos = self.vec_env.reset_infos
+        return obs, infos
+    
+    def step(self, actions):
+        obs, rewards, dones, infos = self.vec_env.step(actions)
+        # Return 5-tuple with truncated = terminated (both equal to dones)
+        return obs, rewards, dones, dones, infos
+    
+    def close(self):
+        self.vec_env.close()
+    
+    def __getattr__(self, name):
+        # Delegate any other attributes/methods to the wrapped environment
+        return getattr(self.vec_env, name)
 
 class ActionMaskWrapper(gym.Wrapper):
     """
@@ -594,7 +646,7 @@ class ActionMaskWrapper(gym.Wrapper):
         return self.env.reset(**kwargs)
 
 
-def get_n_atari_env(n_envs,atari_env_name,concept_list,observation_space,recordable=False):
+def get_n_atari_env(n_envs,atari_env_name,concept_list,observation_space,recordable=False,num_stack=4):
     """Create a series of parallel Atari environments 
     
     Arguments:
@@ -607,27 +659,16 @@ def get_n_atari_env(n_envs,atari_env_name,concept_list,observation_space,recorda
     
     def safe_make_env(seed):
         try:
-            return make_ocenv(atari_env_name, concept_list, observation_space, seed=seed)
+            return make_ocenv(atari_env_name, concept_list, observation_space, seed=seed,num_stack=num_stack)
         except Exception as e:
             import traceback
             traceback.print_exc()
             raise e
 
-
-    if n_envs > 1:
-        vec_env = SubprocVecEnv([
-            lambda seed=i: safe_make_env(seed=seed)
-            for i in range(n_envs)
-        ], start_method='spawn')
-        if concept_list is None:
-            vec_env = VecFrameStack(vec_env, n_stack=4)
-    else:
-        env = make_ocenv(atari_env_name, concept_list, observation_space, seed=0,recordable=recordable)
-        # env = ActionMaskWrapper(env,allowed_actions=(0,2, 3))
-        if concept_list is None:
-            env = FrameStack(env, num_stack=4)
-            env = LazyFramesToNumpy(env)
-        vec_env = env 
+    vec_env = SubprocVecEnv([
+        lambda seed=i: safe_make_env(seed=seed)
+        for i in range(n_envs)
+    ], start_method='spawn')
     return vec_env
 
 
@@ -660,77 +701,84 @@ def get_environment(environment_string,concept_list,seed):
     Returns: Gymasium environment, and a dictionary of additional information"""
 
     additional_info = {}
+    num_envs = 4
+    num_stack = 4
 
     if "cyclic" in environment_string:
-        num_nodes = int(environment_string.split("_")[-1])
-        env = eval_env = create_cyclic_env(num_nodes,concept_list)
+        def make_env():
+            num_nodes = int(environment_string.split("_")[-1])
+            env = create_cyclic_env(num_nodes,concept_list)
+            return env 
+        vec_env = SubprocVecEnv([make_env for _ in range(num_envs)])
+        gymnasium_env = GymnasiumWrapper(vec_env)
     elif "tree" in environment_string:
-        num_nodes = int(environment_string.split("_")[-1])
-        env = eval_env = create_tree_env(num_nodes,concept_list)
+        def make_env():
+            num_nodes = int(environment_string.split("_")[-1])
+            env = create_tree_env(num_nodes,concept_list)
+            return env 
+        vec_env = SubprocVecEnv([make_env for _ in range(num_envs)])
+        gymnasium_env = GymnasiumWrapper(vec_env)
     elif environment_string == "mimic":
+        # TODO: Fix MIMIC
         physpol, env, cluster_concept,new_concept_list = create_mimic_environment(concept_list,seed)
-        eval_env = env
+        gymnasium_env = env
         additional_info = {'physpol': physpol, 'cluster_concept': cluster_concept, 'concept_list': new_concept_list}
     elif environment_string  == "mini_grid":
-        if concept_list == None:
-            env = gym.make("MiniGrid-DoorKey-5x5-v0")
-            env = eval_env = ConceptWrapper(env,None,spaces.Box(
-                    low=0, high=8,
-                    shape=(150,),  # Height x Width, no color channel
-                    dtype=np.uint8
-                ),get_raw_state_mini_grid,pass_raw_state=True)
-        else:
-            env = gym.make("MiniGrid-DoorKey-5x5-v0")
-            env = ConceptWrapper(env,None,spaces.Box(
-                    low=0, high=8,
-                    shape=(150,),  # Height x Width, no color channel
-                    dtype=np.uint8
-                ),get_raw_state_mini_grid)
+        def make_env():
+            if concept_list is None:
+                env = gym.make("MiniGrid-DoorKey-5x5-v0",render_mode="rgb_array")
+                env = FrameSkipWrapper(env, skip=4, get_pixels_fn=get_raw_pixels_cartpole)
+                env = ConceptWrapper(env,None,spaces.Box(
+                        low=0, high=255,
+                        shape=(150,),  # Height x Width, no color channel
+                        dtype=np.uint8
+                    ),lambda env, obs: obs, obs_function=get_raw_state_mini_grid )
+            else:
+                env = gym.make("MiniGrid-DoorKey-5x5-v0")
+                env = ConceptWrapper(env,concept_list,spaces.MultiBinary(len(concept_list)),lambda env, obs: obs, obs_function=lambda env, obs, info: get_raw_state_mini_grid(env,info,{'observation': obs}))
+            return env 
 
-            env = eval_env = ConceptWrapper(env,concept_list,spaces.MultiBinary(len(concept_list)),get_raw_state_mini_grid,pass_raw_state=True)
+        vec_env = SubprocVecEnv([make_env for _ in range(num_envs)])
+        gymnasium_env = GymnasiumWrapper(vec_env)
 
     elif environment_string == "cart_pole":
-        if concept_list is None:
-            env = gym.make("CartPole-v1",render_mode="rgb_array")
-            env = eval_env = ConceptWrapper(env,None,spaces.Box(
-                    low=0, high=255,
-                    shape=(1,84,84),  # Height x Width, no color channel
-                    dtype=np.uint8
-                ),get_raw_pixels_cartpole)
-        else:
-            env = gym.make("CartPole-v1")
-            env = eval_env = ConceptWrapper(env,concept_list,spaces.MultiBinary(len(concept_list)),get_raw_state_cartpole)
+        def make_env():
+            if concept_list is None:
+                env = gym.make("CartPole-v1", render_mode="rgb_array")
+                env = FrameSkipWrapper(env, skip=4, get_pixels_fn=get_raw_pixels_cartpole)
+                env = ConceptWrapper(env,None,spaces.Box(
+                        low=0, high=255,
+                        shape=(84,84),  # Height x Width, no color channel
+                        dtype=np.uint8
+                    ),lambda env, obs: obs,use_info_obs=True)
+                env = FrameStack(env,num_stack)
+            else:
+                env = gym.make("CartPole-v1")
+                env = ConceptWrapper(env,concept_list,spaces.MultiBinary(len(concept_list)),get_raw_state_cartpole)
+            return env 
+
+        vec_env = SubprocVecEnv([make_env for _ in range(num_envs)])
+        gymnasium_env = GymnasiumWrapper(vec_env)
 
     elif environment_string == "boxing":
         if concept_list is None:
-            env = get_n_atari_env(8,"BoxingNoFrameskip-v4",None,gym.spaces.Box(
+            vec_env = get_n_atari_env(num_envs,"BoxingNoFrameskip-v4",None,gym.spaces.Box(
                     low=0, high=255,
                     shape=(1,84,84),  # Height x Width, no color channel
                     dtype=np.uint8
-                ))
-            eval_env = get_n_atari_env(1,"BoxingNoFrameskip-v4",None,gym.spaces.Box(
-                    low=0, high=255,
-                    shape=(84,84),  # Height x Width, no color channel
-                    dtype=np.uint8
-                ))      
+                ),num_stack=num_stack)
         else:
-            env = get_n_atari_env(8,"BoxingNoFrameskip-v4",concept_list,spaces.Box(low=-255, high=255, shape=(len(concept_list),), dtype=np.float32))
-            eval_env = get_n_atari_env(1,"BoxingNoFrameskip-v4",concept_list,spaces.Box(low=-255, high=255, shape=(len(concept_list),), dtype=np.float32))
+            vec_env = get_n_atari_env(num_envs,"BoxingNoFrameskip-v4",concept_list,spaces.Box(low=-255, high=255, shape=(len(concept_list),), dtype=np.float32))
+        gymnasium_env = GymnasiumWrapper(vec_env)
 
     elif environment_string == "pong":
         if concept_list is None:
-            env = get_n_atari_env(8,"PongNoFrameskip-v4",None,spaces.Box(
-                    low=0, high=255,
-                    shape=(1,84,84),  # Height x Width, no color channel
-                    dtype=np.uint8
-                ))        
-            eval_env = get_n_atari_env(1,"PongNoFrameskip-v4",None,spaces.Box(
+            vec_env = get_n_atari_env(num_envs,"PongNoFrameskip-v4",None,gym.spaces.Box(
                     low=0, high=255,
                     shape=(84,84),  # Height x Width, no color channel
                     dtype=np.uint8
-                ))        
+                ),num_stack=num_stack)
         else:
-            env = get_n_atari_env(8,"PongNoFrameskip-v4",concept_list,gym.spaces.Box(low=-255, high=255, shape=(len(concept_list),), dtype=np.float32))
-            eval_env = get_n_atari_env(1,"PongNoFrameskip-v4",concept_list,gym.spaces.Box(low=-255, high=255, shape=(len(concept_list),), dtype=np.float32))
-
-    return env, eval_env, additional_info
+            vec_env = get_n_atari_env(num_envs,"PongNoFrameskip-v4",concept_list,spaces.Box(low=-255, high=255, shape=(len(concept_list),), dtype=np.float32))
+        gymnasium_env = GymnasiumWrapper(vec_env)
+    return vec_env, gymnasium_env, additional_info

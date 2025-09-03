@@ -323,7 +323,10 @@ def get_concepts(environment_string,concept_source,seed):
     human_selected_binary['mini_grid'] = get_all_mini_grid_concepts()
 
     human_selected_binary['mimic'] = binarize_function_list([mimic_concept(i) for i in range(47)],[0 for i in range(47)])
-    human_selected_binary['cart_pole'] = binarize_function_list( [get_cart_pole_concept(i) for i in range(4)],[0,0,0,0])
+    full_lst = []
+    for threshold in [-0.02,0,0.02]:
+        full_lst += binarize_function_list( [get_cart_pole_concept(i) for i in range(4)],[threshold for i in range(4)])
+    human_selected_binary['cart_pole'] = full_lst
     human_selected_binary['boxing'] = binarize_function_list([boxing_player_x,boxing_player_y,boxing_enemy_x,boxing_enemy_y,boxing_player_v_x,boxing_player_v_y,boxing_enemy_v_x,boxing_enemy_v_y],[0.5,0.5,0.5,0.5,0,0,0,0])
     human_selected_binary['pong'] = binarize_function_list([pong_paddle_y,pong_ball_x,pong_ball_y,pong_ball_v_x,pong_ball_v_y,pong_enemy_y,pong_enemy_v_y],[0.5,0.5,0.5,0,0,0,0])
 

@@ -72,19 +72,22 @@ def train_model(env,total_timesteps=10000):
         env: Gymnasium environment
     
     Returns: Stable Baseline3 DQN Model"""
-    model = DQN("MlpPolicy", env, verbose=0)
+    model = DQN("MlpPolicy", env, device="cuda",verbose=0)
     model.learn(total_timesteps=total_timesteps, log_interval=4)
     return model 
 
-def train_ppo_model(env,total_timesteps=150_000,policy="MlpPolicy",batch_size=256, n_steps=128):
+def train_ppo_model(env,seed=42,total_timesteps=150_000,policy="MlpPolicy",batch_size=256, n_steps=128):
     """Train an environment according to a stable baseline policy
     
     Arguments:
         env: Gymnasium environment
     
     Returns: Stable Baseline3 PPO Model"""
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
 
-    model = PPO(policy, env, verbose=0)
+    model = PPO(policy, env, verbose=0,device="cuda")
     model.learn(total_timesteps=total_timesteps)  
     return model 
 
@@ -126,14 +129,14 @@ class Policy:
 class RandomAgent:
     """Random policy that randomly selects actions"""
 
-    def __init__(self, env):
-        self.action_space = env.action_space
-        self.device = "cuda"
-        self.policy = Policy(self.action_space.n)
+    def __init__(self, vec_env):
+        self.action_space = vec_env.action_space
+        self.num_envs = vec_env.num_envs
 
     def predict(self, observation, state=None, episode_start=None, deterministic=False):
-        action = self.action_space.sample()
-        return action, None
+        # Sample one action per environment
+        actions = np.array([self.action_space.sample() for _ in range(self.num_envs)])
+        return actions, None
 
     
 

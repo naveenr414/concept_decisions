@@ -30,7 +30,7 @@ def random_selection(concept_list,num_concepts):
     total_concepts = len(concept_list)
     idx = np.random.choice(list(range(total_concepts)),num_concepts,replace=False)
     idx = sorted(idx)
-    return [concept_list[i] for i in idx]
+    return [concept_list[i] for i in idx], idx
 
 def greedy_selection(env,concept_list,num_concepts_selected,reference_model,selection_function,q_estimates):
     """Select {num_concepts} greedily
@@ -265,7 +265,6 @@ def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True):
     max_prefix_len = sum(1 for i in range(n) if y[i].X > 0.5)
     return selected_elements, max_prefix_len
 
-
 def lp_based_selection(env,concept_list,num_concepts_selected,reference_model,selection_function,target_abstraction,q_estimates):
     """Select {num_concepts} greedily
         by first learning the Q(s,a) values from a rollout
@@ -297,35 +296,41 @@ def lp_based_selection(env,concept_list,num_concepts_selected,reference_model,se
         q_values = np.array([i[2] for i in q_estimates])
 
         k = int(np.sqrt(len(discretized_X)))
+        best_selection = [0] 
+        most_selected = 0
 
-        vals_by_action = []
+        while k<=1024:
+            all_lower_list = []
+            all_higher_list = []
 
-        all_lower_list = []
-        all_higher_list = []
+            for a in unique_actions:
+                relevant_idx = np.where(actions == a)[0]
+                relevant_q = q_values[relevant_idx]
+                order = np.argsort(relevant_q)
+                lower_list = relevant_idx[order[:k]]
+                higher_list = relevant_idx[order[-k:]]
+                all_lower_list.append(lower_list)
+                all_higher_list.append(higher_list)
 
-        for a in unique_actions:
-            relevant_idx = np.where(actions == a)[0]
-            relevant_q = q_values[relevant_idx]
-            order = np.argsort(relevant_q)
-            lower_list = relevant_idx[order[:k]]
-            higher_list = relevant_idx[order[-k:]]
-            all_lower_list.append(lower_list)
-            all_higher_list.append(higher_list)
+            final_vals = []
 
-        final_vals = []
-
-        for a in range(len(unique_actions)):
-            for low_idx in all_lower_list[a]:
-                for high_idx in all_higher_list[a]:
-                    if abs(q_values[low_idx]-q_values[high_idx]) > target_abstraction:
-                        tup = (abs(q_values[low_idx]-q_values[high_idx]),[i for i in range(len(concept_list)) if discretized_X[low_idx][i] != discretized_X[high_idx][i]])
-                        if tup not in final_vals:
-                            final_vals.append(tup)
-        final_vals = sorted(final_vals,reverse=True)
-
-        selected_concepts, max_prefix_len = max_prefix_gurobi(final_vals,num_concepts_selected)
-        vals_by_action.append((max_prefix_len,selected_concepts))
-        idx = vals_by_action[np.argmin([i[0] for i in vals_by_action])][1]
+            for a in range(len(unique_actions)):
+                for low_idx in all_lower_list[a]:
+                    for high_idx in all_higher_list[a]:
+                        if abs(q_values[low_idx]-q_values[high_idx]) > target_abstraction:
+                            tup = (abs(q_values[low_idx]-q_values[high_idx]),[i for i in range(len(concept_list)) if discretized_X[low_idx][i] != discretized_X[high_idx][i]])
+                            if tup not in final_vals:
+                                final_vals.append(tup)
+            final_vals = sorted(final_vals,reverse=True)
+            selected_concepts, max_prefix_len = max_prefix_gurobi(final_vals,num_concepts_selected)
+            if max_prefix_len > most_selected:
+                most_selected = max_prefix_len
+                best_selection = selected_concepts
+            else:
+                break 
+            k*=1.5
+            k = int(k)
+        idx = best_selection
         concepts = [concept_list[i] for i in idx]
     elif selection_function == "policy":
         if target_abstraction > 1:
