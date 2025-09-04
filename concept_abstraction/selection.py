@@ -30,9 +30,9 @@ def random_selection(concept_list,num_concepts):
     total_concepts = len(concept_list)
     idx = np.random.choice(list(range(total_concepts)),num_concepts,replace=False)
     idx = sorted(idx)
-    return [concept_list[i] for i in idx], idx
+    return [concept_list[i] for i in idx], [int(i) for i in idx]
 
-def greedy_selection(env,concept_list,num_concepts_selected,reference_model,selection_function,q_estimates):
+def greedy_selection(env,concept_list,num_concepts_selected,selection_function,q_estimates):
     """Select {num_concepts} greedily
         by first learning the Q(s,a) values from a rollout
         Then selecting the concepts that reduce the standard deviation 

@@ -13,6 +13,8 @@ import numpy as np
 import gymnasium as gym
 import random 
 from collections import namedtuple
+from stable_baselines3.common.callbacks import BaseCallback
+from tqdm import tqdm
 
 from concept_abstraction.env_utils import get_average_reward
 from concept_abstraction.environments import eval_mimic_model
@@ -21,6 +23,33 @@ InfoRolloutBufferSamples = namedtuple(
     "InfoRolloutBufferSamples",
     ["observations", "actions", "old_values", "old_log_prob", "advantages", "returns", "infos"]
 )
+
+
+class ProgressBarCallback(BaseCallback):
+    def __init__(self, total_timesteps, update_interval=0.01, verbose=0):
+        """
+        update_interval: fraction of total timesteps to update progress bar (e.g., 0.01 = 1%)
+        """
+        super().__init__(verbose)
+        self.total_timesteps = total_timesteps
+        self.update_interval = update_interval
+        self.pbar = None
+        self.last_update = 0
+
+    def _on_training_start(self):
+        self.pbar = tqdm(total=self.total_timesteps, desc="Training")
+
+    def _on_step(self):
+        # Only update when enough progress has been made
+        if self.num_timesteps - self.last_update >= self.total_timesteps * self.update_interval:
+            self.pbar.n = self.num_timesteps
+            self.pbar.refresh()
+            self.last_update = self.num_timesteps
+        return True
+
+    def _on_training_end(self):
+        self.pbar.close()
+
 
 class InfoRolloutBuffer(RolloutBuffer):
     def __init__(self, buffer_size, observation_space, action_space, device,
@@ -87,8 +116,23 @@ def train_ppo_model(env,seed=42,total_timesteps=150_000,policy="MlpPolicy",batch
     np.random.seed(seed)
     random.seed(seed)
 
-    model = PPO(policy, env, verbose=0,device="cuda")
-    model.learn(total_timesteps=total_timesteps)  
+    policy_kwargs = dict(net_arch=[64, 64])  # Add hidden layers
+    model = PPO(
+        policy='MlpPolicy',
+        env=env,
+        verbose=0,
+        device='cpu',
+        batch_size=64,
+        n_steps=2048,
+        n_epochs=10,
+        learning_rate=3e-4,
+        policy_kwargs=policy_kwargs,
+    )
+
+
+    # TODO: Uncomment this
+    # model = PPO(policy, env, verbose=0,device="cuda")
+    model.learn(total_timesteps=total_timesteps,callback=ProgressBarCallback(total_timesteps))  
     return model 
 
 def train_two_stage_ppo_model(environment_string,env,concept_list,total_timesteps):
@@ -132,6 +176,7 @@ class RandomAgent:
     def __init__(self, vec_env):
         self.action_space = vec_env.action_space
         self.num_envs = vec_env.num_envs
+        self.device = "cuda"
 
     def predict(self, observation, state=None, episode_start=None, deterministic=False):
         # Sample one action per environment
@@ -536,6 +581,6 @@ def evaluate_model(environment_string,env,additional_info,model,seed):
     np.random.seed(seed)
     random.seed(seed)
     if environment_string == "mimic":
-        return eval_mimic_model(additional_info['physpol'],model,additional_info['cluster_concept'],additional_info['concept_list'],seed) 
+        return eval_mimic_model(additional_info['physpol'],model,additional_info['cluster_concept'],additional_info['concept_list'],additional_info['clusterer'],seed) 
     else:
         return get_average_reward(env,model)

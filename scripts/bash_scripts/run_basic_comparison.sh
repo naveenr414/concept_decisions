@@ -16,7 +16,7 @@ declare -A training_timesteps=(
   [mini_grid]=100000
   [pong]=1000000
   [boxing]=1000000
-  [mimic]=25000
+  [mimic]=50000
 )
 
 # declare -A training_timesteps=(
@@ -34,18 +34,28 @@ declare -A training_timesteps=(
 for seed in 42
 do 
 
-    for num_concepts_selected in 2 # 1 2 3 4 
+    # for num_concepts_selected in 2 # 1 2 3 4 
+    # do 
+    #     for env in tree_31 # cyclic_4 cyclic_16 tree_7 tree_31 cart_pole mini_grid pong boxing mimic
+    #     do 
+    #         training=${training_timesteps[$env]}
+    #         tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected_binary --run_basic >> ${LOGFILE} 2>&1"  ENTER 
+    #     done 
+    # done 
+
+    for num_concepts_selected in 4 8 16 32 # 1 2 3 4 
     do 
-        for env in tree_31 # cyclic_4 cyclic_16 tree_7 tree_31 cart_pole mini_grid pong boxing mimic
+        for env in mimic # cart_pole pong boxing mini_grid # cyclic_4 cyclic_16 tree_7 tree_31 cart_pole mini_grid pong boxing mimic
         do 
             training=${training_timesteps[$env]}
-            tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected_binary --run_basic >> ${LOGFILE} 2>&1"  ENTER 
+            tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected --run_basic >> ${LOGFILE} 2>&1"  ENTER 
         done 
     done 
 
+
     for num_concepts_selected in 8 # 1 2 3 4 
     do 
-        for env in cart_pole pong boxing mini_grid # cyclic_4 cyclic_16 tree_7 tree_31 cart_pole mini_grid pong boxing mimic
+        for env in pong # cart_pole pong boxing mini_grid # cyclic_4 cyclic_16 tree_7 tree_31 cart_pole mini_grid pong boxing mimic
         do 
             training=${training_timesteps[$env]}
             tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected_binary --run_basic >> ${LOGFILE} 2>&1"  ENTER 

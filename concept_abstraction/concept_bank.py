@@ -58,7 +58,7 @@ def clustering_concept_mimic(X_train_concepts,n_clusters,seed):
             and an array of clustering indexes ranging from 0 to n_clusters.
         """
         return clusterer.predict([state_data])[0]
-    return cluster_concept, centers
+    return cluster_concept, centers, clusterer
 
 def mimic_concept(i):
     """Get the ith index of a concept
@@ -227,11 +227,11 @@ def pong_ball_y(obs):
 
 def pong_ball_v_x(obs):
     obs = np.array(obs)
-    return obs[-1,2]-obs[-2,2]
+    return (obs[-1,2]-obs[-2,2])/2
 
 def pong_ball_v_y(obs):
     obs = np.array(obs)
-    return obs[-1,3]-obs[-2,3]
+    return (obs[-1,3]-obs[-2,3])/2
 
 def pong_enemy_y(obs):
     obs = np.array(obs)
@@ -239,7 +239,7 @@ def pong_enemy_y(obs):
 
 def pong_enemy_v_y(obs):
     obs = np.array(obs)
-    return obs[-2,5]-obs[-1,5]
+    return (obs[-2,5]-obs[-1,5])/2
 
 def obj_row(obs,i,obj_id):
     obs = obs[:147].reshape((3,7,7))[0,:,:]

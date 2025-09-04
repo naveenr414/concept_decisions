@@ -340,6 +340,9 @@ def create_mimic_environment(concept_list,seed):
         seed: Integer, random seed
         
     Returns: ConceptEnv"""
+    # TODO: Remove timer
+    import time 
+    start = time.time() 
 
     N_CLUSTERS = 750
 
@@ -366,7 +369,7 @@ def create_mimic_environment(concept_list,seed):
     metadata_train = metadata.iloc[train_indexes]
     actions_train = all_actions[train_indexes]
 
-    cluster_concept, centers = clustering_concept_mimic(X_train.values,N_CLUSTERS,seed)
+    cluster_concept, centers,clusterer = clustering_concept_mimic(X_train.values,N_CLUSTERS,seed)
     zeros = np.zeros((2, centers.shape[1]))
     centers = np.vstack([centers, zeros])
 
@@ -403,6 +406,9 @@ def create_mimic_environment(concept_list,seed):
         transition_threshold=transition_threshold
     )
 
+    print("Non concept part took {}".format(time.time()-start))
+    start = time.time() 
+
     if concept_list == None:
         concept_list = [mimic_concept(i) for i in range(47)]
         modified_concept_list = [lambda s, concept=concept: concept(centers[s]) 
@@ -420,9 +426,10 @@ def create_mimic_environment(concept_list,seed):
     done_map = lambda s: s in [n_cluster_states,n_cluster_states+1]
     state_distro = state_distro
     env = ConceptEnv(modified_concept_list,observation_space,action_space,rewards,transitions,all_states,max_steps,state_distro=state_distro,done_map=done_map)
-    return physpol, env, cluster_concept, modified_concept_list
+    print("Everything else took {}".format(time.time()-start))
+    return physpol, env, cluster_concept, modified_concept_list, clusterer
 
-def eval_mimic_model(physpol,model,cluster_concept,concept_list,seed):
+def eval_mimic_model(physpol,model,cluster_concept,concept_list,clusterer,seed):
     """Evaluate a MIMIC policy via the WIS score
     
     Arguments:
@@ -465,8 +472,8 @@ def eval_mimic_model(physpol,model,cluster_concept,concept_list,seed):
     metadata_val = metadata.iloc[val_indexes]
     actions_val = all_actions[val_indexes]
 
-    states_train = np.array([cluster_concept(i) for i in X_train.values])
-    states_val = np.array([cluster_concept(i) for i in X_val.values])
+    states_train = clusterer.predict(X_train.values)
+    states_val = clusterer.predict(X_val.values)
 
     phys_probs = compute_physician_probabilities(physpol,np.max(states_train)+1,states=states_val, actions=actions_val)
     model_probs = compute_model_probabilities(model,concept_list,states=states_val, actions=actions_val)
@@ -551,7 +558,7 @@ def make_ocenv(env_name,concept_list,observation_space,seed=0,recordable=False,n
         env = ocatari.OCAtari(
             env_name,
             mode="ram",
-            render_mode=None,
+            render_mode="rgb_array", #TODO: Change this to None
             frameskip=1,  # Keep frameskip=1 so consecutive frames actually differ
             difficulty=0  # easiest opponent
         )
@@ -720,10 +727,9 @@ def get_environment(environment_string,concept_list,seed):
         vec_env = SubprocVecEnv([make_env for _ in range(num_envs)])
         gymnasium_env = GymnasiumWrapper(vec_env)
     elif environment_string == "mimic":
-        # TODO: Fix MIMIC
-        physpol, env, cluster_concept,new_concept_list = create_mimic_environment(concept_list,seed)
-        gymnasium_env = env
-        additional_info = {'physpol': physpol, 'cluster_concept': cluster_concept, 'concept_list': new_concept_list}
+        physpol, vec_env, cluster_concept,new_concept_list, clusterer = create_mimic_environment(concept_list,seed)
+        gymnasium_env = vec_env
+        additional_info = {'physpol': physpol, 'cluster_concept': cluster_concept, 'concept_list': new_concept_list, 'clusterer': clusterer}
     elif environment_string  == "mini_grid":
         def make_env():
             if concept_list is None:
@@ -784,6 +790,6 @@ def get_environment(environment_string,concept_list,seed):
                     dtype=np.uint8
                 ),num_stack=num_stack)
         else:
-            vec_env = get_n_atari_env(num_envs,"PongNoFrameskip-v4",concept_list,spaces.Box(low=-255, high=255, shape=(len(concept_list),), dtype=np.float32))
+            vec_env = get_n_atari_env(num_envs,"PongNoFrameskip-v4",concept_list,spaces.Box(low=-1, high=1, shape=(len(concept_list),), dtype=np.float32))
         gymnasium_env = GymnasiumWrapper(vec_env)
     return vec_env, gymnasium_env, additional_info
