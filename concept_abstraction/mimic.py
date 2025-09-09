@@ -140,12 +140,13 @@ def compute_physician_policy(qldata3, n_states, n_actions, absorbing_states, rew
     transitionr = np.nan_to_num(np.where(transitionr > 0, transitionr / action_counts, 0))
     physpol = np.nan_to_num(action_counts / action_counts.sum(axis=1, keepdims=True))
 
-    print("Create reward matrix R(S, A)")
     # CF sutton& barto bottom 1998 page 106 - compute R[S,A] from R[S'SA] and T[S'SA]
     transition_rewards = np.zeros((n_states, n_states, n_actions))
+        
     transition_rewards[absorbing_states[0], :, :] = reward_val
     transition_rewards[absorbing_states[1], :, :] = -reward_val
     
+
     R = (transitionr * transition_rewards).sum(axis=0)
     
     return physpol, transitionr, R

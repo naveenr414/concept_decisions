@@ -8,6 +8,12 @@ from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.buffers import RolloutBuffer, RolloutBufferSamples
 from stable_baselines3.common.utils import obs_as_tensor
+from stable_baselines3.common.vec_env import DummyVecEnv
+
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
+
 from typing import Callable
 import numpy as np
 import gymnasium as gym
@@ -16,8 +22,8 @@ from collections import namedtuple
 from stable_baselines3.common.callbacks import BaseCallback
 from tqdm import tqdm
 
-from concept_abstraction.env_utils import get_average_reward
-from concept_abstraction.environments import eval_mimic_model
+from concept_abstraction.env_utils import get_average_reward, get_average_reward_mimic
+from concept_abstraction.environments import GymnasiumWrapper
 
 InfoRolloutBufferSamples = namedtuple(
     "InfoRolloutBufferSamples",
@@ -105,7 +111,7 @@ def train_model(env,total_timesteps=10000):
     model.learn(total_timesteps=total_timesteps, log_interval=4)
     return model 
 
-def train_ppo_model(env,seed=42,total_timesteps=150_000,policy="MlpPolicy",batch_size=256, n_steps=128):
+def train_ppo_model(env,environment_string,seed=42,total_timesteps=150_000,policy="MlpPolicy",batch_size=256, n_steps=128):
     """Train an environment according to a stable baseline policy
     
     Arguments:
@@ -116,22 +122,35 @@ def train_ppo_model(env,seed=42,total_timesteps=150_000,policy="MlpPolicy",batch
     np.random.seed(seed)
     random.seed(seed)
 
-    policy_kwargs = dict(net_arch=[64, 64])  # Add hidden layers
-    model = PPO(
-        policy='MlpPolicy',
-        env=env,
-        verbose=0,
-        device='cpu',
-        batch_size=64,
-        n_steps=2048,
-        n_epochs=10,
-        learning_rate=3e-4,
-        policy_kwargs=policy_kwargs,
-    )
+    if policy == "MlpPolicy":
+        if "cyclic" in environment_string or "tree" in environment_string:
+            model = PPO(
+                "MlpPolicy",
+                env,
+                policy_kwargs={"net_arch": [16]},
+                n_steps=32,            # smaller rollout
+                batch_size=32,         # match rollout size
+                n_epochs=10,           # more passes per batch
+                learning_rate=3e-4,    # safer LR
+                device="cpu",
+                ent_coef=0.0,
+                verbose=0
+            )
+        else:
+            model = PPO(
+                "MlpPolicy",
+                env,
+                policy_kwargs={"net_arch": [16,16]},  # Single layer is actually fastest
+                n_steps=256,
+                batch_size=2048,        # Match n_steps for single batch processing
+                n_epochs=1,           # KEY: Single epoch only
+                learning_rate=5e-3,   # Higher LR to compensate for fewer epochs
+                device='cpu',        # Your GPU is working fine
+                verbose=0
+            )
 
-
-    # TODO: Uncomment this
-    # model = PPO(policy, env, verbose=0,device="cuda")
+    else:
+        model = PPO(policy, env, verbose=0,n_steps=256,device='cuda',batch_size=256*8,n_epochs=1)
     model.learn(total_timesteps=total_timesteps,callback=ProgressBarCallback(total_timesteps))  
     return model 
 
@@ -176,7 +195,7 @@ class RandomAgent:
     def __init__(self, vec_env):
         self.action_space = vec_env.action_space
         self.num_envs = vec_env.num_envs
-        self.device = "cuda"
+        self.device = "cpu"
 
     def predict(self, observation, state=None, episode_start=None, deterministic=False):
         # Sample one action per environment
@@ -580,7 +599,139 @@ def evaluate_model(environment_string,env,additional_info,model,seed):
 
     np.random.seed(seed)
     random.seed(seed)
+    torch.manual_seed(seed)
     if environment_string == "mimic":
-        return eval_mimic_model(additional_info['physpol'],model,additional_info['cluster_concept'],additional_info['concept_list'],additional_info['clusterer'],seed) 
-    else:
-        return get_average_reward(env,model)
+        return get_average_reward_mimic(env,model,max_steps_per=100)
+
+    return get_average_reward(env,model)
+
+def get_concept_labels(env,model,concept_list,num_steps = 5000):
+    X_all, Y_all = [], []
+
+    obs, infos = env.reset()
+    done, steps = False, 0
+    while steps < num_steps:
+        # store raw observation
+        X_all.append(obs)
+        # store concept values
+        Y_all.append([[c(inf['observation']) for c in concept_list] for inf in infos])
+        # take a random action just to explore
+        if np.random.random() < 0.1:
+            action = [env.action_space.sample() for i in range(len(obs))]
+        else:
+            action = model.predict(obs,deterministic=True)[0]
+        obs, _, terminated, truncated, infos = env.step(action)
+        steps += 1
+
+    X = np.stack(X_all)   # shape (N, obs_dim)
+    Y = np.stack(Y_all)   # shape (N, num_concepts)
+    print(X.shape,Y.shape)
+
+    X = X.reshape(-1, *X.shape[2:])   # (100*8, 4, 84, 84)
+    Y = Y.reshape(-1, Y.shape[2])     # (100*8, 24)
+
+    return X, Y
+
+class MultiLabelCNN(nn.Module):
+    def __init__(self, output_size):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(4, 32, 3, padding=1), nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(),
+            nn.MaxPool2d(2),
+            nn.Conv2d(64, 128, 3, padding=1), nn.ReLU(),
+            nn.AdaptiveAvgPool2d(1)
+        )
+        self.fc = nn.Linear(128, output_size)
+        
+    def forward(self, x):
+        x = self.conv(x)
+        x = x.view(x.size(0), -1)
+        x = self.fc(x)
+        return x  # BCEWithLogitsLoss will handle sigmoid internally
+
+def train_concept_predictor(X,Y):
+
+    # X: (N,4,84,84), Y: (N,K)
+    X_torch = torch.tensor(X, dtype=torch.float32)
+    Y_torch = torch.tensor(Y, dtype=torch.float32)  # float for BCE
+
+    dataset = TensorDataset(X_torch, Y_torch)
+    loader = DataLoader(dataset, batch_size=64, shuffle=True)
+
+    # Modified CNN
+
+    num_outputs = Y.shape[1]
+    model = MultiLabelCNN(num_outputs)
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model = model.to(device)
+
+    criterion = nn.BCEWithLogitsLoss()
+    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    def f1_score_multilabel(y_true, y_pred, threshold=0.5, eps=1e-8):
+        y_pred = (torch.sigmoid(y_pred) > threshold).float()
+        tp = (y_true * y_pred).sum(dim=0)
+        fp = ((1 - y_true) * y_pred).sum(dim=0)
+        fn = (y_true * (1 - y_pred)).sum(dim=0)
+        f1 = 2 * tp / (2 * tp + fp + fn + eps)
+        return f1.mean().item()
+
+    # Training loop
+    for epoch in range(10):
+        model.train()
+        total_loss = 0
+        f1_total = 0
+        for xb, yb in loader:
+            xb, yb = xb.to(device), yb.to(device)
+            optimizer.zero_grad()
+            out = model(xb)
+            loss = criterion(out, yb)
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
+            f1_total += f1_score_multilabel(yb, out)
+        print(f"Epoch {epoch+1}, Loss: {total_loss/len(loader):.4f}, F1: {f1_total/len(loader):.4f}")
+    return model 
+
+def score_concept_predictors(model,X,Y):
+    X = torch.tensor(X, dtype=torch.float32)
+    Y = torch.tensor(Y, dtype=torch.long)
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    model.to(device)
+    model.eval()
+
+    num_outputs = Y.shape[1]
+
+    # --- 1️⃣ Compute per-output accuracy / F1 ---
+    acc_list = []
+    f1_list = []
+
+    with torch.no_grad():
+        loader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(X,Y),
+                                            batch_size=64, shuffle=False)
+        # accumulate predictions and labels
+        all_preds = []
+        all_labels = []
+        for xb, yb in loader:
+            xb, yb = xb.to(device), yb.to(device)
+            out = torch.sigmoid(model(xb))  # convert logits to 0-1 probabilities
+            all_preds.append(out)
+            all_labels.append(yb)
+        all_preds = torch.cat(all_preds, dim=0)
+        all_labels = torch.cat(all_labels, dim=0)
+
+    for i in range(num_outputs):
+        pred_col = (all_preds[:, i] > 0.5).float()
+        label_col = all_labels[:, i]
+        acc = (pred_col == label_col).float().mean().item()
+        acc_list.append(acc)
+
+        # F1 per output
+        tp = (pred_col * label_col).sum()
+        fp = (pred_col * (1 - label_col)).sum()
+        fn = ((1 - pred_col) * label_col).sum()
+        f1 = (2 * tp) / (2 * tp + fp + fn + 1e-8)
+        f1_list.append(f1.item())
+    return acc_list, f1_list 

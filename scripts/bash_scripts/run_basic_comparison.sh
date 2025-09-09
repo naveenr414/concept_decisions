@@ -13,10 +13,10 @@ declare -A training_timesteps=(
   [tree_7]=2500
   [tree_31]=50000
   [cart_pole]=250000
-  [mini_grid]=100000
-  [pong]=1000000
-  [boxing]=1000000
-  [mimic]=50000
+  [mini_grid]=12000000
+  [pong]=12000000
+  [boxing]=12000000
+  [mimic]=250000
 )
 
 # declare -A training_timesteps=(
@@ -43,24 +43,39 @@ do
     #     done 
     # done 
 
-    for num_concepts_selected in 4 8 16 32 # 1 2 3 4 
-    do 
-        for env in mimic # cart_pole pong boxing mini_grid # cyclic_4 cyclic_16 tree_7 tree_31 cart_pole mini_grid pong boxing mimic
-        do 
-            training=${training_timesteps[$env]}
-            tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected --run_basic >> ${LOGFILE} 2>&1"  ENTER 
-        done 
-    done 
+    # num_concepts_selected=28
+    # env=mimic
+    # training=${training_timesteps[$env]}
+    # tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected --run_basic >> ${LOGFILE} 2>&1"  ENTER 
 
+    # num_concepts_selected=50
+    # env=mimic
+    # training=${training_timesteps[$env]}
+    # tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected_binary --run_basic >> ${LOGFILE} 2>&1"  ENTER 
 
-    for num_concepts_selected in 8 # 1 2 3 4 
-    do 
-        for env in pong # cart_pole pong boxing mini_grid # cyclic_4 cyclic_16 tree_7 tree_31 cart_pole mini_grid pong boxing mimic
-        do 
-            training=${training_timesteps[$env]}
-            tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected_binary --run_basic >> ${LOGFILE} 2>&1"  ENTER 
-        done 
-    done 
+    num_concepts_selected=20
+    env=mini_grid
+    training=${training_timesteps[$env]}
+    tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected_binary --run_basic >> ${LOGFILE} 2>&1"  ENTER 
+
+    num_concepts_selected=30
+    env=pong
+    training=${training_timesteps[$env]}
+    tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected_binary --run_basic >> ${LOGFILE} 2>&1"  ENTER 
+
+    num_concepts_selected=25
+    env=boxing
+    training=${training_timesteps[$env]}
+    tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected_binary --run_basic >> ${LOGFILE} 2>&1"  ENTER 
+
+    # for num_concepts_selected in 8 # 1 2 3 4 
+    # do 
+    #     for env in pong # cart_pole pong boxing mini_grid # cyclic_4 cyclic_16 tree_7 tree_31 cart_pole mini_grid pong boxing mimic
+    #     do 
+    #         training=${training_timesteps[$env]}
+    #         tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected_binary --run_basic >> ${LOGFILE} 2>&1"  ENTER 
+    #     done 
+    # done 
 
     # num_concepts_selected=8
     # env=mimic

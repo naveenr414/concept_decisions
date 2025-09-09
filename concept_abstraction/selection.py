@@ -10,11 +10,11 @@ from skopt import Optimizer
 from copy import deepcopy
 import random
 from math import ceil
-
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecFrameStack, DummyVecEnv
 from concept_abstraction.env_utils import rollout_q_estimates_td, rollout_pi_estimates
 from concept_abstraction.concept_bank import inaccurate_concepts_continuous
 from concept_abstraction.training import train_two_stage_ppo_model, evaluate_model
-from concept_abstraction.environments import InfoTransformWrapper
+from concept_abstraction.environments import InfoTransformWrapper, GymnasiumWrapper
 
 
 def random_selection(concept_list,num_concepts):
@@ -32,7 +32,7 @@ def random_selection(concept_list,num_concepts):
     idx = sorted(idx)
     return [concept_list[i] for i in idx], [int(i) for i in idx]
 
-def greedy_selection(env,concept_list,num_concepts_selected,selection_function,q_estimates):
+def greedy_selection(concept_list,num_concepts_selected,selection_function,q_estimates,concept_source):
     """Select {num_concepts} greedily
         by first learning the Q(s,a) values from a rollout
         Then selecting the concepts that reduce the standard deviation 
@@ -50,7 +50,7 @@ def greedy_selection(env,concept_list,num_concepts_selected,selection_function,q
     unique_actions = list(set([int(i[1]) for i in q_estimates]))
 
     # Continuous
-    if type(env.observation_space) is spaces.Box:
+    if concept_source == "human_selected":
         correlation_by_concept = []
         if selection_function == "q_value":
             for idx in range(len(concept_list)):
@@ -105,7 +105,7 @@ def greedy_selection(env,concept_list,num_concepts_selected,selection_function,q
     return concepts, idx
 
 
-def greedy_iterative_selection(env,concept_list,num_concepts_selected,reference_model,selection_function,q_estimates):
+def greedy_iterative_selection(concept_list,num_concepts_selected,selection_function,q_estimates,concept_source):
     """Select {num_concepts} greedily
         by first learning the Q(s,a) values from a rollout
         Then selecting the concepts that reduce the standard deviation 
@@ -123,7 +123,7 @@ def greedy_iterative_selection(env,concept_list,num_concepts_selected,reference_
     unique_actions = list(set([int(i[1]) for i in q_estimates]))
 
     # Continuous
-    if type(env.observation_space) is spaces.Box:
+    if concept_source == "human_selected":
         curr_concepts = []
         for _ in range(num_concepts_selected):
             val_by_next_concept = []
@@ -265,7 +265,7 @@ def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True):
     max_prefix_len = sum(1 for i in range(n) if y[i].X > 0.5)
     return selected_elements, max_prefix_len
 
-def lp_based_selection(env,concept_list,num_concepts_selected,selection_function,q_estimates):
+def lp_based_selection(env,concept_list,num_concepts_selected,selection_function,q_estimates,concept_source):
     """Select {num_concepts} greedily
         by first learning the Q(s,a) values from a rollout
         Then selecting the concepts that reduce the standard deviation 
@@ -284,52 +284,32 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
     actions = np.array([i[1] for i in q_estimates])
 
     # Continuous
-    if type(env.observation_space) is spaces.Box:
+    if concept_source == "human_selected":
         all_concepts = np.array([i[0] for i in q_estimates])
         median_by_column = np.median(all_concepts,axis=0)
         discretized_X = (all_concepts < median_by_column).astype(np.int8)
     else:
         discretized_X = np.array([i[0] for i in q_estimates])
-
-
+    
     if selection_function == "q_value":
         q_values = np.array([i[2] for i in q_estimates])
-
-        k = int(np.sqrt(len(discretized_X)))
-        best_selection = [0] 
-        most_selected = 0
-
-        while k<=1024:
-            all_lower_list = []
-            all_higher_list = []
-
-            for a in unique_actions:
-                relevant_idx = np.where(actions == a)[0]
-                relevant_q = q_values[relevant_idx]
-                order = np.argsort(relevant_q)
-                lower_list = relevant_idx[order[:k]]
-                higher_list = relevant_idx[order[-k:]]
-                all_lower_list.append(lower_list)
-                all_higher_list.append(higher_list)
-
-            final_vals = []
-
-            for a in range(len(unique_actions)):
-                for low_idx in all_lower_list[a]:
-                    for high_idx in all_higher_list[a]:
-                        tup = (abs(q_values[low_idx]-q_values[high_idx]),[i for i in range(len(concept_list)) if discretized_X[low_idx][i] != discretized_X[high_idx][i]])
-                        if tup not in final_vals:
-                            final_vals.append(tup)
-            final_vals = sorted(final_vals,reverse=True)
-            selected_concepts, max_prefix_len = max_prefix_gurobi(final_vals,num_concepts_selected)
-            if max_prefix_len > most_selected:
-                most_selected = max_prefix_len
-                best_selection = selected_concepts
-            else:
-                break 
-            k*=1.5
-            k = int(k)
-        idx = best_selection
+        
+        final_vals = []
+        seen = set()
+        for a in unique_actions:
+            relevant_idx = np.where(actions == a)[0]
+            print(f"On {a}",len(relevant_idx),len(relevant_idx))
+            for low_idx in relevant_idx:
+                for high_idx in relevant_idx:
+                    diff = abs(q_values[low_idx] - q_values[high_idx])
+                    # tuple of differing concept indices
+                    diffs = tuple(i for i, (l, h) in enumerate(zip(discretized_X[low_idx], discretized_X[high_idx])) if l != h)
+                    tup = (diff, diffs)
+                    if tup not in seen and diffs != ():
+                        seen.add(tup)
+                        final_vals.append(tup)
+        final_vals = sorted(final_vals,reverse=True)
+        idx, _ = max_prefix_gurobi(final_vals,num_concepts_selected)
         concepts = [concept_list[i] for i in idx]
     elif selection_function == "policy":
         sample_by_action = []
@@ -364,7 +344,7 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
 
     return concepts, idx
 
-def max_accuracy_selection(final_vals,accuracies,direction,target_abstraction_percentage=1):
+def max_accuracy_selection(final_vals,accuracies,direction,num_concepts_selected,target_abstraction_percentage=1):
     """Select the set of concepts (where there are len(accuracies)
         total concepts)
         So that the average accuracy is maximized (if direction = 'max')
@@ -389,7 +369,8 @@ def max_accuracy_selection(final_vals,accuracies,direction,target_abstraction_pe
     # Compute feasible range for number of selected concepts
     # Minimum number of concepts = max number of disjoint sets in final_vals
     min_k = 1
-    max_k = n
+    max_k = num_concepts_selected
+    print("Min k {} max k {}".format(min_k,max_k))
     for k in range(min_k, max_k + 1):
         m = Model()
         m.Params.OutputFlag = 0  # silent
@@ -398,6 +379,7 @@ def max_accuracy_selection(final_vals,accuracies,direction,target_abstraction_pe
         y = m.addVars(len(final_vals), vtype=GRB.BINARY)  # y[j] = 1 if list j has >=1 selected
         for j, lst in enumerate(final_vals):
             m.addConstr(quicksum(x[i] for i in lst) >= 1 * y[j])
+        
         m.addConstr(quicksum(y[j] for j in range(len(final_vals))) >= ceil(target_abstraction_percentage * len(final_vals)))
         m.addConstr(quicksum(x[i] for i in range(n)) == k)
         if direction == 'max':
@@ -410,17 +392,20 @@ def max_accuracy_selection(final_vals,accuracies,direction,target_abstraction_pe
             selected = [i for i in range(n) if x[i].X > 0.5]
             avg_acc = sum(accuracies[i] for i in selected) / k
             if direction == "max":
-                if avg_acc > best_avg:
+                if avg_acc >= best_avg:
                     best_avg = avg_acc
                     best_selection = selected
             else:
-                if avg_acc < best_avg:
+                if avg_acc <= best_avg:
                     best_avg = avg_acc
                     best_selection = selected
+            print(k,avg_acc)
+        else:
+            print("Status",m.Status)
 
     return best_selection, best_avg
 
-def imperfect_lp_selection(env,concept_list,reference_model,selection_function,target_abstraction,accuracies,direction='max'):
+def imperfect_lp_selection(env,concept_list,reference_model,selection_function,target_abstraction,num_concepts_selected,accuracies,concept_source,environment_string,additional_info,direction='max'):
     """Select {num_concepts} through an LP policy
         by first learning the Q(s,a) values from a rollout
         Then selecting the concepts that maximize the average accuracy
@@ -434,17 +419,30 @@ def imperfect_lp_selection(env,concept_list,reference_model,selection_function,t
             which we are trying to distill
         selection_function: String, whether we're selecting according to 
             Q value, etc."""
-    
+    print("Num {}".format(num_concepts_selected))
+
     if selection_function == "q_value":
-        q_estimates = rollout_q_estimates_td(reference_model,env,concept_list)
+        if environment_string == "mimic":
+            modified_concepts = [lambda s, concept=concept: concept(additional_info['centers'][s]) 
+                        for concept in concept_list]
+
+            q_estimates = rollout_q_estimates_td(reference_model,GymnasiumWrapper(DummyVecEnv([lambda: env])),modified_concepts,learning_rate=1e-2,mimic=True,total_timesteps=5000,final_training=0)
+        else:
+            q_estimates = rollout_q_estimates_td(reference_model,env,concept_list)
     elif selection_function == "policy":
-        q_estimates = rollout_pi_estimates(reference_model,env,concept_list)
+        if environment_string == "mimic":
+            modified_concepts = [lambda s, concept=concept: concept(additional_info['centers'][s]) 
+                        for concept in concept_list]
+
+            q_estimates = rollout_pi_estimates(reference_model,GymnasiumWrapper(DummyVecEnv([lambda: env])),modified_concepts,mimic=True)
+        else:
+            q_estimates = rollout_pi_estimates(reference_model,env,concept_list)
 
 
     unique_actions = list(set([int(i[1]) for i in q_estimates]))
     actions = np.array([i[1] for i in q_estimates])
     # Continuous
-    if type(env.observation_space) is spaces.Box:
+    if concept_source == "human_selection":
         # Discrete relaxation
         all_concepts = np.array([i[0] for i in q_estimates])
         median_by_column = np.median(all_concepts,axis=0)
@@ -452,33 +450,25 @@ def imperfect_lp_selection(env,concept_list,reference_model,selection_function,t
     else:
         discretized_X = np.array([i[0] for i in q_estimates])
 
-    k = int(np.sqrt(len(discretized_X)))
-
     if selection_function == "q_value":
         q_values = np.array([i[2] for i in q_estimates])
-
+        final_vals = []
         vals_by_action = []
         for a in unique_actions:
             relevant_q_estimates = q_values[actions == a]
             relevant_threshold = np.argsort(relevant_q_estimates)
-            lower_list = list(relevant_threshold)[:k]
-            higher_list = list(relevant_threshold)[-k:]
             
-            final_vals = []
-
-            for low_idx in lower_list:
-                for high_idx in higher_list:
+            for low_idx in relevant_threshold:
+                for high_idx in relevant_threshold:
                     if abs(relevant_q_estimates[low_idx]-relevant_q_estimates[high_idx]) > target_abstraction:
                         tup = (abs(relevant_q_estimates[low_idx]-relevant_q_estimates[high_idx]),[i for i in range(len(concept_list)) if discretized_X[low_idx][i] != discretized_X[high_idx][i]])
                         if tup[-1] == []:
-                            return concept_list, list(range(len(concept_list)))
+                            continue 
                         final_vals.append(tup[-1])
-            selected_concepts, avg_acc = max_accuracy_selection(final_vals,accuracies,direction)
-            vals_by_action.append((avg_acc,selected_concepts))
-
-        idx = vals_by_action[np.argmin([i[0] for i in vals_by_action])][1]
+        idx, avg_acc = max_accuracy_selection(final_vals,accuracies,"max",num_concepts_selected,target_abstraction_percentage=0.5)
         concepts = [concept_list[i] for i in idx]
     elif selection_function == "policy":
+        # TODO: Ensure the policy equivalent works
         if target_abstraction > 1:
             return [],[] 
         elif target_abstraction == 0:
@@ -499,7 +489,7 @@ def imperfect_lp_selection(env,concept_list,reference_model,selection_function,t
             a = random.choice(sample_by_action[i])
             b = random.choice(sample_by_action[j])
             pairs.append([i for i in range(len(a)) if a[i] != b[i]])
-        idx, _ = max_accuracy_selection(pairs,accuracies,direction,target_abstraction_percentage=target_abstraction)
+        idx, _ = max_accuracy_selection(pairs,accuracies,direction,num_concepts_selected,target_abstraction_percentage=target_abstraction)
         concepts = [concept_list[i] for i in idx]
     idx = np.array(idx).tolist()
     return concepts, idx

@@ -9,6 +9,9 @@ from collections import Counter
 from sklearn.model_selection import train_test_split
 from gymnasium.wrappers import FrameStack  # gym’s own for single envs
 from copy import deepcopy
+import random
+import torch
+
 
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecFrameStack, DummyVecEnv, VecNormalize
 from concept_abstraction.post_hoc import BinaryFeatureEnvironmentWrapper, CartPoleBinaryFeatureExtractor
@@ -16,6 +19,125 @@ from concept_abstraction.utils import one_hot_state
 from concept_abstraction.mimic import *
 from concept_abstraction.concept_bank import clustering_concept_mimic, mimic_concept
 import minigrid
+from minigrid.core.constants import COLOR_NAMES, DIR_TO_VEC, TILE_PIXELS, COLOR_TO_IDX, OBJECT_TO_IDX
+
+class OptimizedConceptWrapper(gym.ObservationWrapper):
+    def __init__(self, env, fast_predictor, observation_space, get_raw_state, 
+                 use_info_obs=False, obs_function=lambda env, obs, info: obs):
+        super().__init__(env)
+        self.observation_space = observation_space
+        self.fast_predictor = fast_predictor  # The FastGPUPredictor instance
+        self.get_raw_state = get_raw_state
+        self.use_info_obs = use_info_obs
+        self.obs_function = obs_function
+        
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        if self.use_info_obs:
+            return self._process(obs, info), {'observation': self.obs_function(self, info['observation'], info)}
+        return self._process(obs, info), {'observation': self.obs_function(self, obs, info)}
+    
+    def observation(self, obs):
+        return np.array(self._process(obs))
+    
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        processed_obs = self._process(obs, info)
+        info = dict(info)
+        
+        if not self.use_info_obs:
+            info["observation"] = self.obs_function(self, obs, info)
+        
+        return processed_obs, reward, terminated, truncated, info
+    
+    def _process(self, obs, info):
+        if self.fast_predictor is None:
+            return self.get_raw_state(self, obs)
+        
+        processed_obs = self.obs_function(self, obs, info)
+        obs_array = np.array(processed_obs, dtype=np.float32)
+        
+        # SINGLE MODEL CALL instead of 24 separate calls
+        predictions = self.fast_predictor.predict_all_concepts(obs_array, return_float=False)
+        
+        # Convert GPU tensor to CPU list
+        if hasattr(predictions, 'cpu'):
+            return predictions.cpu().tolist()
+        else:
+            return predictions.tolist()
+class FastGPUPredictor:
+    def __init__(self, model, device='cuda', cache_size=10000):
+        self.model = model.to(device)
+        self.device = device
+        self.model.eval()
+        
+        # Keep tensors on GPU to avoid transfers
+        self.cached_predictions = {}
+        self.cache_size = cache_size
+        self.cache_hits = 0
+        self.cache_misses = 0
+        
+        # Pre-allocate tensors to avoid repeated allocation
+        self.input_tensor = None
+        
+    def _get_cache_key(self, obs):
+        """Fast hash for numpy arrays"""
+        if isinstance(obs, np.ndarray):
+            return hash(obs.data.tobytes())
+        return hash(obs.cpu().numpy().data.tobytes())
+    
+    def predict_all_concepts(self, obs, threshold=0.5, return_float=False):
+        """Single inference for all 24 concepts - MAIN OPTIMIZATION"""
+        # Check cache first
+        cache_key = self._get_cache_key(obs)
+        if cache_key in self.cached_predictions:
+            self.cache_hits += 1
+            cached_result = self.cached_predictions[cache_key]
+            if return_float:
+                return cached_result
+            else:
+                return (cached_result > threshold).float()
+        
+        self.cache_misses += 1
+        
+        # Prepare tensor - reuse allocated tensor if possible
+        if isinstance(obs, np.ndarray):
+            if self.input_tensor is None or self.input_tensor.shape[1:] != obs.shape:
+                self.input_tensor = torch.empty((1,) + obs.shape, dtype=torch.float32, device=self.device)
+            self.input_tensor[0] = torch.from_numpy(obs)
+        else:
+            obs_tensor = obs.clone().float()
+            if obs_tensor.ndim == 3:
+                obs_tensor = obs_tensor.unsqueeze(0)
+            obs_tensor = obs_tensor.to(self.device)
+            self.input_tensor = obs_tensor
+        
+        # Single inference for all concepts
+        with torch.no_grad():
+            raw_output = self.model(self.input_tensor)
+            probabilities = torch.sigmoid(raw_output).squeeze(0)  # Keep on GPU
+        
+        # Cache the GPU tensor (small memory cost, big speed gain)
+        if len(self.cached_predictions) < self.cache_size:
+            self.cached_predictions[cache_key] = probabilities
+        
+        if return_float:
+            return probabilities
+        else:
+            return (probabilities > threshold).float()
+    
+    def get_concept(self, obs, concept_idx, threshold=0.5, return_float=False):
+        """Get single concept - uses cached full prediction"""
+        all_predictions = self.predict_all_concepts(obs, threshold, return_float)
+        return all_predictions[concept_idx].item()
+    
+    def get_cache_stats(self):
+        total = self.cache_hits + self.cache_misses
+        if total > 0:
+            hit_rate = self.cache_hits / total * 100
+            return f"Cache hit rate: {hit_rate:.1f}% ({self.cache_hits}/{total})"
+        return "No predictions yet"
+
 
 class ConceptEnv(gym.Env):
     """Build a new concept-based environment"""
@@ -340,11 +462,8 @@ def create_mimic_environment(concept_list,seed):
         seed: Integer, random seed
         
     Returns: ConceptEnv"""
-    # TODO: Remove timer
-    import time 
-    start = time.time() 
 
-    N_CLUSTERS = 750
+    N_CLUSTERS = 100 # 750
 
     MIMICraw = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/MIMICraw.csv")
     MIMICzs = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/MIMICzs.csv")
@@ -373,7 +492,7 @@ def create_mimic_environment(concept_list,seed):
     zeros = np.zeros((2, centers.shape[1]))
     centers = np.vstack([centers, zeros])
 
-    states_train = np.array([cluster_concept(i) for i in X_train.values])
+    states_train = clusterer.predict(X_train.values)
 
     n_cluster_states = np.max(states_train)+1
     absorbing_states =  [n_cluster_states + 1, n_cluster_states]
@@ -406,15 +525,10 @@ def create_mimic_environment(concept_list,seed):
         transition_threshold=transition_threshold
     )
 
-    print("Non concept part took {}".format(time.time()-start))
-    start = time.time() 
-
-    if concept_list == None:
+    if concept_list is None:
         concept_list = [mimic_concept(i) for i in range(47)]
-        modified_concept_list = [lambda s, concept=concept: concept(centers[s]) 
-                            for concept in concept_list]
-    else:
-        modified_concept_list = concept_list
+    modified_concept_list = [lambda s, concept=concept: concept(centers[s]) 
+                        for concept in concept_list]
 
     observation_space = spaces.Box(0,1, shape=(len(concept_list),))
     action_space = spaces.Discrete(25)
@@ -426,90 +540,71 @@ def create_mimic_environment(concept_list,seed):
     done_map = lambda s: s in [n_cluster_states,n_cluster_states+1]
     state_distro = state_distro
     env = ConceptEnv(modified_concept_list,observation_space,action_space,rewards,transitions,all_states,max_steps,state_distro=state_distro,done_map=done_map)
-    print("Everything else took {}".format(time.time()-start))
-    return physpol, env, cluster_concept, modified_concept_list, clusterer
-
-def eval_mimic_model(physpol,model,cluster_concept,concept_list,clusterer,seed):
-    """Evaluate a MIMIC policy via the WIS score
-    
-    Arguments:
-        physpol: Physicians policy, for reference
-            Retrieved from compute_physician_policy
-        model: Trained stable_baseline model for the environment
-                concept_list: A list of a single concept
-            that maps a state (represented by a vector)
-            to a single integer number
-            It needs to be in this form becuase we need to discretize
-            the environment
-        seed: Integer, random seed
-    Returns: 
-        Float, WIS score
-    """
-
-    MIMICraw = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/MIMICraw.csv")
-    metadata = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/metadata.csv")
-    MIMICzs = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/MIMICzs.csv")
-
-    C_ICUSTAYID = "icustayid"
-    unique_icu_stays = metadata[C_ICUSTAYID].unique()
-
-    n_action_bins = 5
-    gamma = 0.99
-
-    all_actions, _, _ = fit_action_bins(
-        MIMICraw[C_INPUT_STEP],
-        MIMICraw[C_MAX_DOSE_VASO],
-        n_action_bins=n_action_bins
-    )
-
-    train_ids, val_ids = train_test_split(unique_icu_stays, test_size=0.1,random_state=seed)
-    train_indexes = metadata[metadata[C_ICUSTAYID].isin(train_ids)].index
-    val_indexes = metadata[metadata[C_ICUSTAYID].isin(val_ids)].index
-
-    X_train = MIMICzs.iloc[train_indexes]
-    X_val = MIMICzs.iloc[val_indexes]
-
-    metadata_val = metadata.iloc[val_indexes]
-    actions_val = all_actions[val_indexes]
-
-    states_train = clusterer.predict(X_train.values)
-    states_val = clusterer.predict(X_val.values)
-
-    phys_probs = compute_physician_probabilities(physpol,np.max(states_train)+1,states=states_val, actions=actions_val)
-    model_probs = compute_model_probabilities(model,concept_list,states=states_val, actions=actions_val)
-    val_bootwis, _,  _ = evaluate_policy_wis(
-        metadata_val,
-        phys_probs,
-        model_probs,
-        [100,-100],
-        gamma,
-        200
-    )
-
-    return np.mean(val_bootwis)
-
-
-small_pixels = np.empty((84,84), dtype=np.uint8)
+    return physpol, env, centers, modified_concept_list, clusterer
 
 def get_raw_pixels_cartpole(env, obs=None):
     pixels = env.render()
     gray = cv2.cvtColor(pixels, cv2.COLOR_RGB2GRAY)
-    cv2.resize(gray, (84,84), dst=small_pixels[0], interpolation=cv2.INTER_NEAREST)
+    small_pixels = cv2.resize(gray, (84,84), interpolation=cv2.INTER_NEAREST)
     return small_pixels
 
+def get_raw_pixels_mini_grid(env,obs=None):
+    pixels = env.render()[:160,:160]
+    gray = cv2.cvtColor(pixels, cv2.COLOR_RGB2GRAY)
+    small_pixels = cv2.resize(gray, (84,84), interpolation=cv2.INTER_NEAREST)
+    return small_pixels
+
+def can_move(position, direction, grid):
+    """
+    Helper function to determine if movement in a specific direction is possible.
+    """
+    next_pos = DIR_TO_VEC[direction]
+    if 1 <= position[0] + next_pos[0] < grid.width-1 and 1 <= position[1] + next_pos[1] < grid.height-1:
+        next_cell = grid.get(position[0] + next_pos[0], position[1] + next_pos[1])
+        return next_cell is None or next_cell.can_overlap()
+    else:
+        return False  # Out of bounds
+
 def get_raw_state_mini_grid(env,obs,info):
-    """In mini_grid Environment, return the pixels
-    
-    Arguments:
-        env: CartPole environment
-    
-    Returns: Numpy array of size 1x84x84"""
+    agent_pos = env.unwrapped.agent_pos
+    agent_dir = env.unwrapped.agent_dir
+    grid = env.unwrapped.grid
+    key_pos = (0, 0) # default one if not found (carrying)
+    door_pos = None
+    door_open = False
 
-    obs_ch_first = np.transpose(info['observation']['image'], (2, 0, 1))  # 3x7x7
-    obs_ch_first = obs_ch_first.flatten()
+    # Locate door, key, and goal positions
+    for x in range(grid.width):
+        for y in range(grid.height):
+            cell = grid.get(x, y)
+            if cell is not None:
+                if cell.type == 'door':
+                    door_pos = (x, y)
+                    door_open = cell.is_open  # Check if the door is open
+                elif cell.type == 'key':
+                    key_pos = (x, y)
 
-    obs_ch_first = np.append(obs_ch_first,np.array([env.unwrapped.agent_pos[0],env.unwrapped.agent_pos[1],env.unwrapped.agent_dir]))
-    return obs_ch_first
+    # Check direction_movable in all four directions
+    direction_movable = {
+        'right': can_move(agent_pos, 0, grid),
+        'down': can_move(agent_pos, 1, grid),
+        'left': can_move(agent_pos, 2, grid),
+        'up': can_move(agent_pos, 3, grid),
+    }
+
+    infos = {
+        'agent_position': agent_pos,
+        'agent_direction': agent_dir,
+        'key_position': key_pos,
+        'door_position': door_pos,
+        'door_open': door_open,  # Add door_open to infos
+        'direction_movable': direction_movable
+    }
+
+    vec = [agent_pos[0],agent_pos[1],agent_dir,key_pos[0],key_pos[1],door_pos[0],door_pos[1],int(door_open)]+[int(direction_movable[i]) for i in ['right','down','left','up']]
+
+    return vec 
+
 
 def get_raw_state_cartpole(env,obs):
     """Get the raw underlying state in a CartPole environment
@@ -521,8 +616,6 @@ def get_raw_state_cartpole(env,obs):
 
     return obs 
 
-small_pixels = np.empty((84,84), dtype=np.uint8)
-
 def get_raw_state_atari(env,obs):
     """Get the raw underlying state in an Atari environment
     
@@ -533,8 +626,7 @@ def get_raw_state_atari(env,obs):
     Returns: A 1x84x84 numpy array representing the screen"""
 
     pixels = env.ale.getScreenGrayscale().astype(np.uint8)
-    cv2.resize(pixels, (84,84), dst=small_pixels[0], interpolation=cv2.INTER_NEAREST)
-    return small_pixels
+    return cv2.resize(pixels, (84,84),interpolation=cv2.INTER_NEAREST)
 
 def make_ocenv(env_name,concept_list,observation_space,seed=0,recordable=False,num_stack=4):
     """Create an OCAtari environment for a given concept list
@@ -558,8 +650,8 @@ def make_ocenv(env_name,concept_list,observation_space,seed=0,recordable=False,n
         env = ocatari.OCAtari(
             env_name,
             mode="ram",
-            render_mode="rgb_array", #TODO: Change this to None
-            frameskip=1,  # Keep frameskip=1 so consecutive frames actually differ
+            render_mode=None, 
+            frameskip=2,  # Keep frameskip=1 so consecutive frames actually differ
             difficulty=0  # easiest opponent
         )
     env.ale = env._ale 
@@ -664,7 +756,6 @@ def get_n_atari_env(n_envs,atari_env_name,concept_list,observation_space,recorda
         observation_space: Type of environment observation
     
     Returns: SubprocVecEnv with all the environments"""
-    
     def safe_make_env(seed):
         try:
             return make_ocenv(atari_env_name, concept_list, observation_space, seed=seed,num_stack=num_stack)
@@ -673,10 +764,16 @@ def get_n_atari_env(n_envs,atari_env_name,concept_list,observation_space,recorda
             traceback.print_exc()
             raise e
 
-    vec_env = SubprocVecEnv([
-        lambda seed=i: safe_make_env(seed=seed)
-        for i in range(n_envs)
-    ], start_method='spawn')
+    if concept_list is None:
+        vec_env = DummyVecEnv([
+            lambda seed=i: safe_make_env(seed=seed)
+            for i in range(n_envs)
+        ])#, start_method='spawn')
+    else:
+        vec_env = SubprocVecEnv([
+            lambda seed=i: safe_make_env(seed=seed)
+            for i in range(n_envs)
+        ], start_method='spawn')
     return vec_env
 
 
@@ -699,7 +796,7 @@ def get_binary_subset_env(golden_model, env, indices,accuracies=None):
     subset_env = BinaryObservationSubsetWrapper(binary_env, indices,accuracies=accuracies)    
     return subset_env
 
-def get_environment(environment_string,concept_list,seed):
+def get_environment(environment_string,concept_list,seed,use_processed=False,fast_predictor=None):
     """Get a specific environment based on a string + concept list
     
     Arguments:
@@ -709,8 +806,12 @@ def get_environment(environment_string,concept_list,seed):
     Returns: Gymasium environment, and a dictionary of additional information"""
 
     additional_info = {}
-    num_envs = 4
+    num_envs = 8
     num_stack = 4
+
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    random.seed(seed)
 
     if "cyclic" in environment_string:
         def make_env():
@@ -727,14 +828,14 @@ def get_environment(environment_string,concept_list,seed):
         vec_env = SubprocVecEnv([make_env for _ in range(num_envs)])
         gymnasium_env = GymnasiumWrapper(vec_env)
     elif environment_string == "mimic":
-        physpol, vec_env, cluster_concept,new_concept_list, clusterer = create_mimic_environment(concept_list,seed)
+        physpol, vec_env, centers,new_concept_list, clusterer = create_mimic_environment(concept_list,seed)
         gymnasium_env = vec_env
-        additional_info = {'physpol': physpol, 'cluster_concept': cluster_concept, 'concept_list': new_concept_list, 'clusterer': clusterer}
+        additional_info = {'physpol': physpol, 'centers': centers, 'concept_list': new_concept_list, 'clusterer': clusterer}
     elif environment_string  == "mini_grid":
         def make_env():
             if concept_list is None:
                 env = gym.make("MiniGrid-DoorKey-5x5-v0",render_mode="rgb_array")
-                env = FrameSkipWrapper(env, skip=4, get_pixels_fn=get_raw_pixels_cartpole)
+                env = FrameSkipWrapper(env, skip=4, get_pixels_fn=get_raw_pixels_mini_grid)
                 env = ConceptWrapper(env,None,spaces.Box(
                         low=0, high=255,
                         shape=(84,84),  # Height x Width, no color channel
@@ -753,7 +854,7 @@ def get_environment(environment_string,concept_list,seed):
 
     elif environment_string == "cart_pole":
         def make_env():
-            if concept_list is None:
+            if concept_list is None or use_processed:
                 env = gym.make("CartPole-v1", render_mode="rgb_array")
                 env = FrameSkipWrapper(env, skip=4, get_pixels_fn=get_raw_pixels_cartpole)
                 env = ConceptWrapper(env,None,spaces.Box(
@@ -763,6 +864,9 @@ def get_environment(environment_string,concept_list,seed):
                     ),lambda env, obs: obs,use_info_obs=True)
                 env = FrameStack(env,num_stack)
                 env = LazyFramesToNumpy(env)
+
+                if use_processed:
+                    env = OptimizedConceptWrapper(env, fast_predictor, spaces.MultiBinary(len(concept_list)), lambda env, obs: obs, use_info_obs=True)
             else:
                 env = gym.make("CartPole-v1")
                 env = ConceptWrapper(env,concept_list,spaces.MultiBinary(len(concept_list)),get_raw_state_cartpole)

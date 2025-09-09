@@ -3,6 +3,7 @@ from sklearn.cluster import MiniBatchKMeans
 from sklearn.model_selection import train_test_split
 import pandas as pd 
 import gymnasium as gym
+import hashlib 
 
 ### Cyclic Concepts
 def cyclic_concept_mod(i):
@@ -269,12 +270,18 @@ def mini_grid_direction(obs,d):
     return int(obs[-1] == d)
 
 def get_all_mini_grid_concepts():
-    object_concepts = [lambda obs: obj_row(obs,i,1) for i in range(7)]+[lambda obs: obj_row(obs,i,2) for i in range(7)]+[lambda obs: obj_row(obs,i,4) for i in range(7)]+[lambda obs: obj_row(obs,i,5) for i in range(7)]+[lambda obs: obj_row(obs,i,8) for i in range(7)]
-    object_concepts += [lambda obs: obj_column(obs,i,1) for i in range(7)]+[lambda obs: obj_column(obs,i,2) for i in range(7)]+[lambda obs: obj_column(obs,i,4) for i in range(7)]+[lambda obs: obj_column(obs,i,5) for i in range(7)]+[lambda obs: obj_column(obs,i,8) for i in range(7)]
-    door_concepts = [lambda obs: door_open(obs,4)]
-    agent_concepts = [lambda obs: mini_grid_position_x(obs,i) for i in range(7)] + [lambda obs: mini_grid_position_y(obs,i) for i in range(7)]+[lambda obs: mini_grid_direction(obs,i) for i in range(4)]
-    all_concepts = object_concepts + door_concepts + agent_concepts
+    all_concepts = [lambda obs,i=i: obs[i] for i in range(12)]
     return all_concepts
+
+def get_all_mini_grid_binary_concepts():
+    val_ranges = [(1,5),(1,5),(1,4),(1,5),(1,5),(1,5),(1,5),(0,1),(0,1),(0,1),(0,1),(0,1)]
+    all_concepts = []
+
+    for i in range(12):
+        for j in range(val_ranges[i][0],val_ranges[i][1]+1):
+            all_concepts.append(lambda obs,i=i,j=j: int(obs[i] == j))
+    return all_concepts
+
 
 def binarize_function(func,threshold):
     def f_greater(obs):
@@ -320,7 +327,7 @@ def get_concepts(environment_string,concept_source,seed):
     human_selected['boxing'] = [boxing_player_x,boxing_player_y,boxing_enemy_x,boxing_enemy_y,boxing_player_v_x,boxing_player_v_y,boxing_enemy_v_x,boxing_enemy_v_y]    
     human_selected['pong'] = [pong_paddle_y,pong_ball_x,pong_ball_y,pong_ball_v_x,pong_ball_v_y,pong_enemy_y,pong_enemy_v_y]
     human_selected['mini_grid'] = get_all_mini_grid_concepts()
-    human_selected_binary['mini_grid'] = get_all_mini_grid_concepts()
+    human_selected_binary['mini_grid'] = get_all_mini_grid_binary_concepts()
 
     human_selected_binary['mimic'] = binarize_function_list([mimic_concept(i) for i in range(47)],[0 for i in range(47)])
     full_lst = []
@@ -343,7 +350,7 @@ def get_concepts(environment_string,concept_source,seed):
     elif concept_source == 'human_selected_binary':
         return human_selected_binary[environment_string]
 
-def inaccurate_concepts_binary(concept_function,accuracy):
+def inaccurate_concepts_binary(concept_function,accuracy,seed):
     """Creates a new concept function that only agrees with the
         concept function x% of the time
     
@@ -354,13 +361,17 @@ def inaccurate_concepts_binary(concept_function,accuracy):
     
     Returns: New Concept Function"""
 
+    seen_states = {}
+
     def pred_function(state):
-        seed = hash(str(state)) % (2**32)
-        rand_number = np.random.default_rng(seed).random()
-        pred = concept_function(state)
-        if rand_number > accuracy:
-            return 1-pred 
-        return pred 
+        hashed_state = int(hashlib.md5(state.tobytes()).hexdigest(), 16) % (2**32)
+        if hashed_state not in seen_states:
+            pred = concept_function(state)
+            if np.random.random() > accuracy:
+                seen_states[hashed_state] =1-pred 
+            else:
+                seen_states[hashed_state] = pred 
+        return seen_states[hashed_state]
     return pred_function
 
 def inaccurate_concepts_continuous(concept_function,error_mean,error_std):
@@ -375,7 +386,7 @@ def inaccurate_concepts_continuous(concept_function,error_mean,error_std):
     Returns: New Concept Function"""
 
     def pred_function(state):
-        seed = hash(str(state)) % (2**32)
+        seed = int(hashlib.md5(state.tobytes()).hexdigest(), 16) % (2**32)
         rand_number = np.random.default_rng(seed).normal(error_mean,error_std)
         pred = concept_function(state)
         pred += rand_number
