@@ -60,13 +60,17 @@ def get_results_matching_parameters(folder_name,result_name,parameters):
     all_results = glob.glob("../../results/{}/{}*.json".format(folder_name,result_name))
     ret_results = []
 
+    print(all_results)
+
     for file_name in all_results:
         f = open(file_name)
         first_few = f.read(1000)
         first_few = first_few.split("}")[0]+"}}"
         load_file = json.loads(first_few)
+
         for p in parameters:
             if p not in load_file['parameters'] or load_file['parameters'][p] != parameters[p]:
+
                 break 
         else:
             load_file = json.load(open(file_name,"r"))

@@ -3,6 +3,12 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import torch.distributions as D
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
+import numpy as np
+import torch.nn.functional as F
 from stable_baselines3 import DQN, PPO
 from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
@@ -150,7 +156,22 @@ def train_ppo_model(env,environment_string,seed=42,total_timesteps=150_000,polic
             )
 
     else:
-        model = PPO(policy, env, verbose=0,n_steps=256,device='cuda',batch_size=256*8,n_epochs=1)
+        model = PPO(
+            "CnnPolicy",
+            env,                          # your vec_env with 8 parallel pixel envs
+            n_steps=128,                  # per env
+            batch_size=256,               # divides total rollout = 1024
+            n_epochs=4,
+            learning_rate=2.5e-4,
+            gamma=0.99,
+            clip_range=0.1,
+            ent_coef=0.01,
+            vf_coef=0.5,
+            gae_lambda=0.95,
+            max_grad_norm=0.5,
+            device="cuda",                # highly recommended with pixels
+            verbose=0
+        )
     model.learn(total_timesteps=total_timesteps,callback=ProgressBarCallback(total_timesteps))  
     return model 
 
@@ -605,32 +626,287 @@ def evaluate_model(environment_string,env,additional_info,model,seed):
 
     return get_average_reward(env,model)
 
-def get_concept_labels(env,model,concept_list,num_steps = 5000):
-    X_all, Y_all = [], []
+class StableMultiLabelCNN(nn.Module):
+    def __init__(self, num_outputs, dropout=0.3):
+        super().__init__()
+        
+        # Conservative feature extraction - similar to original but improved
+        self.conv1 = nn.Conv2d(4, 32, kernel_size=8, stride=4, padding=2)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=1)
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1)
+        
+        # Light batch normalization
+        self.bn1 = nn.BatchNorm2d(32)
+        self.bn2 = nn.BatchNorm2d(64)
+        self.bn3 = nn.BatchNorm2d(64)
+        
+        # Calculate conv output size
+        self.conv_output_size = self._get_conv_output_size()
+        
+        # Conservative classifier
+        self.fc1 = nn.Linear(self.conv_output_size, 256)
+        self.fc2 = nn.Linear(256, num_outputs)
+        
+        self.dropout = nn.Dropout(dropout)
+        self.relu = nn.ReLU()
+    
+    def _get_conv_output_size(self):
+        x = torch.zeros(1, 4, 84, 84)
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = F.relu(self.bn2(self.conv2(x)))
+        x = F.relu(self.bn3(self.conv3(x)))
+        return x.view(1, -1).size(1)
+    
+    def forward(self, x):
+        x = self.relu(self.bn1(self.conv1(x)))
+        x = self.relu(self.bn2(self.conv2(x)))
+        x = self.relu(self.bn3(self.conv3(x)))
+        
+        x = x.view(x.size(0), -1)
+        x = self.relu(self.fc1(x))
+        x = self.dropout(x)
+        x = self.fc2(x)
+        
+        return x
 
-    obs, infos = env.reset()
-    done, steps = False, 0
-    while steps < num_steps:
-        # store raw observation
-        X_all.append(obs)
-        # store concept values
-        Y_all.append([[c(inf['observation']) for c in concept_list] for inf in infos])
-        # take a random action just to explore
-        if np.random.random() < 0.1:
-            action = [env.action_space.sample() for i in range(len(obs))]
+# FIXED: Stable loss with conservative class weighting
+class StableFocalLoss(nn.Module):
+    def __init__(self, alpha=0.25, gamma=1.0, pos_weights=None):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        # Clip extreme weights to prevent instability
+        if pos_weights is not None:
+            self.pos_weights = torch.clamp(pos_weights, min=0.1, max=5.0)
         else:
-            action = model.predict(obs,deterministic=True)[0]
-        obs, _, terminated, truncated, infos = env.step(action)
-        steps += 1
+            self.pos_weights = None
+        
+    def forward(self, inputs, targets):
+        # Use standard BCE with light focal weighting
+        bce_loss = F.binary_cross_entropy_with_logits(
+            inputs, targets, pos_weight=self.pos_weights, reduction='none'
+        )
+        pt = torch.exp(-bce_loss)
+        focal_loss = self.alpha * (1-pt)**self.gamma * bce_loss
+        return focal_loss.mean()
 
-    X = np.stack(X_all)   # shape (N, obs_dim)
-    Y = np.stack(Y_all)   # shape (N, num_concepts)
-    print(X.shape,Y.shape)
+# FIXED: Stable training function
+def train_concept_predictor_stable(env,gold_model,concept_list,data_generator, num_outputs, 
+                                 device='cuda' if torch.cuda.is_available() else 'cpu',
+                                 epochs=30, base_lr=5e-4):
+    """
+    Stable training that won't collapse - conservative improvements
+    """
+    
+    # Analyze data distribution with safety checks
+    print("Analyzing data distribution...")
+    sample_Y_list = []
+    sample_count = 0
+    
+    # Get a fresh generator instance
+    for X_batch, Y_batch in data_generator:
+        sample_Y_list.append(Y_batch)
+        sample_count += len(Y_batch)
+        if sample_count > 2000:  # Smaller sample for stability
+            break
+    
+    if not sample_Y_list:
+        print("Warning: No data collected, using default weights")
+        pos_weights = None
+    else:
+        sample_Y = np.concatenate(sample_Y_list, axis=0)
+        
+        # Conservative class weights
+        pos_weights = []
+        for i in range(num_outputs):
+            pos_count = np.sum(sample_Y[:, i])
+            neg_count = len(sample_Y) - pos_count
+            if pos_count > 0 and neg_count > 0:
+                # Conservative weight calculation
+                weight = min(neg_count / pos_count, 3.0)  # Cap at 3x
+                weight = max(weight, 0.5)  # Floor at 0.5x
+                pos_weights.append(weight)
+            else:
+                pos_weights.append(1.0)
+        
+        pos_weights = torch.tensor(pos_weights, dtype=torch.float32, device=device)
+        print(f"Conservative class weights range: {pos_weights.min():.2f} to {pos_weights.max():.2f}")
+    
+    # Initialize stable model
+    model = StableMultiLabelCNN(num_outputs, dropout=0.3)
+    model = model.to(device)
+    
+    # Conservative loss function
+    criterion = StableFocalLoss(alpha=0.25, gamma=1.0, pos_weights=pos_weights)
+    
+    # Conservative optimizer
+    optimizer = optim.Adam(model.parameters(), lr=base_lr, weight_decay=1e-5)
+    
+    # Simple learning rate scheduler
+    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.7)
+    
+    # Standard F1 calculation
+    def f1_score_multilabel_stable(y_true, y_pred, threshold=0.5, eps=1e-8):
+        with torch.no_grad():
+            y_pred = (torch.sigmoid(y_pred) > threshold).float()
+            tp = (y_true * y_pred).sum(dim=0)
+            fp = ((1 - y_true) * y_pred).sum(dim=0)
+            fn = (y_true * (1 - y_pred)).sum(dim=0)
+            f1 = 2 * tp / (2 * tp + fp + fn + eps)
+            return f1.mean().item()
+    
+    # Training loop with stability checks
+    best_f1 = 0
+    consecutive_zero_loss = 0
+    
+    for epoch in range(epochs):
+        model.train()
+        
+        # Reset data generator - CRITICAL FIX
+        data_gen = get_concept_labels(env, gold_model, concept_list, 
+                                     num_steps=5000, batch_size=200)
+        
+        epoch_loss = 0
+        epoch_f1 = 0
+        batch_count = 0
+        
+        for X_batch, Y_batch in data_gen:
+            # Stability check
+            if X_batch is None or Y_batch is None or len(X_batch) == 0:
+                continue
+                
+            X_tensor = torch.tensor(X_batch, dtype=torch.float32)
+            Y_tensor = torch.tensor(Y_batch, dtype=torch.float32)
+            
+            # Process in smaller, stable batches
+            dataset = TensorDataset(X_tensor, Y_tensor)
+            loader = DataLoader(dataset, batch_size=32, shuffle=True, pin_memory=False)
+            
+            for xb, yb in loader:
+                xb, yb = xb.to(device), yb.to(device)
+                
+                # Stability checks
+                if torch.isnan(xb).any() or torch.isnan(yb).any():
+                    print("Warning: NaN detected in input data, skipping batch")
+                    continue
+                
+                optimizer.zero_grad()
+                out = model(xb)
+                
+                # Check for NaN in output
+                if torch.isnan(out).any():
+                    print("Warning: NaN in model output, skipping batch")
+                    continue
+                
+                loss = criterion(out, yb)
+                
+                # Check for NaN/inf in loss
+                if torch.isnan(loss) or torch.isinf(loss):
+                    print(f"Warning: Invalid loss {loss.item()}, skipping batch")
+                    continue
+                
+                loss.backward()
+                
+                # Gradient clipping for stability
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
+                
+                optimizer.step()
+                
+                epoch_loss += loss.item()
+                epoch_f1 += f1_score_multilabel_stable(yb, out)
+                batch_count += 1
+            
+            # Memory cleanup
+            del X_tensor, Y_tensor
+            if device == 'cuda':
+                torch.cuda.empty_cache()
+        
+        scheduler.step()
+        
+        # Calculate averages with safety
+        avg_loss = epoch_loss / max(batch_count, 1)
+        avg_f1 = epoch_f1 / max(batch_count, 1)
+        
+        print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}, F1: {avg_f1:.4f}, "
+              f"LR: {scheduler.get_last_lr()[0]:.6f}")
+        
+        # Early stopping if performance degrades
+        if avg_loss == 0.0:
+            consecutive_zero_loss += 1
+            if consecutive_zero_loss >= 3:
+                print("Training unstable (zero loss), stopping early")
+                break
+        else:
+            consecutive_zero_loss = 0
+        
+        if avg_f1 > best_f1:
+            best_f1 = avg_f1
+    
+    print(f"Final best F1 score: {best_f1:.4f}")
+    return model
 
-    X = X.reshape(-1, *X.shape[2:])   # (100*8, 4, 84, 84)
-    Y = Y.reshape(-1, Y.shape[2])     # (100*8, 24)
+def stable_training_pipeline(env, gold_model, concept_list, num_steps=5000):
+    """
+    Try stable version first, fallback to very stable if needed
+    """
+    data_generator = get_concept_labels(env, gold_model, concept_list, 
+                                       num_steps, batch_size=200)
+    
+    # Get number of outputs
+    sample_gen = get_concept_labels(env, gold_model, concept_list, 1, 1)
+    _, sample_Y = next(sample_gen)
+    num_outputs = sample_Y.shape[1]
+    
+    print("=== Trying Stable Training ===")
+    model = train_concept_predictor_stable(env,gold_model,concept_list,data_generator,num_outputs, epochs=10)
+    return model
 
-    return X, Y
+
+def get_concept_labels(env, model, concept_list, num_steps=5000, batch_size=100):
+    """
+    Memory-optimized version that processes data in batches to avoid storing
+    all observations in memory at once.
+    """
+    obs, infos = env.reset()
+    steps = 0
+    
+    # Process in batches to avoid memory buildup
+    while steps < num_steps:
+        # Collect a batch of data
+        X_batch, Y_batch = [], []
+        batch_steps = 0
+        
+        while batch_steps < batch_size and steps < num_steps:
+            # Store current observation and concepts
+            X_batch.append(obs.copy())  # Use copy() to avoid reference issues
+            Y_batch.append([[c(inf['observation']) for c in concept_list] for inf in infos])
+            
+            # Take action
+            if np.random.random() < 0.1:
+                action = [env.action_space.sample() for i in range(len(obs))]
+            else:
+                # Compute concepts once and reuse
+                concepts = [[c(inf['observation']) for c in concept_list] for inf in infos]
+                action = model.predict(concepts, deterministic=True)[0]
+            
+            obs, _, terminated, truncated, infos = env.step(action)
+            steps += 1
+            batch_steps += 1
+        
+        # Process batch immediately to save memory
+        X_batch = np.stack(X_batch)
+        Y_batch = np.stack(Y_batch)
+        
+        # Reshape batch
+        X_batch = X_batch.reshape(-1, *X_batch.shape[2:])
+        Y_batch = Y_batch.reshape(-1, Y_batch.shape[2])
+        
+        # Yield batch for streaming processing
+        yield X_batch, Y_batch
+        
+        # Clear batch from memory
+        del X_batch, Y_batch
+
 
 class MultiLabelCNN(nn.Module):
     def __init__(self, output_size):
@@ -678,7 +954,7 @@ def train_concept_predictor(X,Y):
         return f1.mean().item()
 
     # Training loop
-    for epoch in range(10):
+    for epoch in range(25):
         model.train()
         total_loss = 0
         f1_total = 0

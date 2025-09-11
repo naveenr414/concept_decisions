@@ -424,7 +424,7 @@ class TDQLearning:
 def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99, 
                                 total_timesteps=100000, epsilon=0.1,
                                 learning_rate=0.0001, update_freq=20, initial_random=0.3,
-                                mimic=False,final_training=500):
+                                mimic=False,final_training=500,get_td_learner=False):
     """
     Stable Q-value estimation for sparse reward environments
     """
@@ -565,7 +565,10 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
     print(f"Final loss stats - Mean: {loss_mean:.2f}, Std: {loss_std:.2f}, Max: {loss_max:.2f}")
     print(f"Total state-action pairs: {len(q_estimate_list)}")
 
-    return q_estimate_list
+    if get_td_learner:
+        return td_learner 
+    else:
+        return q_estimate_list
 def list_to_string(obs):
     """Convert a list of numbers to its string concatenated version
     

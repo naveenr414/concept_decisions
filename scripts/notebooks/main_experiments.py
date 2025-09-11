@@ -105,23 +105,23 @@ if is_main:
     save_name = secrets.token_hex(4)  
 
 if is_main:
-        results = {}
-        results['parameters'] = {'seed'      : seed,
-                'environment_string'    : environment_string, 
-                'training_timesteps': training_timesteps, 
-                'selection_function': selection_function,
-                'num_concepts_selected': num_concepts_selected,
-                'cbm_accuracy_by_concept': cbm_accuracy_by_concept,
-                'cbm_std_by_concept': cbm_std_by_concept,
-                'target_abstraction': target_abstraction,
-                'reward_error': reward_error, 
-                'concept_source': concept_source,
-                'assess_completeness': assess_completeness,
-                'run_basic': run_basic,
-                'run_iterative': run_iterative, 
-                'run_two_stage': run_two_stage, 
-        }
-        print("Parameters {}".format(results['parameters']))
+    results = {}
+    results['parameters'] = {'seed'      : seed,
+            'environment_string'    : environment_string, 
+            'training_timesteps': training_timesteps, 
+            'selection_function': selection_function,
+            'num_concepts_selected': num_concepts_selected,
+            'cbm_accuracy_by_concept': cbm_accuracy_by_concept,
+            'cbm_std_by_concept': cbm_std_by_concept,
+            'target_abstraction': target_abstraction,
+            'reward_error': reward_error, 
+            'concept_source': concept_source,
+            'assess_completeness': assess_completeness,
+            'run_basic': run_basic,
+            'run_iterative': run_iterative, 
+            'run_two_stage': run_two_stage, 
+    }
+    print("Parameters {}".format(results['parameters']))
 
 if is_main:
     np.random.seed(seed)
@@ -150,7 +150,7 @@ if is_main:
     results['ground_truth'] = {'reward':groundtruth_reward}
     print(results['ground_truth']['reward'])
 
-# ### Basic Comparison
+### Basic Comparison
 
 if is_main:
     model_name = "../../results/q_estimates/env={}_training={}_seed={}_selection={}_source={}.pkl".format(environment_string,training_timesteps,seed,selection_function,concept_source)
@@ -386,19 +386,19 @@ if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
 
 # -
 
-if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
-    acc_list = results['two_stage']['accuracy']
-    imperfect_concepts, imperfect_idx = imperfect_lp_selection(ground_truth_gym_env,modified_concept_predictors,groundtruth_model,selection_function,target_abstraction,num_concepts_selected,acc_list,concept_source,environment_string,additional_info,direction='max')
+# if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
+#     acc_list = results['two_stage']['accuracy']
+#     imperfect_concepts, imperfect_idx = imperfect_lp_selection(ground_truth_gym_env,modified_concept_predictors,groundtruth_model,selection_function,target_abstraction,num_concepts_selected,acc_list,concept_source,environment_string,additional_info,direction='max')
     
-    X,Y = get_concept_labels(ground_truth_gym_env,groundtruth_model,imperfect_concepts)
-    model = train_concept_predictor(X,Y)
-    fast_predictor = FastGPUPredictor(model, "cuda")
-    two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string, imperfect_concepts, seed,fast_predictor=fast_predictor,use_processed=True)   
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps)    
-    top_k_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,additional_info,model,seed)
+#     X,Y = get_concept_labels(ground_truth_gym_env,groundtruth_model,imperfect_concepts)
+#     model = train_concept_predictor(X,Y)
+#     fast_predictor = FastGPUPredictor(model, "cuda")
+#     two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string, imperfect_concepts, seed,fast_predictor=fast_predictor,use_processed=True)   
+#     model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps)    
+#     top_k_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,additional_info,model,seed)
 
-    results['two_stage']['imperfect'] = {'reward': imperfect_two_stage_reward, 'concepts': imperfect_idx}
-    print(imperfect_two_stage_reward)
+#     results['two_stage']['imperfect'] = {'reward': imperfect_two_stage_reward, 'concepts': imperfect_idx}
+#     print(imperfect_two_stage_reward)
 
 # ### Iterative
 

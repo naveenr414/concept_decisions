@@ -13,9 +13,9 @@ from math import ceil
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecFrameStack, DummyVecEnv
 from concept_abstraction.env_utils import rollout_q_estimates_td, rollout_pi_estimates
 from concept_abstraction.concept_bank import inaccurate_concepts_continuous
-from concept_abstraction.training import train_two_stage_ppo_model, evaluate_model
-from concept_abstraction.environments import InfoTransformWrapper, GymnasiumWrapper
-
+from concept_abstraction.training import train_two_stage_ppo_model, evaluate_model, train_ppo_model
+from concept_abstraction.environments import InfoTransformWrapper, GymnasiumWrapper, get_environment
+import torch
 
 def random_selection(concept_list,num_concepts):
     """Randomly select {num_concepts} from env.concepts
@@ -457,14 +457,17 @@ def imperfect_lp_selection(env,concept_list,reference_model,selection_function,t
         for a in unique_actions:
             relevant_q_estimates = q_values[actions == a]
             relevant_threshold = np.argsort(relevant_q_estimates)
-            
-            for low_idx in relevant_threshold:
-                for high_idx in relevant_threshold:
+            print(len(relevant_threshold))
+            for low_idx in relevant_threshold[:1024]:
+                for high_idx in relevant_threshold[-1024:]:
                     if abs(relevant_q_estimates[low_idx]-relevant_q_estimates[high_idx]) > target_abstraction:
                         tup = (abs(relevant_q_estimates[low_idx]-relevant_q_estimates[high_idx]),[i for i in range(len(concept_list)) if discretized_X[low_idx][i] != discretized_X[high_idx][i]])
                         if tup[-1] == []:
                             continue 
                         final_vals.append(tup[-1])
+        print("There are {}".format(len(final_vals)))
+        if len(final_vals) > 100_000:
+            final_vals = random.sample(final_vals, 100_000)
         idx, avg_acc = max_accuracy_selection(final_vals,accuracies,"max",num_concepts_selected,target_abstraction_percentage=0.5)
         concepts = [concept_list[i] for i in idx]
     elif selection_function == "policy":
@@ -568,56 +571,111 @@ def ucb(mu_hat,N,n,c=0.1):
         return 1
     return mu_hat + c*np.sqrt(np.log(N)/n)
 
-def iterative_selection(environment_string,env,concept_list,groundtruth_model,selection_function,target_abstraction,num_iterations,training_timesteps):
-    """Iteratively select which concepts to run based on true values
-        for concept performance
-        
-    Arguments:
-        env: Gymnasium environment
-        concept_list: List of potential concepts
-        groundtruth_model: Model trained on the raw states
-        selection_function: String, q_value or policy
-        target_abstraction: Float, how much of the state space we need to cover
-        num_iterations: Total iterations we run for
-    
-    Returns: List of concepts and their indices"""
-    trials = [[] for i in range(len(concept_list))]
-
-    for iteration in range(num_iterations):
-        predicted_state_loss = [ucb(np.mean(t),iteration,len(t)) for t in trials]
-        modified_concept_predictors = [inaccurate_concepts_continuous(func,0,std) for func,std in zip(concept_list,predicted_state_loss)]
-        subset_concept, imperfect_idx = imperfect_lp_selection(env,modified_concept_predictors,groundtruth_model,selection_function,target_abstraction,predicted_state_loss,direction='min')
-
-        if iteration == num_iterations-1:
-            return subset_concept, imperfect_idx
-        ground_truth_concept_env = InfoTransformWrapper(env,subset_concept)
-        model = train_two_stage_ppo_model(environment_string,ground_truth_concept_env,subset_concept,total_timesteps=training_timesteps)
-        per_state_loss = model.per_state_loss
-        for idx,i in enumerate(imperfect_idx):
-            trials[i].append(per_state_loss[idx])
-
-
-def bayesian_iterative_selection(env,eval_env,environment_string,additional_info,seed,concept_list,num_iterations,training_timesteps):
+def bayesian_iterative_selection(env,environment_string,seed,concept_list,num_iterations,num_concepts_selected,training_timesteps=100_000):
     def run(concept_idx):
-        ground_truth_concept_env = InfoTransformWrapper(env,[concept_list[i] for i in concept_idx])
-        ground_truth_eval_concept_env = InfoTransformWrapper(eval_env,[concept_list[i] for i in concept_idx])
-        model = train_two_stage_ppo_model(environment_string,ground_truth_concept_env,[concept_list[i] for i in concept_idx],total_timesteps=training_timesteps)
-        reward = evaluate_model(environment_string,ground_truth_eval_concept_env,additional_info,model,seed)
+        env, eval_env, additional_info = get_environment(environment_string,[concept_list[i] for i in concept_idx],seed)
+        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy")
+        reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
         return reward
-
+    
     n_concepts = len(concept_list)
+    print(n_concepts)
     space = [(0.0, 1.0)] * n_concepts
     opt = Optimizer(space, base_estimator="GP")  # Gaussian Process
+    reward_list = []
+    concepts_selected = []
 
-    for _ in range(num_iterations):
+    for iter in range(num_iterations):
+        print("On iteration {}".format(iter))
         x = opt.ask()
-        concept_idx = [i for i, xi in enumerate(x) if xi > 0.5]
-        
+        concept_idx = np.argsort(x)[-num_concepts_selected:]
+        concept_idx = sorted(concept_idx)
         reward = run(concept_idx)
         
         opt.tell(x, -reward)
+        reward_list.append(reward)
+        concepts_selected.append([int(i) for i in concept_idx])
         
     # Best subset found
     best_x = opt.Xi[np.argmin(opt.yi)]
     best_subset = [i for i, xi in enumerate(best_x) if xi > 0.5]
-    return [concept_list[i] for i in best_subset],best_subset 
+    reward_list.append(run(best_subset))
+    
+    return reward_list, concepts_selected
+
+def iterative_selection(env,gold_model,environment_string,initial_concepts,concept_list,iterations,selections_per_round,seed,max_steps=10_000,training_timesteps=100_000,td_learner=None):
+    """Iterative select concepts based on performance, and add on more concepts
+    
+    Arguments:
+        current_concepts: List of integers; which concepts we start from
+        iterations: Number of iterations to run
+        selections_per_round: Integer, how many concept to select each round
+
+    Returns: Tuple (model, list of rewards from each round)"""
+    current_concepts = initial_concepts
+    rewards_by_iteration = []
+    concepts_by_iteration = []
+
+    temp_env, temp_eval_env, additional_info = get_environment(environment_string,[concept_list[i] for i in current_concepts],seed)
+    model = train_ppo_model(temp_env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy")
+    
+    for iter in range(iterations):
+        print("On iteration {}".format(iter))
+        obs, _ = env.reset()
+        total_steps = 0
+
+        X, y = [], []
+
+        while total_steps < max_steps:
+            actions, _ = gold_model.predict(obs, deterministic=True)
+
+            obs_torch = torch.as_tensor(obs, dtype=torch.float32)
+            obs_torch = obs_torch.to(gold_model.device)
+            with torch.no_grad():
+                dist = gold_model.policy.get_distribution(obs_torch)
+            probs_gold = dist.distribution.probs.cpu().numpy()
+
+            obs_torch = torch.as_tensor(obs[:, current_concepts], dtype=torch.float32)
+            obs_torch = obs_torch.to(model.device)
+            with torch.no_grad():
+                dist = model.policy.get_distribution(obs_torch)
+
+            probs_baseline = dist.distribution.probs.cpu().numpy()
+
+            if td_learner is not None:
+                vals = td_learner.q_net(torch.Tensor(obs))
+                max_diff = torch.sum(torch.Tensor(probs_gold-probs_baseline)*vals,axis=1).detach().numpy()
+            else:
+                max_diff = np.max(np.abs(probs_baseline-probs_gold),axis=1)
+            X.append(obs)
+            y.append(max_diff.ravel())
+            obs, _, _, _, _ = env.step(actions)
+            total_steps += 1
+
+            if total_steps%100 == 0:
+                print("Steps {} out of {}".format(total_steps,max_steps))
+
+        X = np.vstack(X)
+        y = np.concatenate(y)
+
+        r2_by_concept = []
+        for i in range(X.shape[1]):
+            xi = X[:, i]
+            if np.all(xi == xi[0]):
+                r2 = np.nan
+            else:
+                corr = np.corrcoef(xi, y)[0, 1]
+                r2 = corr**2
+            r2_by_concept.append(r2)
+        r2_by_concept = np.array(r2_by_concept)  # shape (24,)
+        sorted_idx = np.argsort(r2_by_concept)[::-1]
+        sorted_idx = [i for i in sorted_idx if i not in current_concepts]
+        current_concepts += sorted_idx[:selections_per_round]
+
+        temp_env, temp_eval_env, additional_info = get_environment(environment_string,[concept_list[i] for i in current_concepts],seed)
+        model = train_ppo_model(temp_env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy")
+        model_reward = evaluate_model(environment_string,temp_eval_env,additional_info,model,seed)
+        rewards_by_iteration.append(model_reward)
+        concepts_by_iteration.append([int(i) for i in deepcopy(current_concepts)])
+    return rewards_by_iteration, concepts_by_iteration
+    

@@ -374,6 +374,39 @@ def inaccurate_concepts_binary(concept_function,accuracy,seed):
         return seen_states[hashed_state]
     return pred_function
 
+
+def inaccurate_concepts_binary_intervention(concept_function,accuracy,intervention_accuracy,intervention_probability,seed):
+    """Creates a new concept function that only agrees with the
+        concept function x% of the time
+    
+    Arguments:
+        concept_function: Some map from state -> observation
+            Here, observation must be binary
+        accuracy: Float, the accuracy of the predictor
+    
+    Returns: New Concept Function"""
+
+    seen_states = {}
+
+    def pred_function(state):
+        hashed_state = int(hashlib.md5(state.tobytes()).hexdigest(), 16) % (2**32)
+        if hashed_state not in seen_states:
+            pred = concept_function(state)
+            if np.random.random() > intervention_probability:
+                if np.random.random() > accuracy:
+                    seen_states[hashed_state] =1-pred 
+                else:
+                    seen_states[hashed_state] = pred 
+            else:
+                if np.random.random() > intervention_accuracy:
+                    seen_states[hashed_state] =1-pred 
+                else:
+                    seen_states[hashed_state] = pred 
+
+        return seen_states[hashed_state]
+    return pred_function
+
+
 def inaccurate_concepts_continuous(concept_function,error_mean,error_std):
     """Creates a new concept function that only agrees with the
         concept function x% of the time

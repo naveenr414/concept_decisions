@@ -545,7 +545,7 @@ def create_mimic_environment(concept_list,seed):
 def get_raw_pixels_cartpole(env, obs=None):
     pixels = env.render()
     gray = cv2.cvtColor(pixels, cv2.COLOR_RGB2GRAY)
-    small_pixels = cv2.resize(gray, (84,84), interpolation=cv2.INTER_NEAREST)
+    small_pixels = cv2.resize(gray, (84,84), interpolation=cv2.INTER_NEAREST).astype(float)/255
     return small_pixels
 
 def get_raw_pixels_mini_grid(env,obs=None):
