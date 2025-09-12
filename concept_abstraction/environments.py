@@ -66,7 +66,7 @@ class OptimizedConceptWrapper(gym.ObservationWrapper):
         else:
             return predictions.tolist()
 class FastGPUPredictor:
-    def __init__(self, model, device='cuda', cache_size=10000):
+    def __init__(self, model, device='cuda', cache_size=10000,subset=None):
         self.model = model.to(device)
         self.device = device
         self.model.eval()
@@ -76,6 +76,10 @@ class FastGPUPredictor:
         self.cache_size = cache_size
         self.cache_hits = 0
         self.cache_misses = 0
+        
+        self.subset = subset 
+        if self.subset is None:
+            self.subset = list(range(24))
         
         # Pre-allocate tensors to avoid repeated allocation
         self.input_tensor = None
@@ -119,12 +123,12 @@ class FastGPUPredictor:
         
         # Cache the GPU tensor (small memory cost, big speed gain)
         if len(self.cached_predictions) < self.cache_size:
-            self.cached_predictions[cache_key] = probabilities
+            self.cached_predictions[cache_key] = probabilities[self.subset]
         
         if return_float:
-            return probabilities
+            return probabilities[self.subset]
         else:
-            return (probabilities > threshold).float()
+            return (probabilities > threshold).float()[self.subset]
     
     def get_concept(self, obs, concept_idx, threshold=0.5, return_float=False):
         """Get single concept - uses cached full prediction"""
@@ -841,7 +845,7 @@ def get_environment(environment_string,concept_list,seed,use_processed=False,fas
                         shape=(84,84),  # Height x Width, no color channel
                         dtype=np.uint8
                     ),lambda env, obs: obs, obs_function=lambda e,o,i: get_raw_state_mini_grid(e,o,i))
-                env = FrameStack(env,num_stack)
+                env = FrameStack(env,1)
                 env = LazyFramesToNumpy(env)
 
             else:
@@ -862,7 +866,7 @@ def get_environment(environment_string,concept_list,seed,use_processed=False,fas
                         shape=(84,84),  # Height x Width, no color channel
                         dtype=np.uint8
                     ),lambda env, obs: obs,use_info_obs=True)
-                env = FrameStack(env,num_stack)
+                env = FrameStack(env,1) # TODO: Change this back
                 env = LazyFramesToNumpy(env)
 
                 if use_processed:
