@@ -187,6 +187,7 @@ def greedy_iterative_selection(concept_list,num_concepts_selected,selection_func
     else:
         selected_concepts = []
         for i in range(num_concepts_selected):
+            print("On selecting #{}".format(i))
             correlation_by_concept = []
             for idx in range(len(concept_list)):
                 if idx in selected_concepts:
@@ -466,8 +467,8 @@ def imperfect_lp_selection(env,concept_list,reference_model,selection_function,t
                             continue 
                         final_vals.append(tup[-1])
         print("There are {}".format(len(final_vals)))
-        if len(final_vals) > 100_000:
-            final_vals = random.sample(final_vals, 100_000)
+        if len(final_vals) > 10_000:
+            final_vals = random.sample(final_vals, 10_000)
         idx, avg_acc = max_accuracy_selection(final_vals,accuracies,"max",num_concepts_selected,target_abstraction_percentage=0.5)
         concepts = [concept_list[i] for i in idx]
     elif selection_function == "policy":

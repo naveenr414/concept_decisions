@@ -387,8 +387,11 @@ def compute_model_probabilities(model, concept_list, states=None, X=None, action
     obs_tensor = torch.Tensor([[concept(s) for concept in concept_list] for s in states]).to(model.device)
     with torch.no_grad():
         # get distribution for actions
-        dist = model.policy.get_distribution(obs_tensor.to(model.device)) 
-        action_probs = F.softmax(dist.distribution.logits).cpu().numpy()
+        if not hasattr(model,"policy"):
+            action_probs = np.array([[1/25 for i in range(25)] for _ in states])
+        else:
+            dist = model.policy.get_distribution(obs_tensor.to(model.device)) 
+            action_probs = F.softmax(dist.distribution.logits).cpu().numpy()
     # Optional: soften the distribution (like AI Clinician)
     if soften_factor > 0:
         action_probs = action_probs * (1 - soften_factor)

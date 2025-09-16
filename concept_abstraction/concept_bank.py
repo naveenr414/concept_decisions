@@ -292,6 +292,12 @@ def binarize_function(func,threshold):
     
     return [f_less,f_greater]
 
+def less_function(func,threshold):
+    def f_less(obs):
+        return int(func(obs)<threshold)
+    
+    return f_less 
+
 def binarize_function_list(func_list,threshold_list):
     new_funcs = []
     for (f,t) in zip(func_list,threshold_list):
@@ -329,7 +335,14 @@ def get_concepts(environment_string,concept_source,seed):
     human_selected['mini_grid'] = get_all_mini_grid_concepts()
     human_selected_binary['mini_grid'] = get_all_mini_grid_binary_concepts()
 
-    human_selected_binary['mimic'] = binarize_function_list([mimic_concept(i) for i in range(47)],[0 for i in range(47)])
+    full_lst = []
+    all_quantiles = np.load("../../data/mimic/quantiles.npy")
+    for i in range(47):
+        for q in all_quantiles[i]:
+            full_lst.append(less_function(mimic_concept(i),q))
+    human_selected_binary['mimic'] = full_lst 
+    
+    
     full_lst = []
     for threshold in [-0.02,0,0.02]:
         full_lst += binarize_function_list( [get_cart_pole_concept(i) for i in range(4)],[threshold for i in range(4)])
@@ -364,7 +377,7 @@ def inaccurate_concepts_binary(concept_function,accuracy,seed):
     seen_states = {}
 
     def pred_function(state):
-        hashed_state = int(hashlib.md5(state.tobytes()).hexdigest(), 16) % (2**32)
+        hashed_state = int(hashlib.md5(np.array(state).tobytes()).hexdigest(), 16) % (2**32)
         if hashed_state not in seen_states:
             pred = concept_function(state)
             if np.random.random() > accuracy:

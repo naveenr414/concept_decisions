@@ -12,6 +12,7 @@ from copy import deepcopy
 import random
 import torch
 
+from stable_baselines3.common.monitor import Monitor
 
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecFrameStack, DummyVecEnv, VecNormalize
 from concept_abstraction.post_hoc import BinaryFeatureEnvironmentWrapper, CartPoleBinaryFeatureExtractor
@@ -193,7 +194,7 @@ class ConceptEnv(gym.Env):
 
         reward = self.rewards[self.state][action]
         if np.sum(self.transitions[self.state][action]) == 0:
-            reward = -10
+            reward = -1
         else:
             self.state = np.random.choice(self.all_states, p=self.transitions[self.state][action])        
             self.steps += 1
@@ -467,7 +468,7 @@ def create_mimic_environment(concept_list,seed):
         
     Returns: ConceptEnv"""
 
-    N_CLUSTERS = 100 # 750
+    N_CLUSTERS = 750
 
     MIMICraw = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/MIMICraw.csv")
     MIMICzs = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/MIMICzs.csv")
@@ -500,17 +501,126 @@ def create_mimic_environment(concept_list,seed):
 
     n_cluster_states = np.max(states_train)+1
     absorbing_states =  [n_cluster_states + 1, n_cluster_states]
-    rewards = [100, -100]
-    # Create qldata3
-    qldata3 = build_complete_record_sequences(
-        metadata_train,
-        states_train,
-        actions_train,
-        absorbing_states,
-        rewards
-    )
+    rewards = [15, -15]
+
+
+    # -------------------------
+    # 1. constants / column names - EDIT these if your column names differ
+    # -------------------------
+    SOFA_COL = "SOFA"        # <- replace with actual SOFA column name in MIMICraw
+    LACTATE_COL = "Arterial_lactate"  # <- replace with actual lactate column name in MIMICraw
+
+    C0 = -0.025
+    C1 = -0.125
+    C2 = -2.0
+
+    # scaling factor in case shaped rewards are too small/large relative to terminal rewards
+    SHAPE_SCALE = 1.0  # tune this (e.g., 0.5, 2.0) after you inspect distributions
+
+    # -------------------------
+    # 2. prepare aligned arrays / dataframe
+    # -------------------------
+    # train_indexes already defined earlier in your snippet
+    # metadata_train, states_train, actions_train are aligned with train_indexes
+
+    # choose where to pull raw SOFA/lactate values from - I use MIMICraw here.
+    sofa_vals = MIMICraw[SOFA_COL].iloc[train_indexes].astype(float).values
+    lactate_vals = MIMICraw[LACTATE_COL].iloc[train_indexes].astype(float).values
+
+    # Build a helper dataframe that preserves the exact order used to create states_train/actions_train
+    df_steps = pd.DataFrame({
+        "icustayid": metadata_train[C_ICUSTAYID].values,
+        "state": states_train,
+        "action": actions_train,
+        "sofa": sofa_vals,
+        "lactate": lactate_vals,
+    })
+    # the index 0..N-1 in df_steps corresponds to the ordering in X_train / states_train
+    n_rows = len(df_steps)
+
+    # -------------------------
+    # 3. compute shaped reward per non-terminal step
+    # -------------------------
+    step_rewards = np.zeros(n_rows, dtype=float)
+
+    # We'll compute forward-difference within each icu stay.
+    for icu, grp in df_steps.groupby("icustayid"):
+        pos = grp.index.values              # positions in df_steps for this ICU stay
+        sofa_seq = grp["sofa"].values
+        lactate_seq = grp["lactate"].values
+
+        if len(pos) == 1:
+            # single-step stay -> no intra-stay transition; keep step reward = 0 and rely on terminal reward
+            continue
+
+        # compute offset next values (last step's "next" will be NaN and handled)
+        sofa_next = np.append(sofa_seq[1:], np.nan)
+        lactate_next = np.append(lactate_seq[1:], np.nan)
+
+        # indicator: same SOFA and SOFA > 0
+        indicator = ((sofa_seq == sofa_next) & (sofa_seq > 0)).astype(float)
+
+        # diffs: sofa_t - sofa_{t+1}, lactate_t - lactate_{t+1}
+        diff_sofa = sofa_seq - sofa_next
+        diff_lactate = lactate_seq - lactate_next
+
+        # replace NaNs (last pos) with 0 for computing shaped contribution — last step will be terminal reward
+        diff_sofa = np.nan_to_num(diff_sofa, nan=0.0)
+        diff_lactate = np.nan_to_num(diff_lactate, nan=0.0)
+
+        r = C0 * indicator + C1 * diff_sofa + C2 * np.tanh(diff_lactate)
+        r = r * SHAPE_SCALE
+
+        step_rewards[pos] = r
+    qldata3_shaped = []
+    for icu, grp in df_steps.groupby("icustayid"):
+        pos = grp.index.values
+        for i_idx, p in enumerate(pos):
+            s = int(df_steps.loc[p, "state"])
+            a = int(df_steps.loc[p, "action"])
+            if i_idx < len(pos) - 1:
+                next_p = pos[i_idx + 1]
+                s_next = int(df_steps.loc[next_p, "state"])
+                r = float(step_rewards[p])
+                done = False
+            else:
+                # last step in stay -> treat as terminal transition to absorbing state
+                # choose which absorbing-state id you want (your script used two absorbing states: [n_cluster_states + 1, n_cluster_states])
+                # Here I set next state to absorbing_states[1] (adjust if your convention differs)
+                s_next = absorbing_states[1]
+                # terminal reward: keep your previous terminal rewards array (rewards variable)
+                # but you must map actual mortality flag to decide +15 or -15. Replace MORT_COL below with your outcome column.
+                MORT_COL = "hospital_death"  # <- CHANGE to your column name that flags death (0/1)
+                # If you don't have a mortality column in metadata_train, keep using previous default terminal reward:
+                try:
+                    death_flag = int(metadata_train.iloc[p][MORT_COL])
+                    # death_flag==1 => negative terminal reward; death_flag==0 => positive terminal reward
+                    if death_flag == 1:
+                        r = float(rewards[1])  # -15 (example)
+                    else:
+                        r = float(rewards[0])  # +15 (example)
+                except Exception:
+                    # fallback: use the positive terminal reward (change as you see fit)
+                    r = float(rewards[0])
+                done = True
+
+            # Record format: (icustayid, pos, state, action, reward, next_state, done)
+            qldata3_shaped.append((int(df_steps.loc[p, "icustayid"]), int(p), s, a, r, int(s_next), done))
+    qldata3 = pd.DataFrame(qldata3_shaped, columns=['icustayid', 'orig_bloc', 'state', 'action', 'reward', 'next_state', 'done'])
+    # Group by icustayid and assign bloc starting at 0 for each ICU stay
+    qldata3['bloc'] = qldata3.groupby('icustayid').cumcount()+1
+
+    # Create 'outcome' column: 1 if terminal (done=True) else 0
+    qldata3['outcome'] = qldata3['done'].astype(int)
+
+    # Keep only the requested columns
+    qldata3 = qldata3[['bloc', 'icustayid', 'state', 'action', 'outcome', 'reward']]
+
+    # Reset index
+    qldata3.reset_index(drop=True, inplace=True)
+
     n_states = n_cluster_states + 2
-    reward_val = 100
+    reward_val = 15
     transition_threshold = 5
 
     d = Counter(states_train)
@@ -520,14 +630,64 @@ def create_mimic_environment(concept_list,seed):
     state_distro = np.append(state_distro,0)
 
     ####### BUILD MODEL ########
-    physpol, transitionr, R = compute_physician_policy(
-        qldata3,
-        n_states,
-        n_actions,
-        absorbing_states,
-        reward_val=reward_val,
-        transition_threshold=transition_threshold
+    # Initialize counts array: [s', s, a]
+    transition_counts = np.zeros((n_states, n_states, n_actions))
+    arr = np.array(qldata3)
+
+    # Populate counts from dataframe
+    for i,row in enumerate(arr):
+        s = int(row[2])
+        a = int(row[3])
+        outcome = int(row[4])
+        reward = row[5]
+        if outcome == 1:
+            # terminal transition -> to absorbing state
+            s_next = absorbing_states[0] if reward > 0 else absorbing_states[1]
+        else:
+            next_row = arr[i+1]
+            if next_row[1] != row[1]:
+                s_next = absorbing_states[1] 
+            else:
+                s_next = int(next_row[2])
+        transition_counts[s_next, s, a] += 1
+
+    # # Convert counts to probabilities P(s'|s,a)
+    transitionr = np.divide(transition_counts, transition_counts.sum(axis=0, keepdims=True),
+                            where=transition_counts.sum(axis=0, keepdims=True) > 0)
+
+    # # Physician policy π_physician(a|s)
+    action_counts = transition_counts.sum(axis=0)  # sum over s'
+    physpol = np.divide(action_counts, action_counts.sum(axis=1, keepdims=True),
+                        where=action_counts.sum(axis=1, keepdims=True) > 0)
+
+    # # Expected reward R[s,a]
+    transition_rewards = np.zeros((n_states, n_states, n_actions))
+    for i,row in enumerate(arr):
+        s = int(row[2])
+        a = int(row[3])
+        outcome = int(row[4])
+        reward = row[5]
+        if outcome == 1:
+            # terminal transition -> to absorbing state
+            s_next = absorbing_states[0] if reward > 0 else absorbing_states[1]
+        else:
+            next_row = arr[i+1]
+            if next_row[1] != row[1]:
+                s_next = absorbing_states[1] 
+            else:
+                s_next = int(next_row[2])
+        transition_rewards[s_next,s,a] += reward
+
+    transition_rewards_mean = np.divide(
+        transition_rewards, 
+        transition_counts, 
+        out=np.zeros_like(transition_rewards), 
+        where=transition_counts>0
     )
+
+    # Then expected R[s,a] = sum_{s'} P(s'|s,a) * avg_reward[s',s,a]
+    R = (transitionr * transition_rewards_mean).sum(axis=0)
+
 
     if concept_list is None:
         concept_list = [mimic_concept(i) for i in range(47)]
@@ -544,6 +704,7 @@ def create_mimic_environment(concept_list,seed):
     done_map = lambda s: s in [n_cluster_states,n_cluster_states+1]
     state_distro = state_distro
     env = ConceptEnv(modified_concept_list,observation_space,action_space,rewards,transitions,all_states,max_steps,state_distro=state_distro,done_map=done_map)
+    env = Monitor(env)
     return physpol, env, centers, modified_concept_list, clusterer
 
 def get_raw_pixels_cartpole(env, obs=None):
@@ -659,7 +820,8 @@ def make_ocenv(env_name,concept_list,observation_space,seed=0,recordable=False,n
             difficulty=0  # easiest opponent
         )
     env.ale = env._ale 
-    
+    env = Monitor(env)
+
     # Apply ConceptWrapper (assuming it returns the pixel observations)
     env = ConceptWrapper(env, concept_list, observation_space, get_raw_state_atari)
     if concept_list is None:
@@ -845,7 +1007,7 @@ def get_environment(environment_string,concept_list,seed,use_processed=False,fas
                         shape=(84,84),  # Height x Width, no color channel
                         dtype=np.uint8
                     ),lambda env, obs: obs, obs_function=lambda e,o,i: get_raw_state_mini_grid(e,o,i))
-                env = FrameStack(env,1)
+                env = FrameStack(env,num_stack)
                 env = LazyFramesToNumpy(env)
 
             else:
@@ -899,5 +1061,66 @@ def get_environment(environment_string,concept_list,seed,use_processed=False,fas
                 ),num_stack=num_stack)
         else:
             vec_env = get_n_atari_env(num_envs,"PongNoFrameskip-v4",concept_list,spaces.Box(low=-1, high=1, shape=(len(concept_list),), dtype=np.float32))
+        # vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=False, clip_obs=10.0)
         gymnasium_env = GymnasiumWrapper(vec_env)
     return vec_env, gymnasium_env, additional_info
+
+def eval_mimic_model(physpol,model,concept_list,clusterer,seed):
+    """Evaluate a MIMIC policy via the WIS score
+    
+    Arguments:
+        physpol: Physicians policy, for reference
+            Retrieved from compute_physician_policy
+        model: Trained stable_baseline model for the environment
+                concept_list: A list of a single concept
+            that maps a state (represented by a vector)
+            to a single integer number
+            It needs to be in this form becuase we need to discretize
+            the environment
+        seed: Integer, random seed
+    Returns: 
+        Float, WIS score
+    """
+
+    MIMICraw = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/MIMICraw.csv")
+    metadata = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/metadata.csv")
+    MIMICzs = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/MIMICzs.csv")
+
+    C_ICUSTAYID = "icustayid"
+    unique_icu_stays = metadata[C_ICUSTAYID].unique()
+
+    n_action_bins = 5
+    gamma = 0.99
+
+    all_actions, _, _ = fit_action_bins(
+        MIMICraw[C_INPUT_STEP],
+        MIMICraw[C_MAX_DOSE_VASO],
+        n_action_bins=n_action_bins
+    )
+
+    train_ids, val_ids = train_test_split(unique_icu_stays, test_size=0.1,random_state=seed)
+    train_indexes = metadata[metadata[C_ICUSTAYID].isin(train_ids)].index
+    val_indexes = metadata[metadata[C_ICUSTAYID].isin(val_ids)].index
+
+    X_train = MIMICzs.iloc[train_indexes]
+    X_val = MIMICzs.iloc[val_indexes]
+
+    metadata_val = metadata.iloc[val_indexes]
+    actions_val = all_actions[val_indexes]
+
+    states_train = clusterer.predict(X_train.values)
+    states_val = clusterer.predict(X_val.values)
+
+    phys_probs = compute_physician_probabilities(physpol,np.max(states_train)+1,states=states_val, actions=actions_val)
+    model_probs = compute_model_probabilities(model,concept_list,states=states_val, actions=actions_val)
+    val_bootwis, _,  _ = evaluate_policy_wis(
+        metadata_val,
+        phys_probs,
+        model_probs,
+        [15,-15],
+        gamma,
+        200
+    )
+
+    return np.mean(val_bootwis)
+

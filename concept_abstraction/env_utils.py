@@ -30,7 +30,7 @@ def get_average_reward(vec_env, model, max_steps=50000,max_steps_per=5000):
 
 
     while total_steps < max_steps:
-        actions, _ = model.predict(obs, deterministic=True)
+        actions, _ = model.predict(obs)
         obs, rewards, terminated, truncated, infos = vec_env.step(actions)
             
         rewards_accum += rewards
@@ -72,15 +72,17 @@ def get_average_reward_mimic(env, model, max_steps=50000,max_steps_per=100):
                 action = env.action_space.sample()
             else:
                 action = random.choice([idx for idx,i in enumerate(valid_action) if i>0])
-            
         else:
-            valid_action = torch.Tensor(valid_action).to(model.device)
+            # TODO: Remove this
+            valid_action = torch.ones(len(valid_action))# torch.Tensor(valid_action).to(model.device)
             action = model.policy.get_distribution(torch.Tensor(obs).unsqueeze(0).to(model.device)).distribution.probs 
-
             action *= valid_action
             action = torch.argmax(action).item()
-
+        print(obs,action,info['observation'])
         obs, rewards, terminated, truncated, info = env.step(action)
+        if rewards == -10:
+            rewards = 0.
+        print(rewards)
             
         rewards_accum += rewards
         total_steps += 1 
@@ -90,7 +92,8 @@ def get_average_reward_mimic(env, model, max_steps=50000,max_steps_per=100):
             rewards_accum = 0  # reset for next episode
             steps_per = 0
             obs, info = env.reset()
-    return np.mean(episode_rewards)
+            print("Resetting!")
+    return episode_rewards
 
 
 def rollout_pi_estimates(model, env, concept_list, num_rollouts=200, max_steps=2500,mimic=False):

@@ -1,6 +1,6 @@
 import time
 import random
-from collections import namedtuple
+from collections import namedtuple, deque
 from typing import Callable
 
 import numpy as np
@@ -22,38 +22,85 @@ from stable_baselines3.common.utils import obs_as_tensor
 from stable_baselines3.common.callbacks import BaseCallback
 
 from concept_abstraction.env_utils import get_average_reward, get_average_reward_mimic
+from concept_abstraction.environments import eval_mimic_model
 
 InfoRolloutBufferSamples = namedtuple(
     "InfoRolloutBufferSamples",
     ["observations", "actions", "old_values", "old_log_prob", "advantages", "returns", "infos"]
 )
 
-
 class ProgressBarCallback(BaseCallback):
-    def __init__(self, total_timesteps, update_interval=0.01, verbose=0):
-        """
-        update_interval: fraction of total timesteps to update progress bar (e.g., 0.01 = 1%)
-        """
+    def __init__(self, total_timesteps, update_interval=0.01, print_interval=0.1,
+                 reward_window=100, verbose=0):
         super().__init__(verbose)
         self.total_timesteps = total_timesteps
         self.update_interval = update_interval
-        self.pbar = None
+        self.print_interval = print_interval
+        self.ep_rewards = deque(maxlen=reward_window)
         self.last_update = 0
+        self.last_print = 0
 
-    def _on_training_start(self):
-        self.pbar = tqdm(total=self.total_timesteps, desc="Training")
-
-    def _on_step(self):
-        # Only update when enough progress has been made
-        if self.num_timesteps - self.last_update >= self.total_timesteps * self.update_interval:
-            self.pbar.n = self.num_timesteps
-            self.pbar.refresh()
-            self.last_update = self.num_timesteps
+    def _on_step(self) -> bool:
+        # collect episode rewards from infos (Monitor must be used)
+        for info in self.locals.get("infos", []):
+            if "episode" in info:
+                self.ep_rewards.append(info["episode"]["r"])
+        # refresh progress bar if you have one
         return True
 
-    def _on_training_end(self):
-        self.pbar.close()
+    def _log_grad_norm(self):
+        # compute gradient L2 norm (policy + value nets)
+        total_norm = 0.0
+        for p in self.model.policy.parameters():
+            if p.grad is not None:
+                param_norm = p.grad.data.norm(2)
+                total_norm += param_norm.item() ** 2
+        total_norm = total_norm ** 0.5
+        self.logger.record("diagnostics/grad_norm", total_norm)
 
+    def _on_rollout_end(self):
+        # record diagnostics available from SB3 logger and also compute extra stats
+        logger_data = self.model.logger.name_to_value
+
+        # record avg reward from our buffer
+        avg_reward = np.mean(self.ep_rewards) if self.ep_rewards else np.nan
+        self.logger.record("diagnostics/avg_reward_window", float(avg_reward))
+
+        # copy some SB3 metrics if present
+        for k in ("train/explained_variance", "train/value_loss",
+                  "train/policy_gradient_loss", "train/approx_kl",
+                  "train/clip_fraction"):
+            if k in logger_data:
+                self.logger.record(k, float(logger_data[k]))
+
+        # compute & log grad norm (requires grads to exist; SB3 computes grads during train step)
+        try:
+            self._log_grad_norm()
+        except Exception:
+            pass
+
+        # If you can access sampled returns/advantages from locals, log their stats
+        returns = self.locals.get("returns", None)
+        advantages = self.locals.get("advantages", None)
+        if returns is not None:
+            r = np.array(returns)
+            self.logger.record("diagnostics/returns_mean", float(r.mean()))
+            self.logger.record("diagnostics/returns_std", float(r.std()))
+        if advantages is not None:
+            a = np.array(advantages)
+            self.logger.record("diagnostics/advantages_mean", float(a.mean()))
+            self.logger.record("diagnostics/advantages_std", float(a.std()))
+
+        # print a compact line
+        if self.num_timesteps - self.last_print >= self.total_timesteps * self.print_interval:
+            ev = logger_data.get("train/explained_variance", None)
+            vl = logger_data.get("train/value_loss", None)
+            kl = logger_data.get("train/approx_kl", None)
+            cf = logger_data.get("train/clip_fraction", None)
+            gn = self.logger.name_to_value.get("diagnostics/grad_norm", None)
+            self.logger.record("diagnostics/last_printed_steps", self.num_timesteps)
+            print(f"Step: {self.num_timesteps} | AvgR: {avg_reward:.3f} | EV: {ev} | VLoss: {vl} | KL: {kl} | ClipF: {cf} | GradN: {gn}")
+            self.last_print = self.num_timesteps
 
 class InfoRolloutBuffer(RolloutBuffer):
     def __init__(self, buffer_size, observation_space, action_space, device,
@@ -134,13 +181,47 @@ def train_ppo_model(env,environment_string,seed=42,total_timesteps=150_000,polic
                 ent_coef=0.0,
                 verbose=0
             )
+        elif environment_string == "pong" or environment_string == "boxing":
+            model = PPO( "MlpPolicy", env, policy_kwargs=dict(net_arch=[128,128], activation_fn=torch.nn.ReLU), n_steps=4096, batch_size=256, n_epochs=4, learning_rate=1e-3, gamma=0.995, ent_coef=0.015, verbose=0, device='cpu' )
+        elif environment_string == "mimic":
+            model = PPO(
+                "MlpPolicy", 
+                env,
+                policy_kwargs=dict(
+                    net_arch=[128,128],        # Standard size for 141-dim observations
+                    activation_fn=torch.nn.ReLU # Back to ReLU - fine for this env
+                ),
+                n_steps=512,               # Standard rollout length
+                batch_size=256,              # Reasonable batch size
+                n_epochs=4,                 # Moderate epochs
+                learning_rate=1e-3,         # Standard PPO learning rate
+                gamma=0.99,                 # Standard discount
+                ent_coef=0.02,              # Moderate entropy
+                vf_coef=0.5,                # Standard value function weight
+                clip_range=0.2,             # Standard PPO clip
+                verbose=0,
+                device='cpu',
+                normalize_advantage=True
+            )
+        elif environment_string == "mimic_raw":
+            model = PPO(
+                "MlpPolicy",
+                env,
+                policy_kwargs={"net_arch": [32,32]},  # Single layer is actually fastest
+                n_steps=1024,
+                batch_size=1024,        # Match n_steps for single batch processing
+                n_epochs=4,           # KEY: Single epoch only
+                learning_rate=5e-3,   # Higher LR to compensate for fewer epochs
+                device='cpu',        # Your GPU is working fine
+                verbose=0
+            )
         else:
             model = PPO(
                 "MlpPolicy",
                 env,
-                policy_kwargs={"net_arch": [16,16]},  # Single layer is actually fastest
+                policy_kwargs={"net_arch": [32,32]},  # Single layer is actually fastest
                 n_steps=256,
-                batch_size=2048,        # Match n_steps for single batch processing
+                batch_size=1024,        # Match n_steps for single batch processing
                 n_epochs=1,           # KEY: Single epoch only
                 learning_rate=5e-3,   # Higher LR to compensate for fewer epochs
                 device='cpu',        # Your GPU is working fine
@@ -614,8 +695,9 @@ def evaluate_model(environment_string,env,additional_info,model,seed):
     random.seed(seed)
     torch.manual_seed(seed)
     if environment_string == "mimic":
-        return get_average_reward_mimic(env,model,max_steps_per=100)
-
+        # return get_average_reward_mimic(env,model,max_steps_per=100)
+        return eval_mimic_model(additional_info['physpol'],model,additional_info['concept_list'],additional_info['clusterer'],seed)
+    # TODO: Add back in 
     return get_average_reward(env,model)
 
 # ----------------------------
@@ -687,14 +769,14 @@ def get_concept_labels_avg(env, model, concept_list, num_steps=5000, batch_size=
         yield X_batch, Y_batch
         del X_batch, Y_batch
 
-def train_concept_predictor(ground_truth_gym_env,gold_model,concept_list): 
+def train_concept_predictor(ground_truth_gym_env,gold_model,concept_list,idx): 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
     sample_X, sample_Y = [], []
     for Xb, Yb in get_concept_labels_avg(ground_truth_gym_env, gold_model, concept_list, num_steps=500, batch_size=100):
         sample_X.append(Xb)
-        sample_Y.append(Yb)
+        sample_Y.append(Yb[:,idx])
 
     sample_Y = np.concatenate(sample_Y, axis=0)
     pos_counts = sample_Y.sum(axis=0)
@@ -705,7 +787,7 @@ def train_concept_predictor(ground_truth_gym_env,gold_model,concept_list):
     # ----------------------------
     # Initialize model, criterion, optimizer
     # ----------------------------
-    model = CartPoleConceptCNN(len(concept_list)).to('cuda')
+    model = CartPoleConceptCNN(len(idx)).to('cuda')
     criterion = WeightedBCEWithLogits(pos_weights=pos_weights, smoothing=0)
     optimizer = optim.Adam(model.parameters(), lr=5e-3)
 
@@ -722,7 +804,7 @@ def train_concept_predictor(ground_truth_gym_env,gold_model,concept_list):
     for Xb, Yb in get_concept_labels_avg(env, gold_model, concept_list,
                                         num_steps=1000, batch_size=batch_size):
         val_X_list.append(Xb)
-        val_Y_list.append(Yb)
+        val_Y_list.append(Yb[:,idx])
 
     val_X = np.concatenate(val_X_list, axis=0)
     val_Y = np.concatenate(val_Y_list, axis=0)
@@ -740,7 +822,7 @@ def train_concept_predictor(ground_truth_gym_env,gold_model,concept_list):
 
         for Xb, Yb in get_concept_labels_avg(env, gold_model, concept_list, num_steps=num_steps, batch_size=batch_size):
             X_tensor = torch.tensor(Xb, dtype=torch.float32, device=device)
-            Y_tensor = torch.tensor(Yb, dtype=torch.float32, device=device)
+            Y_tensor = torch.tensor(Yb, dtype=torch.float32, device=device)[:,idx]
 
             optimizer.zero_grad()
             logits = model(X_tensor)
@@ -762,7 +844,6 @@ def train_concept_predictor(ground_truth_gym_env,gold_model,concept_list):
             for Xb, Yb in val_loader(val_X, val_Y): #get_concept_labels_avg(env, gold_model, concept_list, num_steps=1000, batch_size=batch_size)
                 X_tensor = torch.tensor(Xb, dtype=torch.float32, device=device)
                 Y_tensor = torch.tensor(Yb, dtype=torch.float32, device=device)
-
                 logits = model(X_tensor)
                 loss = criterion(logits, Y_tensor)
                 val_loss += loss.item()
@@ -782,4 +863,16 @@ def train_concept_predictor(ground_truth_gym_env,gold_model,concept_list):
         if avg_val_f1 > best_f1:
             best_f1 = avg_val_f1
             best_model_state = model.state_dict()
-    return model 
+
+    acc_list = np.zeros(len(idx))
+    tot = 0
+    for Xb, Yb in val_loader(val_X, val_Y): #get_concept_labels_avg(env, gold_model, concept_list, num_steps=1000, batch_size=batch_size)
+        X_tensor = torch.tensor(Xb, dtype=torch.float32, device=device)
+        Y_tensor = torch.tensor(Yb, dtype=torch.float32, device=device)
+        logits = model(X_tensor)
+        preds = (torch.sigmoid(logits) > 0.5).cpu().numpy()
+        acc_list += np.sum(preds == Y_tensor.cpu().numpy(),axis=0)
+        tot += len(logits)
+
+
+    return model, ((acc_list/tot).tolist())

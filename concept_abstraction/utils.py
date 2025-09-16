@@ -60,8 +60,6 @@ def get_results_matching_parameters(folder_name,result_name,parameters):
     all_results = glob.glob("../../results/{}/{}*.json".format(folder_name,result_name))
     ret_results = []
 
-    print(all_results)
-
     for file_name in all_results:
         f = open(file_name)
         first_few = f.read(1000)
