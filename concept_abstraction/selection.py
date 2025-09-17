@@ -16,6 +16,8 @@ from concept_abstraction.concept_bank import inaccurate_concepts_continuous
 from concept_abstraction.training import train_two_stage_ppo_model, evaluate_model, train_ppo_model
 from concept_abstraction.environments import InfoTransformWrapper, GymnasiumWrapper, get_environment
 import torch
+from itertools import combinations
+from collections import defaultdict, Counter 
 
 def random_selection(concept_list,num_concepts):
     """Randomly select {num_concepts} from env.concepts
@@ -215,7 +217,7 @@ def greedy_iterative_selection(concept_list,num_concepts_selected,selection_func
 
     return concepts, idx
 
-def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True):
+def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True,as_float=False):
     """Arguments:
         final_vals: list of tuples (value, elements_covering_value)
                     assumed sorted in decreasing priority (top first)
@@ -236,11 +238,15 @@ def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True):
     model = gp.Model("max_prefix_hitting")
     model.Params.OutputFlag = 0  # silence solver
     
-    # Binary vars: x[e] = 1 if element e selected
-    x = model.addVars(m, vtype=GRB.BINARY, name="x")
-    
-    # Binary vars: y[i] = 1 if value i is covered
-    y = model.addVars(n, vtype=GRB.BINARY, name="y")
+    if as_float:
+        x = model.addVars(m, lb=0.0, ub=1.0, vtype=GRB.CONTINUOUS, name="x")
+        y = model.addVars(n, lb=0.0, ub=1.0, vtype=GRB.CONTINUOUS, name="y")
+    else:
+        # Binary vars: x[e] = 1 if element e selected
+        x = model.addVars(m, vtype=GRB.BINARY, name="x")
+        
+        # Binary vars: y[i] = 1 if value i is covered
+        y = model.addVars(n, vtype=GRB.BINARY, name="y")
     
     # Link y[i] to coverage by selected elements
     for i, (_, elems) in enumerate(final_vals):
@@ -257,7 +263,7 @@ def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True):
     if in_order:
         for i in range(1, n):
             model.addConstr(y[i] <= y[i-1], name=f"prefix_{i}")
-    
+    print("Set constraints, optimizing")
     model.addConstr(gp.quicksum(x[i] for i in range(m)) <= num_concepts_selected, name="budget")
     model.setObjective(gp.quicksum(y[i] for i in range(n)), GRB.MAXIMIZE)    
     model.optimize()
@@ -557,6 +563,81 @@ def greedy_selection_supervised(train_matrix,labels,num_concepts):
         all_prefixes.append(deepcopy(total_concepts))
     
     return all_prefixes
+
+def greedy_approx(final_vals,budget):
+    remaining_final_vals = []
+    selected = []
+
+    for _ in range(budget):
+        print("On {}".format(_))
+
+def greedy_max_coverage(final_vals, budget):
+    # final_vals: list of (value, elements_covering_value)
+    # budget: number of concepts to select
+    
+    # Build inverse map: element -> set indices it covers
+    element_to_sets = defaultdict(set)
+    for i, (_, elems) in enumerate(final_vals):
+        for e in elems:
+            element_to_sets[e].add(i)
+
+    covered = set()
+    selected = []
+
+    for _ in range(budget):
+        best_e, best_gain = None, -1
+        # pick element covering the most *new* sets
+        for e, sets in element_to_sets.items():
+            gain = len(sets - covered)
+            if gain > best_gain:
+                best_e, best_gain = e, gain
+        if best_gain <= 0:
+            break  # no more gain
+        selected.append(best_e)
+        covered.update(element_to_sets[best_e])
+        # optional: lazy update for speed
+    return selected, len(covered)
+
+def lp_selection_supervised(train_matrix,labels,num_concepts):
+    """Select {num_concepts} greedily
+        by selecting those that reduce the reward range within each partition
+        For example, first select the concept
+            so that, c_{i} = 0 and c_{i} = 1 each have
+                small differences between max and min reward
+
+    Arguments:
+        env: Gymasium environment
+        num_concepts: Integer, number of concepts to select
+    
+    Returns: List of size {num_concepts} of integers
+        each representing a concept"""
+    train_X = np.asarray(train_matrix)
+    labels = np.asarray(labels)
+    # Convert rows to tuples to make them hashable
+    rows_as_tuples = [tuple(row) for row in train_X]
+    row_counts = Counter(rows_as_tuples)   # counts of each unique row
+
+    unique_rows = np.array(list(row_counts.keys()))
+    unique_counts = np.array([row_counts[r] for r in row_counts])
+    unique_labels = np.array([labels[np.all(train_X == r, axis=1)][0] for r in unique_rows])
+
+    pairs = [
+        (i, j) 
+        for i, j in combinations(range(len(unique_rows)), 2) 
+        if unique_labels[i] != unique_labels[j]
+    ]
+
+    per_train_constraint_weighted = []
+
+    for i, j in pairs:
+        elems_diff = np.where(unique_rows[i] != unique_rows[j])[0].tolist()
+        weight = unique_counts[i] * unique_counts[j]   # multiplicity weight
+        per_train_constraint_weighted.append((weight, elems_diff))
+
+    selected_elements, _ = max_prefix_gurobi(per_train_constraint_weighted, num_concepts, in_order=False,as_float=False)
+
+    return selected_elements
+
 
 def ucb(mu_hat,N,n,c=0.1):
     """UCB upper bound
