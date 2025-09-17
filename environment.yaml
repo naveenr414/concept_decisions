@@ -1,6 +1,6 @@
 name: food
 channels:
-  - defaults
+  - defaults 
 dependencies:
   - python=3.10
   - pytorch-cuda=12.1
