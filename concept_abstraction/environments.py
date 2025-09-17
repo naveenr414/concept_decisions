@@ -7,14 +7,17 @@ import ocatari
 import cv2 
 from collections import Counter
 from sklearn.model_selection import train_test_split
-from gymnasium.wrappers import FrameStack  # gym’s own for single envs
+from gymnasium.wrappers import FrameStackObservation as FrameStack  # gym’s own for single envs
 from copy import deepcopy
 import random
 import torch
 
-from stable_baselines3.common.monitor import Monitor
-
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecFrameStack, DummyVecEnv, VecNormalize
+from io import StringIO
+from contextlib import redirect_stderr
+stderr_buffer = StringIO()
+with redirect_stderr(stderr_buffer):
+    from stable_baselines3.common.monitor import Monitor
+    from stable_baselines3.common.vec_env import SubprocVecEnv, VecFrameStack, DummyVecEnv, VecNormalize
 from concept_abstraction.post_hoc import BinaryFeatureEnvironmentWrapper, CartPoleBinaryFeatureExtractor
 from concept_abstraction.utils import one_hot_state
 from concept_abstraction.mimic import *
@@ -402,7 +405,7 @@ def create_cyclic_env(num_nodes,concept_list):
             transitions_by_state.append(next_probs)
         transitions.append(transitions_by_state)
     transitions = np.array(transitions)
-    return ConceptEnv(concept_list,observation_space,action_space,rewards,transitions,all_states,max_steps)
+    return Monitor(ConceptEnv(concept_list,observation_space,action_space,rewards,transitions,all_states,max_steps))
 
 def create_tree_env(num_nodes,concept_list):
     """Simple Environment that captures a tree structure between states
@@ -1114,16 +1117,4 @@ def eval_mimic_model(physpol,model,concept_list,clusterer,seed):
     phys_probs = compute_physician_probabilities(physpol,np.max(states_train)+1,states=states_val, actions=actions_val)
     model_probs = compute_model_probabilities(model,concept_list,states=states_val, actions=actions_val)
         
-    # return 1-np.mean(np.abs(phys_probs-model_probs))
-
-    val_bootwis, _,  _ = evaluate_policy_wis(
-        metadata_val,
-        phys_probs,
-        model_probs,
-        [15,-15],
-        gamma,
-        200
-    )
-
-    return (np.mean(val_bootwis),np.median(val_bootwis))
-
+    return 1-np.mean(np.abs(phys_probs-model_probs))

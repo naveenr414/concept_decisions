@@ -10,7 +10,11 @@ from skopt import Optimizer
 from copy import deepcopy
 import random
 from math import ceil
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecFrameStack, DummyVecEnv
+from io import StringIO
+from contextlib import redirect_stderr
+stderr_buffer = StringIO()
+with redirect_stderr(stderr_buffer):
+    from stable_baselines3.common.vec_env import SubprocVecEnv, VecFrameStack, DummyVecEnv
 from concept_abstraction.env_utils import rollout_q_estimates_td, rollout_pi_estimates
 from concept_abstraction.concept_bank import inaccurate_concepts_continuous
 from concept_abstraction.training import train_two_stage_ppo_model, evaluate_model, train_ppo_model
@@ -189,7 +193,6 @@ def greedy_iterative_selection(concept_list,num_concepts_selected,selection_func
     else:
         selected_concepts = []
         for i in range(num_concepts_selected):
-            print("On selecting #{}".format(i))
             correlation_by_concept = []
             for idx in range(len(concept_list)):
                 if idx in selected_concepts:
@@ -263,7 +266,6 @@ def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True,as_float=F
     if in_order:
         for i in range(1, n):
             model.addConstr(y[i] <= y[i-1], name=f"prefix_{i}")
-    print("Set constraints, optimizing")
     model.addConstr(gp.quicksum(x[i] for i in range(m)) <= num_concepts_selected, name="budget")
     model.setObjective(gp.quicksum(y[i] for i in range(n)), GRB.MAXIMIZE)    
     model.optimize()
@@ -305,7 +307,6 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
         seen = set()
         for a in unique_actions:
             relevant_idx = np.where(actions == a)[0]
-            print(f"On {a}",len(relevant_idx),len(relevant_idx))
             for low_idx in relevant_idx:
                 for high_idx in relevant_idx:
                     diff = abs(q_values[low_idx] - q_values[high_idx])
@@ -377,7 +378,6 @@ def max_accuracy_selection(final_vals,accuracies,direction,num_concepts_selected
     # Minimum number of concepts = max number of disjoint sets in final_vals
     min_k = 1
     max_k = num_concepts_selected
-    print("Min k {} max k {}".format(min_k,max_k))
     for k in range(min_k, max_k + 1):
         m = Model()
         m.Params.OutputFlag = 0  # silent
@@ -406,7 +406,6 @@ def max_accuracy_selection(final_vals,accuracies,direction,num_concepts_selected
                 if avg_acc <= best_avg:
                     best_avg = avg_acc
                     best_selection = selected
-            print(k,avg_acc)
         else:
             print("Status",m.Status)
 
@@ -426,8 +425,6 @@ def imperfect_lp_selection(env,concept_list,reference_model,selection_function,t
             which we are trying to distill
         selection_function: String, whether we're selecting according to 
             Q value, etc."""
-    print("Num {}".format(num_concepts_selected))
-
     if selection_function == "q_value":
         if environment_string == "mimic":
             modified_concepts = [lambda s, concept=concept: concept(additional_info['centers'][s]) 
@@ -464,7 +461,6 @@ def imperfect_lp_selection(env,concept_list,reference_model,selection_function,t
         for a in unique_actions:
             relevant_q_estimates = q_values[actions == a]
             relevant_threshold = np.argsort(relevant_q_estimates)
-            print(len(relevant_threshold))
             for low_idx in relevant_threshold[:1024]:
                 for high_idx in relevant_threshold[-1024:]:
                     if abs(relevant_q_estimates[low_idx]-relevant_q_estimates[high_idx]) > target_abstraction:
@@ -472,7 +468,6 @@ def imperfect_lp_selection(env,concept_list,reference_model,selection_function,t
                         if tup[-1] == []:
                             continue 
                         final_vals.append(tup[-1])
-        print("There are {}".format(len(final_vals)))
         if len(final_vals) > 10_000:
             final_vals = random.sample(final_vals, 10_000)
         idx, avg_acc = max_accuracy_selection(final_vals,accuracies,"max",num_concepts_selected,target_abstraction_percentage=0.5)
@@ -564,13 +559,6 @@ def greedy_selection_supervised(train_matrix,labels,num_concepts):
     
     return all_prefixes
 
-def greedy_approx(final_vals,budget):
-    remaining_final_vals = []
-    selected = []
-
-    for _ in range(budget):
-        print("On {}".format(_))
-
 def greedy_max_coverage(final_vals, budget):
     # final_vals: list of (value, elements_covering_value)
     # budget: number of concepts to select
@@ -661,14 +649,12 @@ def bayesian_iterative_selection(env,environment_string,seed,concept_list,num_it
         return reward
     
     n_concepts = len(concept_list)
-    print(n_concepts)
     space = [(0.0, 1.0)] * n_concepts
     opt = Optimizer(space, base_estimator="GP")  # Gaussian Process
     reward_list = []
     concepts_selected = []
 
     for iter in range(num_iterations):
-        print("On iteration {}".format(iter))
         x = opt.ask()
         concept_idx = np.argsort(x)[-num_concepts_selected:]
         concept_idx = sorted(concept_idx)
@@ -702,7 +688,7 @@ def iterative_selection(env,gold_model,environment_string,initial_concepts,conce
     model = train_ppo_model(temp_env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy")
     
     for iter in range(iterations):
-        print("On iteration {}".format(iter))
+
         obs, _ = env.reset()
         total_steps = 0
 

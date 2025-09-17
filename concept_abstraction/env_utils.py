@@ -426,8 +426,8 @@ class TDQLearning:
 
 def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99, 
                                 total_timesteps=100000, epsilon=0.1,
-                                learning_rate=0.0001, update_freq=20, initial_random=0.3,
-                                mimic=False,final_training=500,get_td_learner=False):
+                                learning_rate=1e-4, update_freq=20, initial_random=0.3,
+                                mimic=False,final_training=1_000,get_td_learner=False):
     """
     Stable Q-value estimation for sparse reward environments
     """

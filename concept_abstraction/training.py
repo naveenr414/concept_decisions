@@ -12,16 +12,19 @@ import torch.optim as optim
 from sklearn.metrics import accuracy_score
 
 import gymnasium as gym
-from tqdm import tqdm
 
-from stable_baselines3 import DQN, PPO
-from stable_baselines3.common.policies import ActorCriticPolicy
-from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
-from stable_baselines3.common.buffers import RolloutBuffer
-from stable_baselines3.common.utils import obs_as_tensor
-from stable_baselines3.common.callbacks import BaseCallback
+from io import StringIO
+from contextlib import redirect_stderr
+stderr_buffer = StringIO()
+with redirect_stderr(stderr_buffer):
+    from stable_baselines3 import DQN, PPO
+    from stable_baselines3.common.policies import ActorCriticPolicy
+    from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
+    from stable_baselines3.common.buffers import RolloutBuffer
+    from stable_baselines3.common.utils import obs_as_tensor
+    from stable_baselines3.common.callbacks import BaseCallback
 
-from concept_abstraction.env_utils import get_average_reward, get_average_reward_mimic
+from concept_abstraction.env_utils import get_average_reward
 from concept_abstraction.environments import eval_mimic_model
 
 InfoRolloutBufferSamples = namedtuple(
@@ -176,7 +179,7 @@ def train_ppo_model(env,environment_string,seed=42,total_timesteps=150_000,polic
                 n_steps=32,            # smaller rollout
                 batch_size=32,         # match rollout size
                 n_epochs=10,           # more passes per batch
-                learning_rate=3e-4,    # safer LR
+                learning_rate=1e-3,    # safer LR
                 device="cpu",
                 ent_coef=0.0,
                 verbose=0
