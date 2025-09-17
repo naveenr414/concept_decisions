@@ -1,15 +1,15 @@
-name: concepts
+name: food
 channels:
   - defaults
 dependencies:
-  - python=3.8
-  - numpy
-  - matplotlib
-  - jupyter
-  - geopandas
-  - pandas
-  - scipy
+  - python=3.10
+  - pytorch-cuda=12.1
+  - libstdcxx-ng
+  - pytorch
+  - torchaudio
+  - torchvision
   - scikit-learn
-  - seaborn
-  - torch
+  - scikit-image
+  - scikit-optimize
+  - ujson
 prefix: /usr0/home/naveenr/miniconda3/envs/food
