@@ -272,7 +272,12 @@ def compute_wis_estimator(sequences, gamma):
     
     rho_array = np.array([compute_rho(trace) for trace in sequences])
     num_nonzero_rhos = (rho_array > 0).sum()
+    ess = (rho_array.sum() ** 2) / np.sum(rho_array ** 2)
+    rho = np.array(rho_array, dtype=float)
+    rho = np.nan_to_num(rho, nan=0.0, posinf=0.0, neginf=0.0)
 
+    # ESS (unnormalized form)
+    ess = (rho.sum()**2) / (np.sum(rho**2) + 1e-30)
     normalization = np.nansum(rho_array)
 
     # Compute the individual trial estimators V_WIS, which are the discounted

@@ -1113,6 +1113,9 @@ def eval_mimic_model(physpol,model,concept_list,clusterer,seed):
 
     phys_probs = compute_physician_probabilities(physpol,np.max(states_train)+1,states=states_val, actions=actions_val)
     model_probs = compute_model_probabilities(model,concept_list,states=states_val, actions=actions_val)
+        
+    # return 1-np.mean(np.abs(phys_probs-model_probs))
+
     val_bootwis, _,  _ = evaluate_policy_wis(
         metadata_val,
         phys_probs,
@@ -1122,5 +1125,5 @@ def eval_mimic_model(physpol,model,concept_list,clusterer,seed):
         200
     )
 
-    return np.mean(val_bootwis)
+    return (np.mean(val_bootwis),np.median(val_bootwis))
 

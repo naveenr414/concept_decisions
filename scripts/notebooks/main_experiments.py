@@ -135,54 +135,54 @@ if is_main:
     num_concepts_selected = min(num_concepts_selected,len(concept_list))
     ground_truth_env, ground_truth_gym_env, additional_info = get_environment(environment_string, None, seed)   
 
-# if is_main:
-#     model_name = "../../results/models/env={}_training={}_seed={}.zip".format(environment_string,training_timesteps,seed)
+if is_main:
+    model_name = "../../results/models/env={}_training={}_seed={}.zip".format(environment_string,training_timesteps,seed)
     
-#     if os.path.exists(model_name):
-#         groundtruth_model = PPO.load(model_name)
-#     else:
-#         if "cyclic" in environment_string or "tree" in environment_string or "mimic" in environment_string:
-#             policy = "MlpPolicy"
-#         else:
-#             policy = "CnnPolicy"
-#         groundtruth_model = train_ppo_model(ground_truth_env,environment_string,total_timesteps=training_timesteps,policy=policy)
-#         groundtruth_model.save(model_name)
-#     groundtruth_reward = evaluate_model(environment_string,ground_truth_gym_env,additional_info,groundtruth_model,seed)
-#     results['ground_truth'] = {'reward':groundtruth_reward}
-#     print(results['ground_truth']['reward'])
+    if os.path.exists(model_name):
+        groundtruth_model = PPO.load(model_name)
+    else:
+        if "cyclic" in environment_string or "tree" in environment_string or "mimic" in environment_string:
+            policy = "MlpPolicy"
+        else:
+            policy = "CnnPolicy"
+        groundtruth_model = train_ppo_model(ground_truth_env,environment_string,total_timesteps=training_timesteps,policy=policy)
+        groundtruth_model.save(model_name)
+    groundtruth_reward = evaluate_model(environment_string,ground_truth_gym_env,additional_info,groundtruth_model,seed)
+    results['ground_truth'] = {'reward':groundtruth_reward}
+    print(results['ground_truth']['reward'])
 
 ### Basic Comparison
 
 if is_main:
     model_name = "../../results/q_estimates/env={}_training={}_seed={}_selection={}_source={}.pkl".format(environment_string,training_timesteps,seed,selection_function,concept_source)
     results['basic_comparison'] = {}
-    # if selection_function == "q_value":
-    #     if environment_string == "mimic":
-    #         modified_concepts = [lambda s, concept=concept: concept(additional_info['centers'][s]) 
-    #                     for concept in concept_list]
+    if selection_function == "q_value":
+        if environment_string == "mimic":
+            modified_concepts = [lambda s, concept=concept: concept(additional_info['centers'][s]) 
+                        for concept in concept_list]
 
-    #         q_estimates = rollout_q_estimates_td(groundtruth_model,GymnasiumWrapper(DummyVecEnv([lambda: ground_truth_gym_env])),modified_concepts,learning_rate=1e-2,mimic=True,total_timesteps=5000,final_training=0)
-    #     else:
-    #         q_estimates = rollout_q_estimates_td(groundtruth_model,ground_truth_gym_env,concept_list)
-    # elif selection_function == "policy":
-    #     if environment_string == "mimic":
-    #         modified_concepts = [lambda s, concept=concept: concept(additional_info['centers'][s]) 
-    #                     for concept in concept_list]
+            q_estimates = rollout_q_estimates_td(groundtruth_model,GymnasiumWrapper(DummyVecEnv([lambda: ground_truth_gym_env])),modified_concepts,learning_rate=1e-2,mimic=True,total_timesteps=5000,final_training=0)
+        else:
+            q_estimates = rollout_q_estimates_td(groundtruth_model,ground_truth_gym_env,concept_list)
+    elif selection_function == "policy":
+        if environment_string == "mimic":
+            modified_concepts = [lambda s, concept=concept: concept(additional_info['centers'][s]) 
+                        for concept in concept_list]
 
-    #         q_estimates = rollout_pi_estimates(groundtruth_model,GymnasiumWrapper(DummyVecEnv([lambda: ground_truth_gym_env])),modified_concepts,mimic=True)
-    #     else:
-    #         q_estimates = rollout_pi_estimates(groundtruth_model,ground_truth_gym_env,concept_list)
-    # pickle.dump(q_estimates,open(model_name,"wb"))
+            q_estimates = rollout_pi_estimates(groundtruth_model,GymnasiumWrapper(DummyVecEnv([lambda: ground_truth_gym_env])),modified_concepts,mimic=True)
+        else:
+            q_estimates = rollout_pi_estimates(groundtruth_model,ground_truth_gym_env,concept_list)
+    pickle.dump(q_estimates,open(model_name,"wb"))
 
-# if is_main and run_basic:
-#     # Train a random policy
-#     if environment_string == "mimic":
-#         model = RandomAgent(GymnasiumWrapper(DummyVecEnv([lambda: ground_truth_gym_env])))
-#     else:
-#         model = RandomAgent(ground_truth_gym_env)
-#     random_reward = evaluate_model(environment_string,ground_truth_gym_env,additional_info,model,seed)
-#     results['basic_comparison']['random'] = {'reward':random_reward}
-#     print(results['basic_comparison']['random']['reward'])
+if is_main and run_basic:
+    # Train a random policy
+    if environment_string == "mimic":
+        model = RandomAgent(GymnasiumWrapper(DummyVecEnv([lambda: ground_truth_gym_env])))
+    else:
+        model = RandomAgent(ground_truth_gym_env)
+    random_reward = evaluate_model(environment_string,ground_truth_gym_env,additional_info,model,seed)
+    results['basic_comparison']['random'] = {'reward':random_reward}
+    print(results['basic_comparison']['random']['reward'])
 
 if is_main and run_basic:
     # Train a random selector
@@ -193,31 +193,31 @@ if is_main and run_basic:
     results['basic_comparison']['random_selection'] = {'reward':random_selection_reward, 'concepts': random_idx}
     print(results['basic_comparison']['random_selection']['reward'])
 
-# if is_main and run_basic:
-#     # Train a greedy selector
-#     subset_concept, greedy_idx = greedy_selection(concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
-#     env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-#     model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy")
-#     greedy_selection_reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
-#     results['basic_comparison']['greedy'] = {'concepts': greedy_idx, 'reward':greedy_selection_reward}
-#     print(results['basic_comparison']['greedy']['reward'])
+if is_main and run_basic:
+    # Train a greedy selector
+    subset_concept, greedy_idx = greedy_selection(concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
+    env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
+    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy")
+    greedy_selection_reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
+    results['basic_comparison']['greedy'] = {'concepts': greedy_idx, 'reward':greedy_selection_reward}
+    print(results['basic_comparison']['greedy']['reward'])
 
 
-# if is_main and run_basic:
-#     subset_concept, greedy_iterative_idx = greedy_iterative_selection(concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
-#     env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-#     model = train_ppo_model(env,environment_string,seed,total_timesteps=training_timesteps,policy="MlpPolicy")
-#     greedy_iterative_selection_reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
-#     results['basic_comparison']['greedy_iterative'] = {'concepts': greedy_iterative_idx, 'reward': greedy_iterative_selection_reward}
-#     print(results['basic_comparison']['greedy_iterative']['reward'])
+if is_main and run_basic:
+    subset_concept, greedy_iterative_idx = greedy_iterative_selection(concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
+    env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
+    model = train_ppo_model(env,environment_string,seed,total_timesteps=training_timesteps,policy="MlpPolicy")
+    greedy_iterative_selection_reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
+    results['basic_comparison']['greedy_iterative'] = {'concepts': greedy_iterative_idx, 'reward': greedy_iterative_selection_reward}
+    print(results['basic_comparison']['greedy_iterative']['reward'])
 
-# if is_main and run_basic:
-#     subset_concept, lp_idx = lp_based_selection(ground_truth_gym_env,concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
-#     env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-#     model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy")
-#     lp_selection_reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
-#     results['basic_comparison']['lp'] = {'concepts': lp_idx, 'reward': lp_selection_reward}
-#     print(results['basic_comparison']['lp']['reward'])
+if is_main and run_basic:
+    subset_concept, lp_idx = lp_based_selection(ground_truth_gym_env,concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
+    env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
+    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy")
+    lp_selection_reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
+    results['basic_comparison']['lp'] = {'concepts': lp_idx, 'reward': lp_selection_reward}
+    print(results['basic_comparison']['lp']['reward'])
 
 # # ### Imperfect Concept Predictors
 

@@ -204,16 +204,19 @@ def train_ppo_model(env,environment_string,seed=42,total_timesteps=150_000,polic
                 normalize_advantage=True
             )
         elif environment_string == "mimic_raw":
+            print("Running MIMIC RAW")
             model = PPO(
                 "MlpPolicy",
                 env,
-                policy_kwargs={"net_arch": [32,32]},  # Single layer is actually fastest
-                n_steps=1024,
-                batch_size=1024,        # Match n_steps for single batch processing
+                policy_kwargs={"net_arch": [128,128]},  # Single layer is actually fastest
+                n_steps=128,
+                batch_size=32,        # Match n_steps for single batch processing
                 n_epochs=4,           # KEY: Single epoch only
-                learning_rate=5e-3,   # Higher LR to compensate for fewer epochs
+                learning_rate=6e-4,   # Higher LR to compensate for fewer epochs
                 device='cpu',        # Your GPU is working fine
-                verbose=0
+                verbose=0,
+                ent_coef=0.02,
+                gamma=0.99,
             )
         else:
             model = PPO(
