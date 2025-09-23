@@ -171,7 +171,7 @@ def train_ppo_model(env,environment_string,seed=42,total_timesteps=150_000,polic
     random.seed(seed)
 
     if policy == "MlpPolicy":
-        if "cyclic" in environment_string or "tree" in environment_string:
+        if "cyclic" in environment_string:
             model = PPO(
                 "MlpPolicy",
                 env,
@@ -182,6 +182,32 @@ def train_ppo_model(env,environment_string,seed=42,total_timesteps=150_000,polic
                 learning_rate=1e-3,    # safer LR
                 device="cpu",
                 ent_coef=0.0,
+                verbose=0
+            )
+        elif environment_string == "tree_7":
+            model = PPO(
+                "MlpPolicy",
+                env,
+                policy_kwargs={"net_arch": [16]},
+                n_steps=32,            # smaller rollout
+                batch_size=32,         # match rollout size
+                n_epochs=10,           # more passes per batch
+                learning_rate=5e-3,    # safer LR
+                device="cpu",
+                ent_coef=0.02,
+                verbose=0
+            )
+        elif environment_string == "tree_31":
+            model = PPO(
+                "MlpPolicy",
+                env,
+                policy_kwargs={"net_arch": [16]},
+                n_steps=32,            # smaller rollout
+                batch_size=32,         # match rollout size
+                n_epochs=10,           # more passes per batch
+                learning_rate=5e-3,    # safer LR
+                device="cpu",
+                ent_coef=0.02,
                 verbose=0
             )
         elif environment_string == "pong" or environment_string == "boxing":

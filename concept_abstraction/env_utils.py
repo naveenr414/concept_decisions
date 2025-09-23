@@ -28,7 +28,6 @@ def get_average_reward(vec_env, model, max_steps=50000,max_steps_per=5000):
     total_steps = 0
     steps_per = np.zeros(num_envs)
 
-
     while total_steps < max_steps:
         actions, _ = model.predict(obs)
         obs, rewards, terminated, truncated, infos = vec_env.step(actions)
@@ -73,7 +72,6 @@ def get_average_reward_mimic(env, model, max_steps=50000,max_steps_per=100):
             else:
                 action = random.choice([idx for idx,i in enumerate(valid_action) if i>0])
         else:
-            # TODO: Remove this
             valid_action = torch.ones(len(valid_action))# torch.Tensor(valid_action).to(model.device)
             action = model.policy.get_distribution(torch.Tensor(obs).unsqueeze(0).to(model.device)).distribution.probs 
             action *= valid_action
@@ -479,7 +477,7 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
                     obs_i = obs[i]
                     obs_tensor = torch.FloatTensor(obs_i)
                     if mimic:
-                        valid_action =  np.sum(env.envs[0].transitions[infos[i]['observation']],axis=1)
+                        valid_action =  np.sum(env.envs[0].env.transitions[infos[i]['observation']],axis=1)
                         valid_action = torch.Tensor(valid_action).to(model.device)
                         action = model.policy.get_distribution(torch.Tensor(obs_i).unsqueeze(0).to(model.device)).distribution.probs 
                         action *= valid_action

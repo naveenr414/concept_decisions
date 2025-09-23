@@ -220,7 +220,7 @@ def greedy_iterative_selection(concept_list,num_concepts_selected,selection_func
 
     return concepts, idx
 
-def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True,as_float=False):
+def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True,as_float=False,weighted=False):
     """Arguments:
         final_vals: list of tuples (value, elements_covering_value)
                     assumed sorted in decreasing priority (top first)
@@ -244,6 +244,12 @@ def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True,as_float=F
     if as_float:
         x = model.addVars(m, lb=0.0, ub=1.0, vtype=GRB.CONTINUOUS, name="x")
         y = model.addVars(n, lb=0.0, ub=1.0, vtype=GRB.CONTINUOUS, name="y")
+    elif weighted: 
+        # Binary vars: x[e] = 1 if element e selected
+        x = model.addVars(m, vtype=GRB.BINARY, name="x")
+        
+        # Binary vars: y[i] = 1 if value i is covered
+        y = model.addVars(n, lb=0.0, vtype=GRB.CONTINUOUS, name="y")
     else:
         # Binary vars: x[e] = 1 if element e selected
         x = model.addVars(m, vtype=GRB.BINARY, name="x")
@@ -267,9 +273,13 @@ def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True,as_float=F
         for i in range(1, n):
             model.addConstr(y[i] <= y[i-1], name=f"prefix_{i}")
     model.addConstr(gp.quicksum(x[i] for i in range(m)) <= num_concepts_selected, name="budget")
-    model.setObjective(gp.quicksum(y[i] for i in range(n)), GRB.MAXIMIZE)    
-    model.optimize()
     
+    if weighted: 
+        model.setObjective(gp.quicksum(y[i]*final_vals[i][0] for i in range(n)), GRB.MAXIMIZE)    
+    else:
+        model.setObjective(gp.quicksum(y[i] for i in range(n)), GRB.MAXIMIZE)    
+    model.optimize()
+
     selected_elements = [U[i] for i in range(m) if x[i].X > 0.5]
     max_prefix_len = sum(1 for i in range(n) if y[i].X > 0.5)
     return selected_elements, max_prefix_len
@@ -352,6 +362,84 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
 
     return concepts, idx
 
+def multiple_lp_selection(env,concept_list,num_concepts_selected,selection_function,q_estimates,concept_source):
+    """Select {num_concepts} greedily
+        by first learning the Q(s,a) values from a rollout
+        Then selecting the concepts that reduce the standard deviation 
+        across all partitions
+    
+    Arguments:
+        env: Gymasium environment
+        concept_list: List of functions
+        num_concepts_selected: Integer, number of concepts to select
+        reference_model: A policy that performs well
+            which we are trying to distill
+        selection_function: String, whether we're selecting according to 
+            Q value, etc."""
+    
+    unique_actions = list(set([int(i[1]) for i in q_estimates]))
+    actions = np.array([i[1] for i in q_estimates])
+
+    # Continuous
+    if concept_source == "human_selected":
+        all_concepts = np.array([i[0] for i in q_estimates])
+        median_by_column = np.median(all_concepts,axis=0)
+        discretized_X = (all_concepts < median_by_column).astype(np.int8)
+    else:
+        discretized_X = np.array([i[0] for i in q_estimates])
+    
+    if selection_function == "q_value":
+        q_values = np.array([i[2] for i in q_estimates])
+        
+        final_vals = []
+        seen = set()
+        for a in unique_actions:
+            relevant_idx = np.where(actions == a)[0]
+            for low_idx in relevant_idx:
+                for high_idx in relevant_idx:
+                    diff = abs(q_values[low_idx] - q_values[high_idx])
+                    # tuple of differing concept indices
+                    diffs = tuple(i for i, (l, h) in enumerate(zip(discretized_X[low_idx], discretized_X[high_idx])) if l != h)
+                    tup = (diff, diffs)
+                    if tup not in seen and diffs != ():
+                        seen.add(tup)
+                        final_vals.append(tup)
+        final_vals = sorted(final_vals,reverse=True)
+        idx, _ = max_prefix_gurobi(final_vals,num_concepts_selected,weighted=True,in_order=False)
+        concepts = [concept_list[i] for i in idx]
+    elif selection_function == "policy":
+        sample_by_action = []
+
+        for a in unique_actions:
+            X_reduced = discretized_X[actions == a]
+            sample_by_action.append(X_reduced)
+        weights = [len(lst) for lst in sample_by_action]
+
+        pairs = []
+        for i in range(100):
+            i, j = random.choices(range(len(sample_by_action)), weights=weights, k=2)
+            while i == j: 
+                weights_non_action = [weights[j] for j in range(len(weights)) if j!=i]
+                num_non_action = [i for i in range(len(sample_by_action)) if i!=j]
+                if len(num_non_action) == 0:
+                    break 
+                j = random.choices(num_non_action, weights=weights_non_action, k=1)[0]
+            if len(num_non_action) == 0:
+                break 
+            a = random.choice(sample_by_action[i])
+            b = random.choice(sample_by_action[j])
+            pairs.append([i for i in range(len(a)) if a[i] != b[i]])
+        pairs = [(0,i) for i in pairs]
+        idx, _ = max_prefix_gurobi(pairs,num_concepts_selected,in_order=False)
+        idx = [int(i) for i in idx]
+        idx = np.array(idx).tolist()
+        concepts = [concept_list[i] for i in idx]
+
+    if len(idx) == 0:
+        return [concept_list[0]],[0]
+
+    return concepts, idx
+
 def max_accuracy_selection(final_vals,accuracies,direction,num_concepts_selected,target_abstraction_percentage=1):
     """Select the set of concepts (where there are len(accuracies)
         total concepts)
@@ -376,42 +464,40 @@ def max_accuracy_selection(final_vals,accuracies,direction,num_concepts_selected
 
     # Compute feasible range for number of selected concepts
     # Minimum number of concepts = max number of disjoint sets in final_vals
-    min_k = 1
-    max_k = num_concepts_selected
-    for k in range(min_k, max_k + 1):
-        m = Model()
-        m.Params.OutputFlag = 0  # silent
+    k = num_concepts_selected
+    m = Model()
+    m.Params.OutputFlag = 0  # silent
 
-        x = m.addVars(n, vtype=GRB.BINARY)
-        y = m.addVars(len(final_vals), vtype=GRB.BINARY)  # y[j] = 1 if list j has >=1 selected
-        for j, lst in enumerate(final_vals):
-            m.addConstr(quicksum(x[i] for i in lst) >= 1 * y[j])
-        
-        m.addConstr(quicksum(y[j] for j in range(len(final_vals))) >= ceil(target_abstraction_percentage * len(final_vals)))
-        m.addConstr(quicksum(x[i] for i in range(n)) == k)
-        if direction == 'max':
-            m.setObjective(quicksum(accuracies[i] * x[i] for i in range(n)), GRB.MAXIMIZE)
-        else:
-            m.setObjective(quicksum(accuracies[i] * x[i] for i in range(n)), GRB.MINIMIZE)
-        m.optimize()
+    x = m.addVars(n, vtype=GRB.BINARY)
+    y = m.addVars(len(final_vals), vtype=GRB.BINARY)  # y[j] = 1 if list j has >=1 selected
+    for j, lst in enumerate(final_vals):
+        m.addConstr(quicksum(x[i] for i in lst) >= 1 * y[j])
+    
+    m.addConstr(quicksum(y[j] for j in range(len(final_vals))) >= ceil(target_abstraction_percentage * len(final_vals)))
+    m.addConstr(quicksum(x[i] for i in range(n)) == k)
+    if direction == 'max':
+        m.setObjective(quicksum(accuracies[i] * x[i] for i in range(n)), GRB.MAXIMIZE)
+    else:
+        m.setObjective(quicksum(accuracies[i] * x[i] for i in range(n)), GRB.MINIMIZE)
+    m.optimize()
 
-        if m.Status == GRB.OPTIMAL:
-            selected = [i for i in range(n) if x[i].X > 0.5]
-            avg_acc = sum(accuracies[i] for i in selected) / k
-            if direction == "max":
-                if avg_acc >= best_avg:
-                    best_avg = avg_acc
-                    best_selection = selected
-            else:
-                if avg_acc <= best_avg:
-                    best_avg = avg_acc
-                    best_selection = selected
+    if m.Status == GRB.OPTIMAL:
+        selected = [i for i in range(n) if x[i].X > 0.5]
+        avg_acc = sum(accuracies[i] for i in selected) / k
+        if direction == "max":
+            if avg_acc >= best_avg:
+                best_avg = avg_acc
+                best_selection = selected
         else:
-            print("Status",m.Status)
+            if avg_acc <= best_avg:
+                best_avg = avg_acc
+                best_selection = selected
+    else:
+        print("Status",m.Status)
 
     return best_selection, best_avg
 
-def imperfect_lp_selection(env,concept_list,reference_model,selection_function,target_abstraction,num_concepts_selected,accuracies,concept_source,environment_string,additional_info,direction='max'):
+def imperfect_lp_selection(env,concept_list,q_estimates,selection_function,target_abstraction,num_concepts_selected,accuracies,concept_source,environment_string,additional_info,direction='max'):
     """Select {num_concepts} through an LP policy
         by first learning the Q(s,a) values from a rollout
         Then selecting the concepts that maximize the average accuracy
@@ -425,23 +511,6 @@ def imperfect_lp_selection(env,concept_list,reference_model,selection_function,t
             which we are trying to distill
         selection_function: String, whether we're selecting according to 
             Q value, etc."""
-    if selection_function == "q_value":
-        if environment_string == "mimic":
-            modified_concepts = [lambda s, concept=concept: concept(additional_info['centers'][s]) 
-                        for concept in concept_list]
-
-            q_estimates = rollout_q_estimates_td(reference_model,GymnasiumWrapper(DummyVecEnv([lambda: env])),modified_concepts,learning_rate=1e-2,mimic=True,total_timesteps=5000,final_training=0)
-        else:
-            q_estimates = rollout_q_estimates_td(reference_model,env,concept_list)
-    elif selection_function == "policy":
-        if environment_string == "mimic":
-            modified_concepts = [lambda s, concept=concept: concept(additional_info['centers'][s]) 
-                        for concept in concept_list]
-
-            q_estimates = rollout_pi_estimates(reference_model,GymnasiumWrapper(DummyVecEnv([lambda: env])),modified_concepts,mimic=True)
-        else:
-            q_estimates = rollout_pi_estimates(reference_model,env,concept_list)
-
 
     unique_actions = list(set([int(i[1]) for i in q_estimates]))
     actions = np.array([i[1] for i in q_estimates])
@@ -457,7 +526,6 @@ def imperfect_lp_selection(env,concept_list,reference_model,selection_function,t
     if selection_function == "q_value":
         q_values = np.array([i[2] for i in q_estimates])
         final_vals = []
-        vals_by_action = []
         for a in unique_actions:
             relevant_q_estimates = q_values[actions == a]
             relevant_threshold = np.argsort(relevant_q_estimates)
@@ -626,6 +694,124 @@ def lp_selection_supervised(train_matrix,labels,num_concepts):
 
     return selected_elements
 
+def multiple_selection_supervised(train_matrix,labels,num_concepts):
+    """Select {num_concepts} greedily
+        by selecting those that reduce the reward range within each partition
+        For example, first select the concept
+            so that, c_{i} = 0 and c_{i} = 1 each have
+                small differences between max and min reward
+
+    Arguments:
+        env: Gymasium environment
+        num_concepts: Integer, number of concepts to select
+    
+    Returns: List of size {num_concepts} of integers
+        each representing a concept"""
+    train_X = np.asarray(train_matrix)
+    labels = np.asarray(labels)
+    # Convert rows to tuples to make them hashable
+    rows_as_tuples = [tuple(row) for row in train_X]
+    row_counts = Counter(rows_as_tuples)   # counts of each unique row
+
+    unique_rows = np.array(list(row_counts.keys()))
+    unique_counts = np.array([row_counts[r] for r in row_counts])
+    unique_labels = np.array([labels[np.all(train_X == r, axis=1)][0] for r in unique_rows])
+
+    pairs = [
+        (i, j) 
+        for i, j in combinations(range(len(unique_rows)), 2) 
+        if unique_labels[i] != unique_labels[j]
+    ]
+
+    per_train_constraint_weighted = []
+
+    for i, j in pairs:
+        elems_diff = np.where(unique_rows[i] != unique_rows[j])[0].tolist()
+        weight = unique_counts[i] * unique_counts[j]   # multiplicity weight
+        per_train_constraint_weighted.append((weight, elems_diff))
+
+    selected_elements, _ = max_prefix_gurobi(per_train_constraint_weighted, num_concepts, in_order=False,as_float=False,weighted=True)
+
+    return selected_elements
+
+
+def lp_selection_supervised_imperfect(train_matrix,labels,num_concepts,accuracies,fraction_y):
+    """Select {num_concepts} greedily
+        by selecting those that reduce the reward range within each partition
+        For example, first select the concept
+            so that, c_{i} = 0 and c_{i} = 1 each have
+                small differences between max and min reward
+
+    Arguments:
+        env: Gymasium environment
+        num_concepts: Integer, number of concepts to select
+    
+    Returns: List of size {num_concepts} of integers
+        each representing a concept"""
+    train_X = np.asarray(train_matrix)
+    labels = np.asarray(labels)
+    # Convert rows to tuples to make them hashable
+    rows_as_tuples = [tuple(row) for row in train_X]
+    row_counts = Counter(rows_as_tuples)   # counts of each unique row
+
+    unique_rows = np.array(list(row_counts.keys()))
+    unique_counts = np.array([row_counts[r] for r in row_counts])
+    unique_labels = np.array([labels[np.all(train_X == r, axis=1)][0] for r in unique_rows])
+
+    pairs = [
+        (i, j) 
+        for i, j in combinations(range(len(unique_rows)), 2) 
+        if unique_labels[i] != unique_labels[j]
+    ]
+
+    per_train_constraint_weighted = []
+
+    for i, j in pairs:
+        elems_diff = np.where(unique_rows[i] != unique_rows[j])[0].tolist()
+        weight = unique_counts[i] * unique_counts[j]   # multiplicity weight
+        per_train_constraint_weighted.append((weight, elems_diff))
+
+    final_vals = per_train_constraint_weighted
+    print("Computing LP")
+    U = set()
+    for _, elems in final_vals:
+        U.update(elems)
+    U = list(U)  # universe of elements
+    elem_to_idx = {e:i for i,e in enumerate(U)}
+    
+    n = len(final_vals)
+    m = len(U)
+    
+    model = gp.Model("max_prefix_hitting")
+    model.Params.OutputFlag = 0  # silence solver
+    
+    # Binary vars: x[e] = 1 if element e selected
+    x = model.addVars(m, vtype=GRB.BINARY, name="x")
+    
+    # Binary vars: y[i] = 1 if value i is covered
+    y = model.addVars(n, vtype=GRB.BINARY, name="y")
+
+    # Link y[i] to coverage by selected elements
+    for i, (_, elems) in enumerate(final_vals):
+        if elems:  # make sure not empty
+            model.addConstr(
+                y[i] <= gp.quicksum(x[elem_to_idx[e]] for e in elems),
+                name=f"cover_{i}"
+            )
+        else:
+            model.addConstr(y[i] == 0)  # cannot be covered
+    
+    # Prefix constraints: enforce consecutive coverage
+    # y[i] <= y[i-1] for i>0
+    model.addConstr(gp.quicksum(x[i] for i in range(m)) <= num_concepts, name="budget")
+    model.addConstr(gp.quicksum(y[i] for i in range(n)) >= fraction_y*n)    
+    model.setObjective(gp.quicksum(x[i]*accuracies[i] for i in range(m)), GRB.MAXIMIZE)    
+
+    model.optimize()
+    
+    selected_elements = [U[i] for i in range(m) if x[i].X > 0.5]
+    return selected_elements
+
 
 def ucb(mu_hat,N,n,c=0.1):
     """UCB upper bound
@@ -663,15 +849,51 @@ def bayesian_iterative_selection(env,environment_string,seed,concept_list,num_it
         opt.tell(x, -reward)
         reward_list.append(reward)
         concepts_selected.append([int(i) for i in concept_idx])
-        
-    # Best subset found
-    best_x = opt.Xi[np.argmin(opt.yi)]
-    best_subset = [i for i, xi in enumerate(best_x) if xi > 0.5]
-    reward_list.append(run(best_subset))
     
     return reward_list, concepts_selected
 
-def iterative_selection(env,gold_model,environment_string,initial_concepts,concept_list,iterations,selections_per_round,seed,max_steps=10_000,training_timesteps=100_000,td_learner=None):
+
+def clustered_cross_group_l1(X, y, current_concepts, split_col=3):
+    """
+    X : (n_samples, d_features)
+    y : (n_samples, n_actions)
+    current_concepts : list of column indices defining the cluster pattern
+    split_col : column index used to form the 0 vs 1 sub-groups
+    """
+    subX = X[:, current_concepts]
+    unique_clusters, inv = np.unique(subX, axis=0, return_inverse=True)
+
+    total_weighted_sum = 0.0
+    total_pairs = 0
+
+    for c in range(len(unique_clusters)):
+        cluster_idx = np.where(inv == c)[0]
+        if len(cluster_idx) < 2:
+            continue  # need at least 2 rows to form cross groups
+
+        # Split inside this cluster
+        g1 = cluster_idx[X[cluster_idx, split_col] == 1]
+        g0 = cluster_idx[X[cluster_idx, split_col] == 0]
+
+        if len(g1) == 0 or len(g0) == 0:
+            continue  # no cross-group pairs in this cluster
+
+        y1 = y[g1]
+        y0 = y[g0]
+
+        # Pairwise L1 distances across the two sub-groups
+        diffs = np.abs(y1[:, None, :] - y0[None, :, :]).sum(axis=2)
+        pair_mean = diffs.mean()
+
+        # Weight by number of cross pairs
+        num_pairs = len(g1) * len(g0)
+        total_weighted_sum += pair_mean * num_pairs
+        total_pairs += num_pairs
+
+    return total_weighted_sum / total_pairs if total_pairs > 0 else np.nan
+
+
+def iterative_selection(env,gold_model,environment_string,concept_list,iterations,selections_per_round,seed,max_steps=100,training_timesteps=100_000):
     """Iterative select concepts based on performance, and add on more concepts
     
     Arguments:
@@ -680,15 +902,11 @@ def iterative_selection(env,gold_model,environment_string,initial_concepts,conce
         selections_per_round: Integer, how many concept to select each round
 
     Returns: Tuple (model, list of rewards from each round)"""
-    current_concepts = initial_concepts
-    rewards_by_iteration = []
+    current_concepts = []
     concepts_by_iteration = []
-
-    temp_env, temp_eval_env, additional_info = get_environment(environment_string,[concept_list[i] for i in current_concepts],seed)
-    model = train_ppo_model(temp_env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy")
+    reward_by_iteration = []
     
-    for iter in range(iterations):
-
+    for _ in range(iterations):
         obs, _ = env.reset()
         total_steps = 0
 
@@ -703,47 +921,38 @@ def iterative_selection(env,gold_model,environment_string,initial_concepts,conce
                 dist = gold_model.policy.get_distribution(obs_torch)
             probs_gold = dist.distribution.probs.cpu().numpy()
 
-            obs_torch = torch.as_tensor(obs[:, current_concepts], dtype=torch.float32)
-            obs_torch = obs_torch.to(model.device)
-            with torch.no_grad():
-                dist = model.policy.get_distribution(obs_torch)
-
-            probs_baseline = dist.distribution.probs.cpu().numpy()
-
-            if td_learner is not None:
-                vals = td_learner.q_net(torch.Tensor(obs))
-                max_diff = torch.sum(torch.Tensor(probs_gold-probs_baseline)*vals,axis=1).detach().numpy()
-            else:
-                max_diff = np.max(np.abs(probs_baseline-probs_gold),axis=1)
             X.append(obs)
-            y.append(max_diff.ravel())
+            y.append(probs_gold)
             obs, _, _, _, _ = env.step(actions)
             total_steps += 1
-
-            if total_steps%100 == 0:
-                print("Steps {} out of {}".format(total_steps,max_steps))
-
+        
         X = np.vstack(X)
-        y = np.concatenate(y)
+        y = np.vstack(y)
 
-        r2_by_concept = []
-        for i in range(X.shape[1]):
-            xi = X[:, i]
-            if np.all(xi == xi[0]):
-                r2 = np.nan
-            else:
-                corr = np.corrcoef(xi, y)[0, 1]
-                r2 = corr**2
-            r2_by_concept.append(r2)
-        r2_by_concept = np.array(r2_by_concept)  # shape (24,)
-        sorted_idx = np.argsort(r2_by_concept)[::-1]
-        sorted_idx = [i for i in sorted_idx if i not in current_concepts]
-        current_concepts += sorted_idx[:selections_per_round]
+        if current_concepts == []:
+            score_by_concept = []
+            for i in range(X.shape[1]):
+                mask1 = X[:, i] == 1
+                mask0 = ~mask1 
+                group1 = y[mask1]
+                group0 = y[mask0]
+                diffs = np.abs(group1[:, None, :] - group0[None, :, :]).sum(axis=2)
+                score_by_concept.append(diffs.mean())
+            score_by_concept = np.array(score_by_concept)
+            topk_idx = np.argpartition(-score_by_concept, selections_per_round)[:selections_per_round]
+            topk_idx = topk_idx[np.argsort(-score_by_concept[topk_idx])]
+            current_concepts = sorted(topk_idx)
+        else:
+            scores = [(i,clustered_cross_group_l1(X, y, current_concepts, split_col=i)) for i in range(len(concept_list)) if i not in current_concepts]
+            scores = sorted(scores,key=lambda k: k[1],reverse=True)
+            scores = scores[:selections_per_round]
+            current_concepts += [i[0] for i in scores]
+        concepts_by_iteration.append(deepcopy(current_concepts))
 
-        temp_env, temp_eval_env, additional_info = get_environment(environment_string,[concept_list[i] for i in current_concepts],seed)
-        model = train_ppo_model(temp_env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy")
-        model_reward = evaluate_model(environment_string,temp_eval_env,additional_info,model,seed)
-        rewards_by_iteration.append(model_reward)
-        concepts_by_iteration.append([int(i) for i in deepcopy(current_concepts)])
-    return rewards_by_iteration, concepts_by_iteration
+        concept_env, concept_eval_env, additional_info = get_environment(environment_string,[concept_list[i] for i in current_concepts],seed)
+        model = train_ppo_model(concept_env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy")
+        reward = evaluate_model(environment_string,concept_eval_env,additional_info,model,seed)
+        reward_by_iteration.append(reward)
+    concepts_by_iteration = [np.array(i).tolist() for i in concepts_by_iteration]
+    return reward_by_iteration, concepts_by_iteration
     

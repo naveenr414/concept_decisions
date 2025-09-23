@@ -25,6 +25,8 @@ from concept_abstraction.concept_bank import clustering_concept_mimic, mimic_con
 import minigrid
 from minigrid.core.constants import COLOR_NAMES, DIR_TO_VEC, TILE_PIXELS, COLOR_TO_IDX, OBJECT_TO_IDX
 
+cv2.setNumThreads(1)
+
 class OptimizedConceptWrapper(gym.ObservationWrapper):
     def __init__(self, env, fast_predictor, observation_space, get_raw_state, 
                  use_info_obs=False, obs_function=lambda env, obs, info: obs):
@@ -456,7 +458,7 @@ def create_tree_env(num_nodes,concept_list):
             else:
                 transitions[state][action][2 * (state+1) + action - 1] = 1
 
-    return ConceptEnv(concept_list,observation_space,action_space,rewards,transitions,all_states,max_steps)
+    return Monitor(ConceptEnv(concept_list,observation_space,action_space,rewards,transitions,all_states,max_steps))
 
 def create_mimic_environment(concept_list,seed):
     """Create a MIMIC Environment given a list of concepts, seed
@@ -713,7 +715,7 @@ def create_mimic_environment(concept_list,seed):
 def get_raw_pixels_cartpole(env, obs=None):
     pixels = env.render()
     gray = cv2.cvtColor(pixels, cv2.COLOR_RGB2GRAY)
-    small_pixels = cv2.resize(gray, (84,84), interpolation=cv2.INTER_NEAREST).astype(float)/255
+    small_pixels = cv2.resize(gray, (84,84), interpolation=cv2.INTER_NEAREST).astype(np.uint8)
     return small_pixels
 
 def get_raw_pixels_mini_grid(env,obs=None):
@@ -1003,7 +1005,7 @@ def get_environment(environment_string,concept_list,seed,use_processed=False,fas
     elif environment_string  == "mini_grid":
         def make_env():
             if concept_list is None:
-                env = gym.make("MiniGrid-DoorKey-5x5-v0",render_mode="rgb_array")
+                env = Monitor(gym.make("MiniGrid-DoorKey-5x5-v0",render_mode="rgb_array"))
                 env = FrameSkipWrapper(env, skip=4, get_pixels_fn=get_raw_pixels_mini_grid)
                 env = ConceptWrapper(env,None,spaces.Box(
                         low=0, high=255,
@@ -1014,7 +1016,7 @@ def get_environment(environment_string,concept_list,seed,use_processed=False,fas
                 env = LazyFramesToNumpy(env)
 
             else:
-                env = gym.make("MiniGrid-DoorKey-5x5-v0")
+                env = Monitor(gym.make("MiniGrid-DoorKey-5x5-v0"))
                 env = ConceptWrapper(env,concept_list,spaces.MultiBinary(len(concept_list)),lambda env, obs: obs, obs_function=lambda env, obs, info: get_raw_state_mini_grid(env,info,{'observation': obs}))
             return env 
 
@@ -1025,19 +1027,20 @@ def get_environment(environment_string,concept_list,seed,use_processed=False,fas
         def make_env():
             if concept_list is None or use_processed:
                 env = gym.make("CartPole-v1", render_mode="rgb_array")
+                env = Monitor(env)
                 env = FrameSkipWrapper(env, skip=4, get_pixels_fn=get_raw_pixels_cartpole)
                 env = ConceptWrapper(env,None,spaces.Box(
                         low=0, high=255,
                         shape=(84,84),  # Height x Width, no color channel
                         dtype=np.uint8
                     ),lambda env, obs: obs,use_info_obs=True)
-                env = FrameStack(env,1) # TODO: Change this back
+                env = FrameStack(env,4)
                 env = LazyFramesToNumpy(env)
 
                 if use_processed:
                     env = OptimizedConceptWrapper(env, fast_predictor, spaces.MultiBinary(len(concept_list)), lambda env, obs: obs, use_info_obs=True)
             else:
-                env = gym.make("CartPole-v1")
+                env = Monitor(gym.make("CartPole-v1"))
                 env = ConceptWrapper(env,concept_list,spaces.MultiBinary(len(concept_list)),get_raw_state_cartpole)
             return env 
 

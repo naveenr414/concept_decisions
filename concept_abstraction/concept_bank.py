@@ -402,7 +402,8 @@ def inaccurate_concepts_binary_intervention(concept_function,accuracy,interventi
     seen_states = {}
 
     def pred_function(state):
-        hashed_state = int(hashlib.md5(state.tobytes()).hexdigest(), 16) % (2**32)
+        hashed_state = (int(hashlib.md5(state.tobytes()).hexdigest(), 16)+seed) % (2**32)
+        np.random.seed(hashed_state)
         if hashed_state not in seen_states:
             pred = concept_function(state)
             if np.random.random() > intervention_probability:
