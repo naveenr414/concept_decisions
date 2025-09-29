@@ -3,15 +3,18 @@
 LOGFILE=../../runs/logs/error_iterative.txt
 
 environment=food
-tmux new-session -d -s concepts
-tmux send-keys -t concepts ENTER 
-tmux send-keys -t concepts "cd scripts/notebooks" ENTER
+tmux new-session -d -s concept_iterative
+tmux send-keys -t concept_iterative ENTER 
+tmux send-keys -t concept_iterative "source ~/.bashrc" ENTER
+tmux send-keys -t concept_iterative "cd scripts/notebooks" ENTER
+tmux send-keys -t concept_iterative "export PYTHONWARNINGS='ignore'" ENTER
+tmux send-keys -t concept_iterative "export GYMNASIUM_DISABLE_WARNINGS=1" ENTER
 
 declare -A training_timesteps=(
-  [cyclic_4]=2500
-  [cyclic_16]=2500
-  [tree_7]=2500
-  [tree_31]=50000
+  [cyclic_4]=10000
+  [cyclic_16]=10000
+  [tree_7]=25000
+  [tree_31]=25000
   [cart_pole]=50000
   [mini_grid]=50000
   [pong]=500000
@@ -19,24 +22,43 @@ declare -A training_timesteps=(
   [mimic]=25000
 )
 
-# declare -A training_timesteps=(
-#   [cyclic_4]=1
-#   [cyclic_16]=1
-#   [tree_7]=1
-#   [tree_31]=1
-#   [cart_pole]=1
-#   [mini_grid]=1
-#   [pong]=1
-#   [boxing]=1
-#   [mimic]=1
-# )
-
-for seed in 42
+for seed in 42 43 44
 do 
-    num_concepts_selected=2
-    for env in cart_pole pong boxing
-    do 
-        training=${training_timesteps[$env]}
-        tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder iterative --concept_source human_selected_binary --run_iterative >> ${LOGFILE} 2>&1"  ENTER 
-    done 
+  env=cyclic_4
+  num_concepts_selected=1
+  num_iterations=2
+  training=${training_timesteps[$env]}
+  tmux send-keys -t concept_iterative "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_iterations ${num_iterations} --selections_per_round ${num_concepts_selected} --selection_function q_value --out_folder iterative --concept_source human_selected_binary --run_iterative >> ${LOGFILE} 2>&1"  ENTER 
+  cbm_accuracy="0.75 0.75 0.75"
+  tmux send-keys -t concept_iterative "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_iterations ${num_iterations} --selections_per_round ${num_concepts_selected} --selection_function q_value --out_folder iterative --concept_source human_selected_binary --cbm_accuracy_by_concept ${cbm_accuracy} --run_iterative >> ${LOGFILE} 2>&1"  ENTER 
+
+  env=cyclic_16
+  num_concepts_selected=1
+  num_iterations=2
+  training=${training_timesteps[$env]}
+  tmux send-keys -t concept_iterative "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_iterations ${num_iterations} --selections_per_round ${num_concepts_selected} --selection_function q_value --out_folder iterative --concept_source human_selected_binary --run_iterative >> ${LOGFILE} 2>&1"  ENTER 
+  cbm_accuracy="0.75 0.75 0.75 0.75 0.75 0.75 0.75 0.75 0.75 0.75 0.75 0.75 0.75 0.75 0.75"
+  tmux send-keys -t concept_iterative "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_iterations ${num_iterations} --selections_per_round ${num_concepts_selected} --selection_function q_value --out_folder iterative --concept_source human_selected_binary --cbm_accuracy_by_concept ${cbm_accuracy} --run_iterative >> ${LOGFILE} 2>&1"  ENTER 
+
+  env=cyclic_16
+  num_concepts_selected=2
+  num_iterations=2
+  training=${training_timesteps[$env]}
+  tmux send-keys -t concept_iterative "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_iterations ${num_iterations} --selections_per_round ${num_concepts_selected} --selection_function q_value --out_folder iterative --concept_source human_selected_binary --run_iterative >> ${LOGFILE} 2>&1"  ENTER 
+
+  env=tree_7
+  num_concepts_selected=1
+  num_iterations=2
+  training=${training_timesteps[$env]}
+  tmux send-keys -t concept_iterative "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_iterations ${num_iterations} --selections_per_round ${num_concepts_selected} --selection_function q_value --out_folder iterative --concept_source human_selected_binary --run_iterative >> ${LOGFILE} 2>&1"  ENTER 
+  cbm_accuracy="0.75 0.75 0.75 0.75"
+  tmux send-keys -t concept_iterative "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_iterations ${num_iterations} --selections_per_round ${num_concepts_selected} --selection_function q_value --out_folder iterative --concept_source human_selected_binary --cbm_accuracy_by_concept ${cbm_accuracy} --run_iterative >> ${LOGFILE} 2>&1"  ENTER 
+
+  env=tree_31
+  num_concepts_selected=1
+  num_iterations=2
+  training=${training_timesteps[$env]}
+  tmux send-keys -t concept_iterative "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_iterations ${num_iterations} --selections_per_round ${num_concepts_selected} --selection_function q_value --out_folder iterative --concept_source human_selected_binary --run_iterative >> ${LOGFILE} 2>&1"  ENTER 
+  cbm_accuracy="0.75 0.75 0.75 0.75 0.75 0.75"
+  tmux send-keys -t concept_iterative "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_iterations ${num_iterations} --selections_per_round ${num_concepts_selected} --selection_function q_value --out_folder iterative --concept_source human_selected_binary --cbm_accuracy_by_concept ${cbm_accuracy} --run_iterative >> ${LOGFILE} 2>&1"  ENTER 
 done 

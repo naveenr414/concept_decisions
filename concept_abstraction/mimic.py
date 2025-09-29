@@ -4,6 +4,7 @@ import tqdm
 import torch
 import torch.nn.functional as F
 from concept_abstraction.mimic_constants import *
+from sklearn.model_selection._split import train_test_split
 
 def fit_action_bins(input_amounts, vaso_doses, n_action_bins=5):
     """
@@ -407,3 +408,130 @@ def compute_model_probabilities(model, concept_list, states=None, X=None, action
         return action_probs[np.arange(len(actions)), actions]
 
     return action_probs
+
+def get_mimic_eval_info(additional_info,seed):
+    c = additional_info['concept_list']
+    clusterer = additional_info['clusterer']
+    physpol = additional_info['physpol']
+    MIMICraw = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/MIMICraw.csv")
+    metadata = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/metadata.csv")
+    MIMICzs = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/MIMICzs.csv")
+
+    C_ICUSTAYID = "icustayid"
+    unique_icu_stays = metadata[C_ICUSTAYID].unique()
+
+    n_action_bins = 5
+    gamma = 0.99
+
+    # Actions actually taken 
+    all_actions, _, _ = fit_action_bins(
+        MIMICraw[C_INPUT_STEP],
+        MIMICraw[C_MAX_DOSE_VASO],
+        n_action_bins=n_action_bins
+    )
+
+    train_ids, val_ids = train_test_split(unique_icu_stays, test_size=0.1,random_state=seed)
+    train_indexes = metadata[metadata[C_ICUSTAYID].isin(train_ids)].index
+    val_indexes = metadata[metadata[C_ICUSTAYID].isin(val_ids)].index
+
+    X_train = MIMICzs.iloc[train_indexes]
+    X_val = MIMICzs.iloc[val_indexes]
+
+    metadata_train = metadata.iloc[train_indexes]
+    metadata_val = metadata.iloc[val_indexes]
+
+    actions_train = all_actions[train_indexes]
+    actions_val  = all_actions[val_indexes]
+    states_train = clusterer.predict(X_train.values)
+    states_val   = clusterer.predict(X_val.values)
+    trajectories = metadata_val[C_ICUSTAYID].values
+
+    SOFA_COL = "SOFA"        # <- replace with actual SOFA column name in MIMICraw
+    LACTATE_COL = "Arterial_lactate"  # <- replace with actual lactate column name in MIMICraw
+
+    C0 = -0.025
+    C1 = -0.125
+    C2 = -2.0
+
+    # scaling factor in case shaped rewards are too small/large relative to terminal rewards
+    SHAPE_SCALE = 1.0  # tune this (e.g., 0.5, 2.0) after you inspect distributions
+
+    # -------------------------
+    # 2. prepare aligned arrays / dataframe
+    # -------------------------
+    # train_indexes already defined earlier in your snippet
+    # metadata_train, states_train, actions_train are aligned with train_indexes
+
+    # choose where to pull raw SOFA/lactate values from - I use MIMICraw here.
+    sofa_vals = MIMICraw[SOFA_COL].iloc[val_indexes].astype(float).values
+    lactate_vals = MIMICraw[LACTATE_COL].iloc[val_indexes].astype(float).values
+
+    # Build a helper dataframe that preserves the exact order used to create states_train/actions_train
+    df_steps = pd.DataFrame({
+        "icustayid": metadata_val[C_ICUSTAYID].values,
+        "state": states_val,
+        "action": actions_val,
+        "sofa": sofa_vals,
+        "lactate": lactate_vals,
+    })
+
+    n_cluster_states = np.max(states_train)+1
+    absorbing_states =  [n_cluster_states + 1, n_cluster_states]
+    n_rows = len(df_steps)
+    step_rewards = np.zeros(n_rows, dtype=float)
+
+    qldata3_shaped = []
+    idx = 0
+    for icu, grp in df_steps.groupby("icustayid"):
+        pos = grp.index.values
+        for i_idx, p in enumerate(pos):
+            s = int(df_steps.loc[p, "state"])
+            a = int(df_steps.loc[p, "action"])
+            if i_idx < len(pos) - 1:
+                next_p = pos[i_idx + 1]
+                s_next = int(df_steps.loc[next_p, "state"])
+                sofa_seq = sofa_vals[idx]
+                sofa_next = sofa_vals[idx+1]
+                lactate_seq = lactate_vals[idx]
+                lactate_next = lactate_vals[idx+1]
+
+                indicator = ((sofa_seq == sofa_next) & (sofa_seq > 0)).astype(float)
+
+                # diffs: sofa_t - sofa_{t+1}, lactate_t - lactate_{t+1}
+                diff_sofa = sofa_seq - sofa_next
+                diff_lactate = lactate_seq - lactate_next
+
+                # replace NaNs (last pos) with 0 for computing shaped contribution — last step will be terminal reward
+                diff_sofa = np.nan_to_num(diff_sofa, nan=0.0)
+                diff_lactate = np.nan_to_num(diff_lactate, nan=0.0)
+
+                r = C0 * indicator + C1 * diff_sofa + C2 * np.tanh(diff_lactate)
+                r = r * SHAPE_SCALE
+                done = False
+            else:
+                # last step in stay -> treat as terminal transition to absorbing state
+                # choose which absorbing-state id you want (your script used two absorbing states: [n_cluster_states + 1, n_cluster_states])
+                # Here I set next state to absorbing_states[1] (adjust if your convention differs)
+                s_next = absorbing_states[1]
+                # terminal reward: keep your previous terminal rewards array (rewards variable)
+                # but you must map actual mortality flag to decide +15 or -15. Replace MORT_COL below with your outcome column.
+                MORT_COL = "outcome" 
+                try:
+                    death_flag = int(metadata_val.iloc[p][MORT_COL])
+                    # death_flag==1 => negative terminal reward; death_flag==0 => positive terminal reward
+                    if death_flag == 1:
+                        r = float(-15)  # -15 (example)
+                    else:
+                        r = float(15)  # +15 (example)
+                except Exception:
+                    # fallback: use the positive terminal reward (change as you see fit)
+                    r = float(15)
+                done = True
+
+            # Record format: (icustayid, pos, state, action, reward, next_state, done)
+            qldata3_shaped.append((int(df_steps.loc[p, "icustayid"]), int(p), s, a, r, int(s_next), done))
+            idx += 1
+        rewards = np.array([i[4] for i in qldata3_shaped])
+    phys_probs = compute_physician_probabilities(additional_info['physpol'],np.max(states_train)+1,states=states_val, actions=actions_val)
+
+    return states_val,actions_val,trajectories,rewards,phys_probs

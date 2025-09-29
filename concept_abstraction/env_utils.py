@@ -22,7 +22,7 @@ def get_average_reward(vec_env, model, max_steps=50000,max_steps_per=5000):
         Float: average reward
     """
     num_envs = vec_env.num_envs
-    episode_rewards = []
+    episode_rewards = [0]
     rewards_accum = np.zeros(num_envs)
     obs, _ = vec_env.reset()
     total_steps = 0
@@ -76,11 +76,9 @@ def get_average_reward_mimic(env, model, max_steps=50000,max_steps_per=100):
             action = model.policy.get_distribution(torch.Tensor(obs).unsqueeze(0).to(model.device)).distribution.probs 
             action *= valid_action
             action = torch.argmax(action).item()
-        print(obs,action,info['observation'])
         obs, rewards, terminated, truncated, info = env.step(action)
         if rewards == -10:
             rewards = 0.
-        print(rewards)
             
         rewards_accum += rewards
         total_steps += 1 
@@ -90,7 +88,6 @@ def get_average_reward_mimic(env, model, max_steps=50000,max_steps_per=100):
             rewards_accum = 0  # reset for next episode
             steps_per = 0
             obs, info = env.reset()
-            print("Resetting!")
     return episode_rewards
 
 

@@ -326,7 +326,8 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
                     if tup not in seen and diffs != ():
                         seen.add(tup)
                         final_vals.append(tup)
-        final_vals = sorted(final_vals,reverse=True)
+        # TODO: Remove the :1000
+        final_vals = sorted(final_vals,reverse=True)[:10000]
         idx, _ = max_prefix_gurobi(final_vals,num_concepts_selected)
         concepts = [concept_list[i] for i in idx]
     elif selection_function == "policy":
@@ -405,6 +406,8 @@ def multiple_lp_selection(env,concept_list,num_concepts_selected,selection_funct
                         seen.add(tup)
                         final_vals.append(tup)
         final_vals = sorted(final_vals,reverse=True)
+        # TODO: Remove this
+        final_vals = final_vals[:10000]
         idx, _ = max_prefix_gurobi(final_vals,num_concepts_selected,weighted=True,in_order=False)
         concepts = [concept_list[i] for i in idx]
     elif selection_function == "policy":
@@ -892,6 +895,59 @@ def clustered_cross_group_l1(X, y, current_concepts, split_col=3):
 
     return total_weighted_sum / total_pairs if total_pairs > 0 else np.nan
 
+def greedy_selection_supervised(train_X,train_Y,num_concepts_selected):
+    entropy_by_concept = []
+
+    for i in range(len(train_X[0])):
+        is_zero = len(train_X[train_X[:,i] == 0])/len(train_X)
+        is_one = 1-is_zero 
+        entropy = is_zero*is_one 
+        entropy_by_concept.append(entropy)
+    entropy_by_concept = np.array(entropy_by_concept)
+    topk_idx = np.argpartition(-entropy_by_concept, num_concepts_selected)[:num_concepts_selected]
+    topk_idx = topk_idx[np.argsort(-entropy_by_concept[topk_idx])]
+    print(entropy_by_concept[topk_idx],np.mean(entropy_by_concept))
+    return topk_idx
+
+
+def iterative_selection_supervised(train_X,train_Y,num_concepts_selected):
+    """Iterative select concepts based on performance, and add on more concepts
+    
+    Arguments:
+        current_concepts: List of integers; which concepts we start from
+        iterations: Number of iterations to run
+        selections_per_round: Integer, how many concept to select each round
+
+    Returns: Tuple (model, list of rewards from each round)"""
+    current_concepts = []
+    selections_per_round = 10
+    train_Y_one_hot = np.zeros((len(train_Y),np.max(train_Y)+1))
+    for i in range(len(train_Y)):
+        train_Y_one_hot[i][train_Y[i]] = 1
+    iterations = num_concepts_selected//10
+    
+    for _ in range(iterations):
+        print("On iteration {}".format(_))
+        if current_concepts == []:
+            score_by_concept = []
+            for i in range(train_X.shape[1]):
+                mask1 = train_X[:, i] == 1
+                mask0 = ~mask1 
+                group1 = train_Y_one_hot[mask1]
+                group0 = train_Y_one_hot[mask0]
+                diffs = np.abs(group1[:, None, :] - group0[None, :, :]).sum(axis=2)
+                score_by_concept.append(diffs.sum())
+            score_by_concept = np.array(score_by_concept)
+            topk_idx = np.argpartition(-score_by_concept, selections_per_round)[:selections_per_round]
+            topk_idx = topk_idx[np.argsort(-score_by_concept[topk_idx])]
+            current_concepts = sorted(topk_idx)
+        else:
+            scores = [(i,clustered_cross_group_l1(train_X, train_Y_one_hot, current_concepts, split_col=i)) for i in range(len(train_X[0])) if i not in current_concepts]
+            scores = sorted(scores,key=lambda k: k[1],reverse=True)
+            scores = scores[:selections_per_round]
+            current_concepts += [i[0] for i in scores]
+    return current_concepts
+    
 
 def iterative_selection(env,gold_model,environment_string,concept_list,iterations,selections_per_round,seed,max_steps=100,training_timesteps=100_000):
     """Iterative select concepts based on performance, and add on more concepts
@@ -907,13 +963,15 @@ def iterative_selection(env,gold_model,environment_string,concept_list,iteration
     reward_by_iteration = []
     
     for _ in range(iterations):
-        obs, _ = env.reset()
+        obs, info = env.reset()
         total_steps = 0
 
         X, y = [], []
 
         while total_steps < max_steps:
             actions, _ = gold_model.predict(obs, deterministic=True)
+            if np.random.random() < 0.05:
+                actions = [env.action_space.sample() for i in range(env.num_envs)]
 
             obs_torch = torch.as_tensor(obs, dtype=torch.float32)
             obs_torch = obs_torch.to(gold_model.device)
@@ -921,9 +979,10 @@ def iterative_selection(env,gold_model,environment_string,concept_list,iteration
                 dist = gold_model.policy.get_distribution(obs_torch)
             probs_gold = dist.distribution.probs.cpu().numpy()
 
-            X.append(obs)
+            imperfect_obs = [[c(i['observation']) for c in concept_list] for i in info]
+            X.append(imperfect_obs)
             y.append(probs_gold)
-            obs, _, _, _, _ = env.step(actions)
+            obs, _, _, _, info = env.step(actions)
             total_steps += 1
         
         X = np.vstack(X)
@@ -937,7 +996,7 @@ def iterative_selection(env,gold_model,environment_string,concept_list,iteration
                 group1 = y[mask1]
                 group0 = y[mask0]
                 diffs = np.abs(group1[:, None, :] - group0[None, :, :]).sum(axis=2)
-                score_by_concept.append(diffs.mean())
+                score_by_concept.append(diffs.sum())
             score_by_concept = np.array(score_by_concept)
             topk_idx = np.argpartition(-score_by_concept, selections_per_round)[:selections_per_round]
             topk_idx = topk_idx[np.argsort(-score_by_concept[topk_idx])]

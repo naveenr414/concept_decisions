@@ -1002,6 +1002,14 @@ def get_environment(environment_string,concept_list,seed,use_processed=False,fas
         physpol, vec_env, centers,new_concept_list, clusterer = create_mimic_environment(concept_list,seed)
         gymnasium_env = vec_env
         additional_info = {'physpol': physpol, 'centers': centers, 'concept_list': new_concept_list, 'clusterer': clusterer}
+        eval_dataset = get_mimic_eval_info(additional_info,seed)
+        additional_info['states_val'] = eval_dataset[0]
+        additional_info['actions_val'] = eval_dataset[1]
+        additional_info['trajectories'] = eval_dataset[2]
+        additional_info['rewards'] = eval_dataset[3] 
+        additional_info['phys_probs'] = eval_dataset[4]
+        additional_info['subset_concepts'] = concept_list
+
     elif environment_string  == "mini_grid":
         def make_env():
             if concept_list is None:
@@ -1028,7 +1036,7 @@ def get_environment(environment_string,concept_list,seed,use_processed=False,fas
             if concept_list is None or use_processed:
                 env = gym.make("CartPole-v1", render_mode="rgb_array")
                 env = Monitor(env)
-                env = FrameSkipWrapper(env, skip=4, get_pixels_fn=get_raw_pixels_cartpole)
+                env = FrameSkipWrapper(env, skip=1, get_pixels_fn=get_raw_pixels_cartpole)
                 env = ConceptWrapper(env,None,spaces.Box(
                         low=0, high=255,
                         shape=(84,84),  # Height x Width, no color channel
@@ -1036,7 +1044,6 @@ def get_environment(environment_string,concept_list,seed,use_processed=False,fas
                     ),lambda env, obs: obs,use_info_obs=True)
                 env = FrameStack(env,4)
                 env = LazyFramesToNumpy(env)
-
                 if use_processed:
                     env = OptimizedConceptWrapper(env, fast_predictor, spaces.MultiBinary(len(concept_list)), lambda env, obs: obs, use_info_obs=True)
             else:
@@ -1045,6 +1052,7 @@ def get_environment(environment_string,concept_list,seed,use_processed=False,fas
             return env 
 
         vec_env = SubprocVecEnv([make_env for _ in range(num_envs)])
+
         gymnasium_env = GymnasiumWrapper(vec_env)
 
     elif environment_string == "boxing":
@@ -1071,53 +1079,46 @@ def get_environment(environment_string,concept_list,seed,use_processed=False,fas
         gymnasium_env = GymnasiumWrapper(vec_env)
     return vec_env, gymnasium_env, additional_info
 
-def eval_mimic_model(physpol,model,concept_list,clusterer,seed):
-    """Evaluate a MIMIC policy via the WIS score
-    
-    Arguments:
-        physpol: Physicians policy, for reference
-            Retrieved from compute_physician_policy
-        model: Trained stable_baseline model for the environment
-                concept_list: A list of a single concept
-            that maps a state (represented by a vector)
-            to a single integer number
-            It needs to be in this form becuase we need to discretize
-            the environment
-        seed: Integer, random seed
-    Returns: 
-        Float, WIS score
-    """
-
-    MIMICraw = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/MIMICraw.csv")
-    metadata = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/metadata.csv")
-    MIMICzs = pd.read_csv("../../data/mimic_github/ai_clinician/data/mimic_model/train/MIMICzs.csv")
-
-    C_ICUSTAYID = "icustayid"
-    unique_icu_stays = metadata[C_ICUSTAYID].unique()
-
-    n_action_bins = 5
+def eval_mimic_model(model,additional_info,states_val,actions_val,trajectories,rewards,phys_probs,subset_concepts):
+    model_probs = compute_model_probabilities(model,subset_concepts,states=states_val, actions=actions_val)
+    stepwise_returns = []
+    ess_per_traj = []
+    all_weights = []
     gamma = 0.99
 
-    all_actions, _, _ = fit_action_bins(
-        MIMICraw[C_INPUT_STEP],
-        MIMICraw[C_MAX_DOSE_VASO],
-        n_action_bins=n_action_bins
-    )
+    eps = 1e-10
+    unique_traj = np.unique(trajectories)
 
-    train_ids, val_ids = train_test_split(unique_icu_stays, test_size=0.1,random_state=seed)
-    train_indexes = metadata[metadata[C_ICUSTAYID].isin(train_ids)].index
-    val_indexes = metadata[metadata[C_ICUSTAYID].isin(val_ids)].index
-
-    X_train = MIMICzs.iloc[train_indexes]
-    X_val = MIMICzs.iloc[val_indexes]
-
-    metadata_val = metadata.iloc[val_indexes]
-    actions_val = all_actions[val_indexes]
-
-    states_train = clusterer.predict(X_train.values)
-    states_val = clusterer.predict(X_val.values)
-
-    phys_probs = compute_physician_probabilities(physpol,np.max(states_train)+1,states=states_val, actions=actions_val)
-    model_probs = compute_model_probabilities(model,concept_list,states=states_val, actions=actions_val)
+    for tid in unique_traj:
+        idx = trajectories == tid
+        r = rewards[idx]
+        pi = model_probs[idx]
+        mu = phys_probs[idx]
         
-    return 1-np.mean(np.abs(phys_probs-model_probs))
+        # clipped importance ratios
+        w_t = np.clip(pi / np.clip(mu, eps, None), 1e-3, 10)
+        all_weights.append(w_t)
+        
+        # per-step normalized
+        w_norm = w_t / np.sum(w_t)
+        traj_return = np.sum(w_norm * (gamma ** np.arange(len(r))) * r)
+        stepwise_returns.append(traj_return)
+        
+        # ESS per trajectory
+        ess = (np.sum(w_t)**2) / np.sum(w_t**2)
+        ess_per_traj.append(ess)
+
+    stepwise_returns = np.array(stepwise_returns)
+    ess_per_traj = np.array(ess_per_traj)
+
+    # -------------------------
+    # 8. Step-wise normalized IS estimate
+    # -------------------------
+    stepwise_IS_estimate = np.mean(stepwise_returns)
+
+    # -------------------------
+    # 9. Overall ESS across all timesteps
+    # -------------------------
+    all_weights = np.concatenate(all_weights)
+    overall_ess = (np.sum(all_weights)**2) / np.sum(all_weights**2)
+    return stepwise_IS_estimate, overall_ess/len(all_weights), 1-np.mean(np.abs(phys_probs-model_probs))
