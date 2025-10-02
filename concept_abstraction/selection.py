@@ -256,7 +256,7 @@ def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True,as_float=F
         
         # Binary vars: y[i] = 1 if value i is covered
         y = model.addVars(n, vtype=GRB.BINARY, name="y")
-    
+    model.update()
     # Link y[i] to coverage by selected elements
     for i, (_, elems) in enumerate(final_vals):
         if elems:  # make sure not empty
@@ -326,8 +326,7 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
                     if tup not in seen and diffs != ():
                         seen.add(tup)
                         final_vals.append(tup)
-        # TODO: Remove the :1000
-        final_vals = sorted(final_vals,reverse=True)[:10000]
+        final_vals = sorted(final_vals,reverse=True)[:50000]
         idx, _ = max_prefix_gurobi(final_vals,num_concepts_selected)
         concepts = [concept_list[i] for i in idx]
     elif selection_function == "policy":
@@ -443,7 +442,7 @@ def multiple_lp_selection(env,concept_list,num_concepts_selected,selection_funct
 
     return concepts, idx
 
-def max_accuracy_selection(final_vals,accuracies,direction,num_concepts_selected,target_abstraction_percentage=1):
+def max_accuracy_selection(final_vals,accuracies,direction,num_concepts_selected,target_abstraction_percentage=1,multiplier=1):
     """Select the set of concepts (where there are len(accuracies)
         total concepts)
         So that the average accuracy is maximized (if direction = 'max')
@@ -474,7 +473,7 @@ def max_accuracy_selection(final_vals,accuracies,direction,num_concepts_selected
     x = m.addVars(n, vtype=GRB.BINARY)
     y = m.addVars(len(final_vals), vtype=GRB.BINARY)  # y[j] = 1 if list j has >=1 selected
     for j, lst in enumerate(final_vals):
-        m.addConstr(quicksum(x[i] for i in lst) >= 1 * y[j])
+        m.addConstr(quicksum(x[i] for i in lst) >= multiplier * y[j])
     
     m.addConstr(quicksum(y[j] for j in range(len(final_vals))) >= ceil(target_abstraction_percentage * len(final_vals)))
     m.addConstr(quicksum(x[i] for i in range(n)) == k)
@@ -570,65 +569,6 @@ def imperfect_lp_selection(env,concept_list,q_estimates,selection_function,targe
     idx = np.array(idx).tolist()
     return concepts, idx
 
-def greedy_selection_supervised(train_matrix,labels,num_concepts):
-    """Select {num_concepts} greedily
-        by selecting those that reduce the reward range within each partition
-        For example, first select the concept
-            so that, c_{i} = 0 and c_{i} = 1 each have
-                small differences between max and min reward
-
-    Arguments:
-        env: Gymasium environment
-        num_concepts: Integer, number of concepts to select
-    
-    Returns: List of size {num_concepts} of integers
-        each representing a concept"""
-
-    train_matrix = np.asarray(train_matrix)
-    labels = np.asarray(labels)
-    n_samples, n_features = train_matrix.shape
-    label_size = labels.max() + 1
-    all_prefixes = []
-
-    total_concepts = []
-    remaining_concepts = set(range(n_features))
-    
-    # Initially, all samples in one group
-    groups = {0: np.arange(n_samples)}
-    
-    for iteration in range(num_concepts):
-        best_score = np.inf
-        best_concept = -1
-        best_partition = None  # store how groups would look if we choose this concept
-        
-        for k in remaining_concepts:
-            score = 0
-            candidate_groups = {}
-            gid = 0
-            
-            # Split each current group by this concept
-            for indices in groups.values():
-                col_values = train_matrix[indices, k]
-                for val in np.unique(col_values):
-                    sub_idx = indices[col_values == val]
-                    # label counts for this subgroup
-                    lbl_counts = np.bincount(labels[sub_idx], minlength=label_size)
-                    score += lbl_counts.sum() - lbl_counts.max()
-                    candidate_groups[gid] = sub_idx
-                    gid += 1
-            
-            if score < best_score:
-                best_score = score
-                best_concept = k
-                best_partition = candidate_groups
-        
-        # Update chosen groups
-        groups = best_partition
-        total_concepts.append(best_concept)
-        remaining_concepts.remove(best_concept)
-        all_prefixes.append(deepcopy(total_concepts))
-    
-    return all_prefixes
 
 def greedy_max_coverage(final_vals, budget):
     # final_vals: list of (value, elements_covering_value)
@@ -692,10 +632,53 @@ def lp_selection_supervised(train_matrix,labels,num_concepts):
         elems_diff = np.where(unique_rows[i] != unique_rows[j])[0].tolist()
         weight = unique_counts[i] * unique_counts[j]   # multiplicity weight
         per_train_constraint_weighted.append((weight, elems_diff))
-
+    
     selected_elements, _ = max_prefix_gurobi(per_train_constraint_weighted, num_concepts, in_order=False,as_float=False)
 
     return selected_elements
+
+def imperfect_lp_selection_supervised(train_matrix,labels,num_concepts,accuracies):
+    """Select {num_concepts} through an LP policy
+        by first learning the Q(s,a) values from a rollout
+        Then selecting the concepts that maximize the average accuracy
+            While selecting according to the target abstraction
+    
+    Arguments:
+        env: Gymasium environment
+        concept_list: List of functions
+        num_concepts_selected: Integer, number of concepts to select
+        reference_model: A policy that performs well
+            which we are trying to distill
+        selection_function: String, whether we're selecting according to 
+            Q value, etc."""
+
+    train_X = np.asarray(train_matrix)
+    labels = np.asarray(labels)
+    # Convert rows to tuples to make them hashable
+    rows_as_tuples = [tuple(row) for row in train_X]
+    row_counts = Counter(rows_as_tuples)   # counts of each unique row
+
+    unique_rows = np.array(list(row_counts.keys()))
+    unique_counts = np.array([row_counts[r] for r in row_counts])
+    unique_labels = np.array([labels[np.all(train_X == r, axis=1)][0] for r in unique_rows])
+
+    pairs = [
+        (i, j) 
+        for i, j in combinations(range(len(unique_rows)), 2) 
+        if unique_labels[i] != unique_labels[j]
+    ]
+
+    per_train_constraint_weighted = []
+
+    for i, j in pairs:
+        elems_diff = np.where(unique_rows[i] != unique_rows[j])[0].tolist()
+        weight = unique_counts[i] * unique_counts[j]   # multiplicity weight
+        per_train_constraint_weighted.append(elems_diff)
+    
+    selected_elements, _ = max_accuracy_selection(per_train_constraint_weighted,accuracies,"max",num_concepts,target_abstraction_percentage=1,multiplier=1)
+
+    return selected_elements
+
 
 def multiple_selection_supervised(train_matrix,labels,num_concepts):
     """Select {num_concepts} greedily
@@ -775,7 +758,6 @@ def lp_selection_supervised_imperfect(train_matrix,labels,num_concepts,accuracie
         per_train_constraint_weighted.append((weight, elems_diff))
 
     final_vals = per_train_constraint_weighted
-    print("Computing LP")
     U = set()
     for _, elems in final_vals:
         U.update(elems)
@@ -830,10 +812,10 @@ def ucb(mu_hat,N,n,c=0.1):
         return 1
     return mu_hat + c*np.sqrt(np.log(N)/n)
 
-def bayesian_iterative_selection(env,environment_string,seed,concept_list,num_iterations,num_concepts_selected,training_timesteps=100_000):
+def bayesian_iterative_selection(env,environment_string,seed,concept_list,num_iterations,num_concepts_selected,additional_info,training_timesteps=100_000):
     def run(concept_idx):
         env, eval_env, additional_info = get_environment(environment_string,[concept_list[i] for i in concept_idx],seed)
-        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy")
+        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
         reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
         return reward
     
@@ -907,7 +889,7 @@ def greedy_selection_supervised(train_X,train_Y,num_concepts_selected):
     topk_idx = np.argpartition(-entropy_by_concept, num_concepts_selected)[:num_concepts_selected]
     topk_idx = topk_idx[np.argsort(-entropy_by_concept[topk_idx])]
     print(entropy_by_concept[topk_idx],np.mean(entropy_by_concept))
-    return topk_idx
+    return topk_idx.tolist()
 
 
 def iterative_selection_supervised(train_X,train_Y,num_concepts_selected):
@@ -935,7 +917,8 @@ def iterative_selection_supervised(train_X,train_Y,num_concepts_selected):
                 mask0 = ~mask1 
                 group1 = train_Y_one_hot[mask1]
                 group0 = train_Y_one_hot[mask0]
-                diffs = np.abs(group1[:, None, :] - group0[None, :, :]).sum(axis=2)
+                matches = group1 @ group0.T
+                diffs = 2 - 2 * matches
                 score_by_concept.append(diffs.sum())
             score_by_concept = np.array(score_by_concept)
             topk_idx = np.argpartition(-score_by_concept, selections_per_round)[:selections_per_round]
@@ -949,7 +932,7 @@ def iterative_selection_supervised(train_X,train_Y,num_concepts_selected):
     return current_concepts
     
 
-def iterative_selection(env,gold_model,environment_string,concept_list,iterations,selections_per_round,seed,max_steps=100,training_timesteps=100_000):
+def iterative_selection(env,gold_model,environment_string,concept_list,iterations,selections_per_round,additional_info,seed,max_steps=100,training_timesteps=100_000):
     """Iterative select concepts based on performance, and add on more concepts
     
     Arguments:
@@ -961,6 +944,7 @@ def iterative_selection(env,gold_model,environment_string,concept_list,iteration
     current_concepts = []
     concepts_by_iteration = []
     reward_by_iteration = []
+    last_model = None 
     
     for _ in range(iterations):
         obs, info = env.reset()
@@ -969,20 +953,33 @@ def iterative_selection(env,gold_model,environment_string,concept_list,iteration
         X, y = [], []
 
         while total_steps < max_steps:
-            actions, _ = gold_model.predict(obs, deterministic=True)
-            if np.random.random() < 0.05:
-                actions = [env.action_space.sample() for i in range(env.num_envs)]
+            actions, _ = gold_model.predict(obs)
+            if environment_string == "mimic":
+                num_envs = 1
+            else:
+                num_envs = env.num_envs
+            
+            if last_model is not None:
+                actions, _ = last_model.predict(obs[:,current_concepts])
 
             obs_torch = torch.as_tensor(obs, dtype=torch.float32)
             obs_torch = obs_torch.to(gold_model.device)
+            if environment_string == "mimic":
+                obs_torch = obs_torch.reshape((1,obs_torch.shape[0]))
             with torch.no_grad():
                 dist = gold_model.policy.get_distribution(obs_torch)
             probs_gold = dist.distribution.probs.cpu().numpy()
-
-            imperfect_obs = [[c(i['observation']) for c in concept_list] for i in info]
+            
+            if environment_string == "mimic":
+                imperfect_obs = [[c(additional_info['centers'][info['observation']]) for c in concept_list]]
+            else:
+                imperfect_obs = [[c(inf['observation']) for c in concept_list] for inf in info]
             X.append(imperfect_obs)
             y.append(probs_gold)
-            obs, _, _, _, info = env.step(actions)
+            obs, _, terminated, truncated, info = env.step(actions)
+            if environment_string == "mimic" and (terminated or truncated):
+                env.reset()
+
             total_steps += 1
         
         X = np.vstack(X)
@@ -1009,8 +1006,8 @@ def iterative_selection(env,gold_model,environment_string,concept_list,iteration
         concepts_by_iteration.append(deepcopy(current_concepts))
 
         concept_env, concept_eval_env, additional_info = get_environment(environment_string,[concept_list[i] for i in current_concepts],seed)
-        model = train_ppo_model(concept_env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy")
-        reward = evaluate_model(environment_string,concept_eval_env,additional_info,model,seed)
+        last_model = train_ppo_model(concept_env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
+        reward = evaluate_model(environment_string,concept_eval_env,additional_info,last_model,seed)
         reward_by_iteration.append(reward)
     concepts_by_iteration = [np.array(i).tolist() for i in concepts_by_iteration]
     return reward_by_iteration, concepts_by_iteration

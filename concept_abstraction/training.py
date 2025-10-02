@@ -302,7 +302,7 @@ def train_ppo_model(env,environment_string,seed=42,total_timesteps=150_000,polic
                 "MlpPolicy",
                 env,
                 policy_kwargs={"net_arch": [128]},
-                n_steps=1024,            # smaller rollout
+                n_steps=512,            # smaller rollout
                 batch_size=1024,         # match rollout size
                 n_epochs=5,           # more passes per batch
                 learning_rate=3e-4,    # safer LR
