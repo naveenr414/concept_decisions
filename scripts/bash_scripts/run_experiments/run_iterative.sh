@@ -23,7 +23,7 @@ declare -A training_timesteps=(
 )
 
 
-for seed in 42 #43 44
+for seed in 42 43 44
 do 
   # env=cyclic_4
   # num_concepts_selected=1

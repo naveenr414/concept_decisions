@@ -32,47 +32,6 @@ def get_final_tree_concept(state):
 def get_all_tree_concepts(num_layers):
     return [get_binary_tree_concept(i,num_layers) for i in range(num_layers)]+[get_final_tree_concept]
 
-### MIMIC Concepts
-def clustering_concept_mimic(X_train_concepts,n_clusters,seed):
-    """Concept for MIMIC derived from clustering
-    
-    Arguments:
-        n_clusters: Integer, number of clusters
-        seed: Integer, random seed
-    
-    Returns: Function that maps state to cluster (integer)"""
-
-    state_data = X_train_concepts
-    sample = state_data[np.random.choice(len(state_data),
-                                            size=int(len(state_data) * 0.25),
-                                            replace=False)]
-    clusterer = MiniBatchKMeans(n_clusters=n_clusters,
-                                max_iter=30,n_init=32).fit(sample)
-    centers = clusterer.cluster_centers_
-
-    def cluster_concept(state_data):
-        """
-        Produces a clustering of the given state data, where each state is
-        considered independent (even from the same patient).
-        
-        Returns: a clustering object that can be queried using a predict() function,
-            and an array of clustering indexes ranging from 0 to n_clusters.
-        """
-        return clusterer.predict([state_data])[0]
-    return cluster_concept, centers, clusterer
-
-def mimic_concept(i):
-    """Get the ith index of a concept
-    
-    Arguments:
-        i: Integer, idx
-    
-    Returns: Function that returns the ith index into a vector"""
-    def mimic_index(obs):
-        return obs[i] 
-    
-    return mimic_index
-
 ### CartPole Concepts
 def get_cart_pole_concept(i):
     """Get the ith index of a concept
@@ -84,163 +43,10 @@ def get_cart_pole_concept(i):
 
     def get_concept(obs):
         return obs[i]
-    return get_concept 
-
-def get_custom_binary_features(observation):
-    """Given an observation (4 vector), convert
-        this to a 13-length binary vector
-        suggested by LLMs
-    
-    Arguments:
-        observation: 4-vector of floats
-            representing the position/velocity
-            of the cart
-    
-    Returns: 13-length binary vector"""
-
-    cart_pos, cart_vel, pole_angle, pole_ang_vel = observation
-    binary_features = np.zeros(13, dtype=np.int32)
-    binary_features[0] = int(abs(cart_pos) < 0.5)          # cart near center
-    binary_features[1] = int(abs(cart_pos) >= 0.5)         # cart far from center
-    binary_features[2] = int(cart_vel < 0)                 # cart moving left
-    binary_features[3] = int(cart_vel > 0)                 # cart moving right
-    binary_features[4] = int(abs(cart_vel) > 1.0)          # cart moving fast
-    binary_features[5] = int(pole_angle < 0)               # pole leaning left
-    binary_features[6] = int(pole_angle > 0)               # pole leaning right
-    binary_features[7] = int(abs(pole_angle) < 0.02)       # pole near vertical
-    binary_features[8] = int(abs(pole_angle) >= 0.1)       # pole far from vertical
-    binary_features[9] = int(abs(pole_angle) >= 0.2)       # pole about to fall
-    binary_features[10] = int(pole_ang_vel < 0)            # pole rotating clockwise
-    binary_features[11] = int(pole_ang_vel > 0)            # pole rotating counterclockwise
-    binary_features[12] = int(abs(pole_ang_vel) > 1.0)     # pole rotating fast
-    return binary_features
-
-class CustomBinaryFeatureWrapper(gym.ObservationWrapper):
-    """
-    Wrapper that converts CartPole observations to custom binary features
-        These observations come from LLMs
-
-    Features:
-    0: Is cart near center? → |cart position| < 0.5
-    1: Is cart far from center? → |cart position| ≥ 0.5
-    2: Is cart moving left? → cart velocity < 0
-    3: Is cart moving right? → cart velocity > 0
-    4: Is cart moving fast? → |cart velocity| > 1.0
-    5: Is pole leaning left? → pole angle < 0
-    6: Is pole leaning right? → pole angle > 0
-    7: Is pole near vertical? → |pole angle| < 0.02
-    8: Is pole far from vertical? → |pole angle| ≥ 0.1
-    9: Is pole about to fall? → |pole angle| ≥ 0.2
-    10: Is pole rotating clockwise? → pole angular velocity < 0
-    11: Is pole rotating counterclockwise? → pole angular velocity > 0
-    12: Is pole rotating fast? → |pole angular velocity| > 1.0
-    """
-    
-    def __init__(self, env,accuracies=None):
-        super().__init__(env)
-        self.observation_space = gym.spaces.MultiBinary(13)  # 13 binary features
-        self.accuracies = accuracies
-
-        self.feature_names = [
-            "cart_near_center",      # 0
-            "cart_far_from_center",  # 1
-            "cart_moving_left",      # 2
-            "cart_moving_right",     # 3
-            "cart_moving_fast",      # 4
-            "pole_leaning_left",     # 5
-            "pole_leaning_right",    # 6
-            "pole_near_vertical",    # 7
-            "pole_far_from_vertical", # 8
-            "pole_about_to_fall",    # 9
-            "pole_rotating_clockwise", # 10
-            "pole_rotating_ccw",     # 11
-            "pole_rotating_fast"     # 12
-        ]
-    
-    def observation(self, observation):
-        """Convert continuous observation to binary features"""
-        binary_features = get_custom_binary_features(observation)
-        if self.accuracies is not None: 
-            for i in range(len(self.accuracies)):
-                if np.random.random() > self.accuracies[i]:
-                    binary_features[i] = 1-binary_features[i]
-
-        return binary_features
-    
-    def get_feature_names(self):
-        """Return list of feature names"""
-        return self.feature_names.copy()
-    
-    def print_observation(self, observation):
-        """Print human-readable observation"""
-        binary_obs = self.observation(observation)
-        print("Binary Features:")
-        for i, (name, value) in enumerate(zip(self.feature_names, binary_obs)):
-            if value:
-                print(f"  {i:2d}: {name} = True")
-
-### Boxing Concepts
-def boxing_player_x(obs):
-    obs = np.array(obs)
-    return obs[-1,0]/255
-
-def boxing_player_y(obs):
-    obs = np.array(obs)
-    return obs[-1,1]/255
-
-def boxing_enemy_x(obs):
-    obs = np.array(obs)
-    return obs[-1,2]/255
-
-def boxing_enemy_y(obs):
-    obs = np.array(obs)
-    return obs[-1,3]/255
-
-def boxing_player_v_x(obs):
-    obs = np.array(obs)
-    return obs[-1,0]-obs[-2,0]
-
-def boxing_player_v_y(obs):
-    obs = np.array(obs)
-    return obs[-1,1]-obs[-2,1]
-
-def boxing_enemy_v_x(obs):
-    obs = np.array(obs)
-    return obs[-1,2]-obs[-2,2]
-
-def boxing_enemy_v_y(obs):
-    obs = np.array(obs)
-    return obs[-1,3]-obs[-2,3]
+    return get_concept
 
 
-### Pong Concepts
-def pong_paddle_y(obs):
-    obs = np.array(obs)
-    return (obs[-1,1]-128)/255
-
-def pong_ball_x(obs):
-    obs = np.array(obs)
-    return (obs[-1,2]-128)/255
-
-def pong_ball_y(obs):
-    obs = np.array(obs)
-    return (obs[-1,3]-128)/255
-
-def pong_ball_v_x(obs):
-    obs = np.array(obs)
-    return (obs[-1,2]-obs[-2,2])/2
-
-def pong_ball_v_y(obs):
-    obs = np.array(obs)
-    return (obs[-1,3]-obs[-2,3])/2
-
-def pong_enemy_y(obs):
-    obs = np.array(obs)
-    return (obs[-1,5]-128)/255
-
-def pong_enemy_v_y(obs):
-    obs = np.array(obs)
-    return (obs[-2,5]-obs[-1,5])/2
+### Minigrid Concepts
 
 def obj_row(obs,i,obj_id):
     obs = obs[:147].reshape((3,7,7))[0,:,:]
@@ -281,6 +87,106 @@ def get_all_mini_grid_binary_concepts():
         for j in range(val_ranges[i][0],val_ranges[i][1]+1):
             all_concepts.append(lambda obs,i=i,j=j: int(obs[i] == j))
     return all_concepts
+
+def get_all_mini_grid_names():
+    all_concepts = []
+    val_ranges = [(1,5),(1,5),(1,4),(1,5),(1,5),(1,5),(1,5),(0,1),(0,1),(0,1),(0,1),(0,1)]
+    vec = ["X Pos","Y Pos","Dir","Key X","Key Y","Door X","Door Y","Door Open","Right","Left","Down","Up"]
+
+    for i in range(12):
+        for j in range(val_ranges[i][0],val_ranges[i][1]+1):
+            all_concepts.append(vec[i])
+    return all_concepts
+
+
+### Boxing Concepts
+def boxing_player_x(obs):
+    obs = np.array(obs)
+    return obs[-1,0]/255
+
+def boxing_player_y(obs):
+    obs = np.array(obs)
+    return obs[-1,1]/255
+
+def boxing_enemy_x(obs):
+    obs = np.array(obs)
+    return obs[-1,2]/255
+
+def boxing_enemy_y(obs):
+    obs = np.array(obs)
+    return obs[-1,3]/255
+
+def boxing_player_v_x(obs):
+    obs = np.array(obs)
+    return obs[-1,0]-obs[-2,0]
+
+def boxing_player_v_y(obs):
+    obs = np.array(obs)
+    return obs[-1,1]-obs[-2,1]
+
+def boxing_enemy_v_x(obs):
+    obs = np.array(obs)
+    return obs[-1,2]-obs[-2,2]
+
+def boxing_enemy_v_y(obs):
+    obs = np.array(obs)
+    return obs[-1,3]-obs[-2,3]
+
+def boxing_player_enemy_diff_x(obs):
+    return obs[-1,0]-obs[-1,2]
+
+def boxing_player_enemy_diff_y(obs):
+    return obs[-1,1]-obs[-1,3]
+
+
+### Pong Concepts
+def pong_paddle_y(obs):
+    obs = np.array(obs)
+    return (obs[-1,1]-128)/255
+
+def pong_ball_x(obs):
+    obs = np.array(obs)
+    return (obs[-1,2]-128)/255
+
+def pong_ball_y(obs):
+    obs = np.array(obs)
+    return (obs[-1,3]-128)/255
+
+def pong_paddle_x_diff(obs):
+    obs = np.array(obs)
+    return (obs[-1,0]-obs[-1,2])/255
+
+def pong_paddle_y_diff(obs):
+    obs = np.array(obs)
+    return (obs[-1,1]-obs[-1,3])/255
+
+def pong_enemy_y_diff(obs):
+    obs = np.array(obs)
+    return (obs[-1,1]-obs[-1,5])/255
+
+def pong_ball_v_x(obs):
+    obs = np.array(obs)
+    return np.clip(obs[-1,2]-obs[-2,2],-4,4)/4
+
+def pong_ball_v_y(obs):
+    obs = np.array(obs)
+    return np.clip(obs[-1,3]-obs[-2,3],-4,4)/4
+
+def pong_enemy_y(obs):
+    obs = np.array(obs)
+    return (obs[-1,5]-128)/255
+
+def pong_enemy_v_y(obs):
+    obs = np.array(obs)
+    return np.clip(obs[-2,5]-obs[-1,5],-4,4)/4
+
+def pong_enemy_ball_x_diff(obs):
+    obs = np.array(obs)
+    return (obs[-1,4]-obs[-1,2])/255
+
+def pong_enemy_ball_y_diff(obs):
+    obs = np.array(obs)
+    return (obs[-1,5]-obs[-1,3])/255
 
 
 def binarize_function(func,threshold):
@@ -328,40 +234,40 @@ def get_concepts(environment_string,concept_source,seed):
         human_selected['tree_{}'.format(num_nodes)] = get_all_tree_concepts(num_layers)
         human_selected_binary['tree_{}'.format(num_nodes)] = get_all_tree_concepts(num_layers)
 
-    human_selected['mimic'] = [mimic_concept(i) for i in range(47)]
     human_selected['cart_pole'] = [get_cart_pole_concept(i) for i in range(4)]
-    human_selected['boxing'] = [boxing_player_x,boxing_player_y,boxing_enemy_x,boxing_enemy_y,boxing_player_v_x,boxing_player_v_y,boxing_enemy_v_x,boxing_enemy_v_y]    
-    human_selected['pong'] = [pong_paddle_y,pong_ball_x,pong_ball_y,pong_ball_v_x,pong_ball_v_y,pong_enemy_y,pong_enemy_v_y]
-    human_selected['mini_grid'] = get_all_mini_grid_concepts()
-    human_selected_binary['mini_grid'] = get_all_mini_grid_binary_concepts()
-
-    full_lst = []
-    all_quantiles = np.load("../../data/mimic/quantiles.npy")
-    for i in range(47):
-        for q in all_quantiles[i]:
-            full_lst.append(less_function(mimic_concept(i),q))
-    human_selected_binary['mimic'] = full_lst 
-    
-    
     full_lst = []
     for threshold in [-0.02,0,0.02]:
         full_lst += binarize_function_list( [get_cart_pole_concept(i) for i in range(4)],[threshold for i in range(4)])
     human_selected_binary['cart_pole'] = full_lst
 
-    full_lst = []
-    for threshold in [-0.5,0,0.5]:
-        full_lst += binarize_function_list([boxing_player_x,boxing_player_y,boxing_enemy_x,boxing_enemy_y,boxing_player_v_x,boxing_player_v_y,boxing_enemy_v_x,boxing_enemy_v_y],[threshold for i in range(8)])
-    human_selected_binary['boxing'] = full_lst
+    human_selected['mini_grid'] = get_all_mini_grid_concepts()
+    human_selected_binary['mini_grid'] = get_all_mini_grid_binary_concepts()    
     
+    human_selected['glucose'] = [lambda obs,i=i: obs[i] for i in range(1)]
+    human_selected_binary['glucose'] = [] 
+    for func in human_selected['glucose'] :
+        for threshold in [0,0.25,0.5,0.75,1,1.25,1.5,1.75,2,2.25,2.5,2.75,3]:
+            human_selected_binary['glucose'].append(less_function(func,threshold))
+
+    human_selected['pong'] = [pong_paddle_y,pong_ball_x,pong_ball_y,pong_ball_v_x,pong_ball_v_y,pong_enemy_y,pong_enemy_v_y,pong_paddle_x_diff,pong_paddle_y_diff,pong_enemy_y_diff,pong_enemy_ball_x_diff,pong_enemy_ball_y_diff]
     full_lst = []
-    for threshold in [-0.5,0,0.5]:
-        full_lst += binarize_function_list([pong_paddle_y,pong_ball_x,pong_ball_y,pong_ball_v_x,pong_ball_v_y,pong_enemy_y,pong_enemy_v_y],[threshold for i in range(7)])
+    for threshold in [-0.9,-0.8,-0.7,-0.6,-0.5,-0.4,-0.3,-0.2,-0.1,0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9]:
+        for func in human_selected['pong']:
+            full_lst.append(less_function(func,threshold))
     human_selected_binary['pong'] = full_lst
+
+    human_selected['boxing'] = [boxing_player_x,boxing_player_y,boxing_enemy_x,boxing_enemy_y,boxing_player_v_x,boxing_player_v_y,boxing_enemy_v_x,boxing_enemy_v_y,boxing_player_enemy_diff_x,boxing_player_enemy_diff_y]    
+    full_lst = []
+    for threshold in [-0.9,-0.8,-0.7,-0.6,-0.5,-0.4,-0.3,-0.2,-0.1,0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9]:
+        for func in human_selected['boxing']:
+            full_lst.append(less_function(func,threshold))
+    human_selected_binary['boxing'] = full_lst
 
     if concept_source == 'human_selected':
         return human_selected[environment_string]
     elif concept_source == 'human_selected_binary':
         return human_selected_binary[environment_string]
+
 
 def inaccurate_concepts_binary(concept_function,accuracy,seed):
     """Creates a new concept function that only agrees with the

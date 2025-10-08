@@ -2,7 +2,6 @@ import numpy as np
 import gurobipy as gp
 from gurobipy import Model, GRB, quicksum
 import scipy
-import gymnasium.spaces as spaces
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
@@ -10,15 +9,8 @@ from skopt import Optimizer
 from copy import deepcopy
 import random
 from math import ceil
-from io import StringIO
-from contextlib import redirect_stderr
-stderr_buffer = StringIO()
-with redirect_stderr(stderr_buffer):
-    from stable_baselines3.common.vec_env import SubprocVecEnv, VecFrameStack, DummyVecEnv
-from concept_abstraction.env_utils import rollout_q_estimates_td, rollout_pi_estimates
-from concept_abstraction.concept_bank import inaccurate_concepts_continuous
-from concept_abstraction.training import train_two_stage_ppo_model, evaluate_model, train_ppo_model
-from concept_abstraction.environments import InfoTransformWrapper, GymnasiumWrapper, get_environment
+from concept_abstraction.training import evaluate_model, train_ppo_model
+from concept_abstraction.environments import get_environment
 import torch
 from itertools import combinations
 from collections import defaultdict, Counter 
@@ -798,44 +790,88 @@ def lp_selection_supervised_imperfect(train_matrix,labels,num_concepts,accuracie
     return selected_elements
 
 
-def ucb(mu_hat,N,n,c=0.1):
-    """UCB upper bound
+def iterative_selection(env,gold_model,environment_string,concept_list,iterations,selections_per_round,additional_info,seed,max_steps=100,training_timesteps=100_000):
+    """Iterative select concepts based on performance, and add on more concepts
     
     Arguments:
-        mu_hat: Float, Mean seen so far
-        N: Integer, total number of trials
-        n: Total triasl with arm i
-        c: Exploration constant, default 0.1
-    
-    Returns: Float, upper bound on \mu"""
-    if n == 0:
-        return 1
-    return mu_hat + c*np.sqrt(np.log(N)/n)
+        current_concepts: List of integers; which concepts we start from
+        iterations: Number of iterations to run
+        selections_per_round: Integer, how many concept to select each round
 
-def bayesian_iterative_selection(env,environment_string,seed,concept_list,num_iterations,num_concepts_selected,additional_info,training_timesteps=100_000):
-    def run(concept_idx):
-        env, eval_env, additional_info = get_environment(environment_string,[concept_list[i] for i in concept_idx],seed)
-        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
-        reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
-        return reward
+    Returns: Tuple (model, list of rewards from each round)"""
+    current_concepts = []
+    concepts_by_iteration = []
+    reward_by_iteration = []
+    last_model = None 
     
-    n_concepts = len(concept_list)
-    space = [(0.0, 1.0)] * n_concepts
-    opt = Optimizer(space, base_estimator="GP")  # Gaussian Process
-    reward_list = []
-    concepts_selected = []
+    for _ in range(iterations):
+        print("On iteration {}".format(_))
+        obs, info = env.reset()
+        total_steps = 0
 
-    for iter in range(num_iterations):
-        x = opt.ask()
-        concept_idx = np.argsort(x)[-num_concepts_selected:]
-        concept_idx = sorted(concept_idx)
-        reward = run(concept_idx)
-        
-        opt.tell(x, -reward)
-        reward_list.append(reward)
-        concepts_selected.append([int(i) for i in concept_idx])
-    
-    return reward_list, concepts_selected
+        X, y = [], []
+
+        while total_steps < max_steps:
+            actions, _ = gold_model.predict(obs)
+            if environment_string == "mimic":
+                num_envs = 1
+            else:
+                num_envs = env.num_envs
+            
+            # if last_model is not None:
+            #     if np.random.random() < 0.05:
+            #         actions = [env.action_space.sample() for i in range(env.num_envs)]
+            #     else:
+            #         actions, _ = last_model.predict(obs[:,current_concepts])
+
+            obs_torch = torch.as_tensor(obs, dtype=torch.float32)
+            obs_torch = obs_torch.to(gold_model.device)
+            if environment_string == "mimic":
+                obs_torch = obs_torch.reshape((1,obs_torch.shape[0]))
+            with torch.no_grad():
+                dist = gold_model.policy.get_distribution(obs_torch)
+            probs_gold = dist.distribution.probs.cpu().numpy()
+            
+            if environment_string == "mimic":
+                imperfect_obs = [[c(additional_info['centers'][info['observation']]) for c in concept_list]]
+            else:
+                imperfect_obs = [[c(inf['observation']) for c in concept_list] for inf in info]
+            X.append(imperfect_obs)
+            y.append(probs_gold)
+            obs, _, terminated, truncated, info = env.step(actions)
+            if environment_string == "mimic" and (terminated or truncated):
+                env.reset()
+
+            total_steps += 1
+        X = np.vstack(X)
+        y = np.vstack(y)
+        if current_concepts == []:
+            score_by_concept = []
+            for i in range(X.shape[1]):
+                mask1 = X[:, i] == 1
+                mask0 = ~mask1 
+                group1 = y[mask1]
+                group0 = y[mask0]
+                diffs = np.abs(group1[:, None, :] - group0[None, :, :]).sum(axis=2)
+                score_by_concept.append(diffs.sum())
+            score_by_concept = np.array(score_by_concept)
+            topk_idx = np.argpartition(-score_by_concept, selections_per_round)[:selections_per_round]
+            topk_idx = topk_idx[np.argsort(-score_by_concept[topk_idx])]
+            current_concepts = sorted(topk_idx)
+        else:
+            scores = [(i,clustered_cross_group_l1(X, y, current_concepts, split_col=i)) for i in range(len(concept_list)) if i not in current_concepts]
+            scores = sorted(scores,key=lambda k: k[1],reverse=True)
+            scores = scores[:selections_per_round]
+            print("Scores are {}".format(scores))
+            current_concepts += [i[0] for i in scores]
+        concepts_by_iteration.append(deepcopy(current_concepts))
+
+        concept_env, concept_eval_env, additional_info = get_environment(environment_string,[concept_list[i] for i in current_concepts],seed)
+        last_model = train_ppo_model(concept_env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
+        reward = evaluate_model(environment_string,concept_eval_env,additional_info,last_model,seed)
+        reward_by_iteration.append(reward)
+    concepts_by_iteration = [np.array(i).tolist() for i in concepts_by_iteration]
+    return reward_by_iteration, concepts_by_iteration
 
 
 def clustered_cross_group_l1(X, y, current_concepts, split_col=3):
@@ -875,7 +911,34 @@ def clustered_cross_group_l1(X, y, current_concepts, split_col=3):
         total_weighted_sum += pair_mean * num_pairs
         total_pairs += num_pairs
 
-    return total_weighted_sum / total_pairs if total_pairs > 0 else np.nan
+    return total_weighted_sum / total_pairs if total_pairs > 0 else 0
+
+
+def bayesian_iterative_selection(env,environment_string,seed,concept_list,num_iterations,num_concepts_selected,additional_info,training_timesteps=100_000):
+    def run(concept_idx):
+        env, eval_env, additional_info = get_environment(environment_string,[concept_list[i] for i in concept_idx],seed)
+        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
+        reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
+        return reward
+    
+    n_concepts = len(concept_list)
+    space = [(0.0, 1.0)] * n_concepts
+    opt = Optimizer(space, base_estimator="GP")  # Gaussian Process
+    reward_list = []
+    concepts_selected = []
+
+    for iter in range(num_iterations):
+        x = opt.ask()
+        concept_idx = np.argsort(x)[-num_concepts_selected:]
+        concept_idx = sorted(concept_idx)
+        reward = run(concept_idx)
+        
+        opt.tell(x, -reward)
+        reward_list.append(reward)
+        concepts_selected.append([int(i) for i in concept_idx])
+    
+    return reward_list, concepts_selected
+
 
 def greedy_selection_supervised(train_X,train_Y,num_concepts_selected):
     entropy_by_concept = []
@@ -930,85 +993,4 @@ def iterative_selection_supervised(train_X,train_Y,num_concepts_selected):
             scores = scores[:selections_per_round]
             current_concepts += [i[0] for i in scores]
     return current_concepts
-    
-
-def iterative_selection(env,gold_model,environment_string,concept_list,iterations,selections_per_round,additional_info,seed,max_steps=100,training_timesteps=100_000):
-    """Iterative select concepts based on performance, and add on more concepts
-    
-    Arguments:
-        current_concepts: List of integers; which concepts we start from
-        iterations: Number of iterations to run
-        selections_per_round: Integer, how many concept to select each round
-
-    Returns: Tuple (model, list of rewards from each round)"""
-    current_concepts = []
-    concepts_by_iteration = []
-    reward_by_iteration = []
-    last_model = None 
-    
-    for _ in range(iterations):
-        obs, info = env.reset()
-        total_steps = 0
-
-        X, y = [], []
-
-        while total_steps < max_steps:
-            actions, _ = gold_model.predict(obs)
-            if environment_string == "mimic":
-                num_envs = 1
-            else:
-                num_envs = env.num_envs
-            
-            if last_model is not None:
-                actions, _ = last_model.predict(obs[:,current_concepts])
-
-            obs_torch = torch.as_tensor(obs, dtype=torch.float32)
-            obs_torch = obs_torch.to(gold_model.device)
-            if environment_string == "mimic":
-                obs_torch = obs_torch.reshape((1,obs_torch.shape[0]))
-            with torch.no_grad():
-                dist = gold_model.policy.get_distribution(obs_torch)
-            probs_gold = dist.distribution.probs.cpu().numpy()
-            
-            if environment_string == "mimic":
-                imperfect_obs = [[c(additional_info['centers'][info['observation']]) for c in concept_list]]
-            else:
-                imperfect_obs = [[c(inf['observation']) for c in concept_list] for inf in info]
-            X.append(imperfect_obs)
-            y.append(probs_gold)
-            obs, _, terminated, truncated, info = env.step(actions)
-            if environment_string == "mimic" and (terminated or truncated):
-                env.reset()
-
-            total_steps += 1
-        
-        X = np.vstack(X)
-        y = np.vstack(y)
-
-        if current_concepts == []:
-            score_by_concept = []
-            for i in range(X.shape[1]):
-                mask1 = X[:, i] == 1
-                mask0 = ~mask1 
-                group1 = y[mask1]
-                group0 = y[mask0]
-                diffs = np.abs(group1[:, None, :] - group0[None, :, :]).sum(axis=2)
-                score_by_concept.append(diffs.sum())
-            score_by_concept = np.array(score_by_concept)
-            topk_idx = np.argpartition(-score_by_concept, selections_per_round)[:selections_per_round]
-            topk_idx = topk_idx[np.argsort(-score_by_concept[topk_idx])]
-            current_concepts = sorted(topk_idx)
-        else:
-            scores = [(i,clustered_cross_group_l1(X, y, current_concepts, split_col=i)) for i in range(len(concept_list)) if i not in current_concepts]
-            scores = sorted(scores,key=lambda k: k[1],reverse=True)
-            scores = scores[:selections_per_round]
-            current_concepts += [i[0] for i in scores]
-        concepts_by_iteration.append(deepcopy(current_concepts))
-
-        concept_env, concept_eval_env, additional_info = get_environment(environment_string,[concept_list[i] for i in current_concepts],seed)
-        last_model = train_ppo_model(concept_env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
-        reward = evaluate_model(environment_string,concept_eval_env,additional_info,last_model,seed)
-        reward_by_iteration.append(reward)
-    concepts_by_iteration = [np.array(i).tolist() for i in concepts_by_iteration]
-    return reward_by_iteration, concepts_by_iteration
     

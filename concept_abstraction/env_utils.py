@@ -31,7 +31,6 @@ def get_average_reward(vec_env, model, max_steps=50000,max_steps_per=5000):
     while total_steps < max_steps:
         actions, _ = model.predict(obs)
         obs, rewards, terminated, truncated, infos = vec_env.step(actions)
-            
         rewards_accum += rewards
         total_steps += num_envs 
         steps_per += 1

@@ -21,8 +21,8 @@ import os
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 os.environ["GRB_LICENSE_FILE"] = "/usr0/home/naveenr/gurobi.lic"
 os.environ['MKL_THREADING_LAYER'] = "GNU"
+# -
 
-# +
 from concept_abstraction.training import *
 from concept_abstraction.selection import *
 from concept_abstraction.concept_bank import *
@@ -33,7 +33,7 @@ from concept_abstraction.environments import ConceptEnv
 from concept_abstraction.mimic import get_mimic_eval_info
 from sklearn.tree import DecisionTreeClassifier, export_text
 from sklearn.cluster import KMeans
-
+import wandb
 import sys 
 import argparse
 import secrets
@@ -43,7 +43,6 @@ import os
 from stable_baselines3 import PPO
 import pickle
 import resource
-# -
 
 torch.cuda.set_per_process_memory_fraction(0.5)
 torch.set_num_threads(1)
@@ -57,10 +56,10 @@ if is_main:
     if is_jupyter: 
         # Basics 
         seed        = 42
-        environment_string = "mimic"
-        gold_timesteps = 250_000
-        training_timesteps = 250_000
-        num_concepts_selected = 40
+        environment_string = "glucose"
+        gold_timesteps = 500_000
+        training_timesteps = 1
+        num_concepts_selected = 1
         selection_function = "q_value"
         # Experiment #1 & #2
         run_basic = True
@@ -69,7 +68,7 @@ if is_main:
         run_imperfect=False
         run_intervention=False
         # Experiment #3
-        cbm_accuracy_by_concept = [0.9 for i in range(24)] 
+        cbm_accuracy_by_concept = None 
         intervention_probability = 0
         intervention_accuracy_by_concept = None 
         cbm_std_by_concept = None 
@@ -184,7 +183,7 @@ if is_main:
         groundtruth_model = PPO.load(model_name)
         additional_info['subset_concepts'] = get_concepts(environment_string,"human_selected",seed)
     else:
-        if "cyclic" in environment_string or "tree" in environment_string or "mimic" in environment_string:
+        if "cyclic" in environment_string or "tree" in environment_string or "glucose" in environment_string:
             policy = "MlpPolicy"
         else:
             policy = "CnnPolicy"
@@ -199,10 +198,75 @@ if is_main:
     results['ground_truth'] = {'reward':groundtruth_reward}
     print("Basic:",results['ground_truth']['reward'])
 
+# ### Experimental
+
+policy = "MlpPolicy"
+time_per_episode = 250
+num_episodes = 25
+train_ppo_model(ground_truth_env,environment_string,total_timesteps=time_per_episode*num_episodes,policy=policy)
+
+policy = "MlpPolicy"
+time_per_episode = 250
+num_episodes = 25
+model = train_ppo_model(ground_truth_env,environment_string,total_timesteps=time_per_episode*num_episodes,policy=policy,seed=45)
+
+evaluate_model(environment_string,ground_truth_gym_env,additional_info,model,seed)
+
+evaluate_model(environment_string,ground_truth_gym_env,additional_info,model,seed+1)
+
+
+def lambda_to_model(func):
+    class A:
+        def predict(self,obs):
+            return [func(i) for i in obs], None 
+    return A()
+
+
+evaluate_model(environment_string,ground_truth_gym_env,additional_info,lambda_to_model(lambda s: 0),seed)
+
+evaluate_model(environment_string,ground_truth_gym_env,additional_info,lambda_to_model(bg_control_policy),seed)
+
+
+def test_glucose(model):
+    env = gym.make("simglucose/adolescent2-custom-v0", render_mode='human')
+    all_rewards, total_steps = [], []
+    
+    for episode in range(10):
+        obs, info = env.reset()
+        discount = 1
+        total_reward, steps = 0, 0
+        done = False
+        
+        while not done:
+            action = model(obs)
+            obs, reward, terminated, truncated, info = env.step(action)
+            obs = obs[0]
+            done = terminated or truncated 
+            total_reward += reward * discount**steps
+            steps += 1
+        
+        all_rewards.append(total_reward)
+        total_steps.append(steps)
+
+    print(np.mean(all_rewards), np.mean(total_steps))
+    env.close()  # 👈 explicit cleanup
+
+
+
+test_glucose(lambda m: model.predict([[m]])[0][0][0])
+
+test_glucose(bg_control_policy)
+
+test_glucose(lambda m: 30)
+
+test_glucose(lambda m: 0)
+
 # ### Basic Comparison
 
+q_estimates = rollout_q_estimates_td(groundtruth_model,ground_truth_gym_env,concept_list,total_timesteps=20_000)
+
 if is_main:    
-    model_name = "../../results/q_estimates/env={}_training={}_seed={}_selection={}_source={}.pkl".format(environment_string,training_timesteps,seed,selection_function,concept_source)
+    model_name = "../../results/q_estimates/env={}_training={}_seed={}_selection={}_source={}.pkl".format(environment_string,gold_timesteps,seed,selection_function,concept_source)
     results['basic_comparison'] = {}
     if os.path.exists(model_name):
         q_estimates = pickle.load(open(model_name,"rb"))
@@ -213,6 +277,8 @@ if is_main:
                             for concept in concept_list]
 
                 q_estimates = rollout_q_estimates_td(groundtruth_model,GymnasiumWrapper(DummyVecEnv([lambda: ground_truth_gym_env])),modified_concepts,learning_rate=1e-2,mimic=True,total_timesteps=10000,final_training=0)
+            elif environment_string == "glucose":
+                q_estimates = rollout_q_estimates_td(groundtruth_model,ground_truth_gym_env,concept_list,total_timesteps=20_000)
             else:
                 q_estimates = rollout_q_estimates_td(groundtruth_model,ground_truth_gym_env,concept_list)
         elif selection_function == "policy":
@@ -224,6 +290,136 @@ if is_main:
             else:
                 q_estimates = rollout_pi_estimates(groundtruth_model,ground_truth_gym_env,concept_list)
         pickle.dump(q_estimates,open(model_name,"wb"))
+
+
+
+all_rewards=  []
+total_steps = []
+per_rewards = []
+for episode in range(10):
+    env = gymnasium.make("simglucose/adolescent2-custom-v0", render_mode="human")
+    obs = env.reset()
+    discount = 0.99
+
+    total_reward = 0
+    steps = 0
+
+    done = False
+    while not done:
+        action =0  # replace with your agent's action
+        obs, reward, terminated, truncated, info = env.step(action)
+        done = terminated or truncated
+        total_reward += reward*discount**steps
+        per_rewards.append(reward)
+        steps += 1
+    all_rewards.append(total_reward)
+    total_steps.append(int(steps))
+print(np.mean(all_rewards),np.mean(total_steps))
+env.render()
+
+
+all_rewards=  []
+total_steps = []
+for episode in range(10):
+    env = gymnasium.make("simglucose/adolescent2-custom-v0", render_mode="human")
+    obs = env.reset()
+    discount = 0.99
+
+    total_reward = 0
+    steps = 0
+
+    done = False
+    while not done:
+        action = bg_control_policy(obs[0])  # replace with your agent's action
+        obs, reward, terminated, truncated, info = env.step(action)
+        done = terminated or truncated
+        reward = float(reward)
+        if not done:  
+            total_reward += reward*discount**steps
+            steps += 1
+    all_rewards.append(total_reward)
+    total_steps.append(int(steps))
+print(np.mean(all_rewards),np.mean(total_steps))
+env.render()
+
+
+
+
+# +
+# ppo_simglucose_wandb.py
+
+import gymnasium
+import numpy as np
+import wandb
+from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.callbacks import BaseCallback
+
+# ------------------------------
+# 1️⃣ Initialize wandb
+# ------------------------------
+
+
+# -
+
+
+
+
+
+all_rewards=  []
+total_steps = []
+all_actions = []
+for episode in range(10):
+    env = gymnasium.make("simglucose/adolescent2-custom-v0", render_mode="human")
+    obs, info = env.reset()
+    discount = 0.99
+
+    total_reward = 0
+    steps = 0
+
+    done = False
+    while not done:
+        action = model.predict(obs)[0][0]  # replace with your agent's action
+        all_actions.append(action)
+        obs, reward, terminated, truncated, info = env.step(action)
+        done = terminated or truncated
+        reward = float(reward)
+        if not done:  
+            total_reward += reward*discount**steps
+            steps += 1
+    all_rewards.append(total_reward)
+    total_steps.append(int(steps))
+print(np.mean(all_rewards),np.mean(total_steps))
+env.render()
+
+
+all_rewards=  []
+total_steps = []
+all_actions = []
+for episode in range(10):
+    env = gymnasium.make("simglucose/adolescent2-custom-v0", render_mode="human")
+    obs, info = env.reset()
+    discount = 0.99
+
+    total_reward = 0
+    steps = 0
+
+    done = False
+    while not done:
+        action = fixed_dose_policy(obs*150)  # replace with your agent's action
+        all_actions.append(action)
+        obs, reward, terminated, truncated, info = env.step(action)
+        done = terminated or truncated
+        reward = float(reward)
+        if not done:  
+            total_reward += reward*discount**steps
+            steps += 1
+    all_rewards.append(total_reward)
+    total_steps.append(int(steps))
+print(np.mean(all_rewards),np.mean(total_steps))
+env.render()
+
 
 if is_main and run_basic:
     # Train a random policy
@@ -254,32 +450,6 @@ if is_main and run_basic:
     greedy_selection_reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
     results['basic_comparison']['greedy'] = {'concepts': greedy_idx, 'reward':greedy_selection_reward}
     print("Greedy:",results['basic_comparison']['greedy']['reward'])
-
-
-if is_main and run_basic and environment_string == "mimic":
-    from sklearn.tree import DecisionTreeClassifier
-    from sklearn.cluster import KMeans
-
-    # Example: use unsupervised cluster labels as pseudo-target
-    labels = KMeans(n_clusters=5).fit_predict(additional_info['centers'])
-    tree = DecisionTreeClassifier(max_leaf_nodes=21)
-    tree.fit(additional_info['centers'], labels)
-
-    # Extract top 20 splits
-    features = tree.tree_.feature
-    thresholds = tree.tree_.threshold
-
-    functions = []
-    for idx in np.where(features >= 0)[0][:num_concepts_selected]:
-        j, t = features[idx], thresholds[idx]
-        functions.append(lambda x, j=j, t=t: int(x[j] > t))
-    subset_concept = functions
-    env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-    
-    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
-    decision_tree_selection_reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
-    results['basic_comparison']['decision_tree'] = {'concepts': [], 'reward':decision_tree_selection_reward}
-    print("Decision Tree:",results['basic_comparison']['decision_tree']['reward'])
 
 
 if is_main and run_basic:

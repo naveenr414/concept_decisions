@@ -4,3 +4,4 @@ results/
 data/
 runs/
 models/
+scripts/notebooks/wandb
