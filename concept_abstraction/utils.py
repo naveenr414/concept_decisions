@@ -62,7 +62,7 @@ def get_results_matching_parameters(folder_name,result_name,parameters):
 
     for file_name in all_results:
         f = open(file_name)
-        first_few = f.read(2000)
+        first_few = f.read(3000)
         first_few = first_few.split("}")[0]+"}}"
         try:
             load_file = json.loads(first_few)

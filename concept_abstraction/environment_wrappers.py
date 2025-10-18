@@ -1,6 +1,7 @@
 import gymnasium as gym
 import numpy as np
 from concept_abstraction.utils import one_hot_state
+import torch 
 
 class ConceptEnv(gym.Env):
     """Build a new concept-based environment"""
@@ -123,7 +124,7 @@ class ObservationSubsetWrapper(gym.ObservationWrapper):
 
 
 class OptimizedConceptWrapper(gym.ObservationWrapper):
-    def __init__(self, env, fast_predictor, observation_space, get_raw_state, 
+    def __init__(self, env, fast_predictor, observation_space, get_raw_state, concept_idx,
                  use_info_obs=False, obs_function=lambda env, obs, info: obs):
         super().__init__(env)
         self.observation_space = observation_space
@@ -131,6 +132,7 @@ class OptimizedConceptWrapper(gym.ObservationWrapper):
         self.get_raw_state = get_raw_state
         self.use_info_obs = use_info_obs
         self.obs_function = obs_function
+        self.concept_idx = concept_idx
         
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
@@ -156,10 +158,10 @@ class OptimizedConceptWrapper(gym.ObservationWrapper):
             return self.get_raw_state(self, obs)
         
         processed_obs = self.obs_function(self, obs, info)
-        obs_array = np.array(processed_obs, dtype=np.float32)
+        obs_array = torch.Tensor([processed_obs]).cuda()
         
         # SINGLE MODEL CALL instead of 24 separate calls
-        predictions = self.fast_predictor.predict_all_concepts(obs_array, return_float=False)
+        predictions = self.fast_predictor(obs_array)[0,self.concept_idx]
         
         # Convert GPU tensor to CPU list
         if hasattr(predictions, 'cpu'):

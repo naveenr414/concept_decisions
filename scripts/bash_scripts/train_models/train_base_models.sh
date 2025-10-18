@@ -24,14 +24,14 @@ declare -A training_timesteps=(
   [tree_31]=25000
   [cart_pole]=1000000
   [mini_grid]=250000
-  [glucose]=250000
+  [glucose]=100000
   [pong]=4000000
   [boxing]=10000000
 )
 
 for seed in 42
 do 
-  for lr in 0.0006
+  for lr in 0.0001 # 0.0006
   do 
     env=glucose
     training=${training_timesteps[$env]}

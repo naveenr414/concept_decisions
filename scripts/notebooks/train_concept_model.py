@@ -26,24 +26,20 @@ is_jupyter = 'ipykernel' in sys.modules
 is_main = __name__ == "__main__"
 
 if is_main:
-    if is_jupyter: 
-        # Basics 
-        seed        = 42
-        environment_string = "glucose"
-        gold_timesteps = 500_000
-    else:
-        parser = argparse.ArgumentParser()
-        parser.add_argument('--seed', help='Random Seed', type=int, default=42)
-        parser.add_argument('--environment_string', help='Which environment to create', type=str, default="tree")
-        parser.add_argument('--training_timesteps', help='Number of training timesteps without concepts', type=int, default=10000)
-        parser.add_argument('--concept_source', help='Which environment to create', type=str, default="human_selected_binary")
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--seed', help='Random Seed', type=int, default=42)
+    parser.add_argument('--environment_string', help='Which environment to create', type=str, default="tree")
+    parser.add_argument('--training_timesteps', help='Number of training timesteps without concepts', type=int, default=10000)
+    parser.add_argument('--concept_source', help='Which environment to create', type=str, default="human_selected_binary")
+    parser.add_argument('--learning_rate', help='Which environment to create', type=float, default=0)
 
-        args = parser.parse_args()
+    args = parser.parse_args()
 
-        seed = args.seed
-        environment_string = args.environment_string
-        training_timesteps = args.training_timesteps
-        concept_source = args.concept_source
+    seed = args.seed
+    environment_string = args.environment_string
+    training_timesteps = args.training_timesteps
+    concept_source = args.concept_source
+    learning_rate = args.learning_rate 
 
 if is_main:
         results = {}
@@ -67,6 +63,10 @@ if is_main:
 
 if is_main:
     env, eval_env, additional_info = get_environment(environment_string,concept_list,seed)    
-    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_all_concepts".format(environment_string))
+    custom_params = {}
+    if learning_rate > 0:
+        custom_params['learning_rate'] = learning_rate
+
+    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_all_concepts".format(environment_string),override=custom_params)
     random_selection_reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
     print("Random Selection:",random_selection_reward)

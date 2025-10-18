@@ -309,8 +309,14 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
         seen = set()
         for a in unique_actions:
             relevant_idx = np.where(actions == a)[0]
-            for low_idx in relevant_idx:
-                for high_idx in relevant_idx:
+            
+            if len(relevant_idx) <= 500:
+                relevant_low = relevant_high = relevant_idx
+            else:
+                relevant_low = np.argsort(np.abs(q_values))[:500]
+                relevant_high = np.argsort(np.abs(q_values))[-500:]
+            for low_idx in relevant_low:
+                for high_idx in relevant_high:
                     diff = abs(q_values[low_idx] - q_values[high_idx])
                     # tuple of differing concept indices
                     diffs = tuple(i for i, (l, h) in enumerate(zip(discretized_X[low_idx], discretized_X[high_idx])) if l != h)
@@ -387,8 +393,13 @@ def multiple_lp_selection(env,concept_list,num_concepts_selected,selection_funct
         seen = set()
         for a in unique_actions:
             relevant_idx = np.where(actions == a)[0]
-            for low_idx in relevant_idx:
-                for high_idx in relevant_idx:
+            if len(relevant_idx) <= 500:
+                relevant_low = relevant_high = relevant_idx
+            else:
+                relevant_low = np.argsort(np.abs(q_values))[:500]
+                relevant_high = np.argsort(np.abs(q_values))[-500:]
+            for low_idx in relevant_low:
+                for high_idx in relevant_high:
                     diff = abs(q_values[low_idx] - q_values[high_idx])
                     # tuple of differing concept indices
                     diffs = tuple(i for i, (l, h) in enumerate(zip(discretized_X[low_idx], discretized_X[high_idx])) if l != h)
@@ -397,7 +408,6 @@ def multiple_lp_selection(env,concept_list,num_concepts_selected,selection_funct
                         seen.add(tup)
                         final_vals.append(tup)
         final_vals = sorted(final_vals,reverse=True)
-        # TODO: Remove this
         final_vals = final_vals[:10000]
         idx, _ = max_prefix_gurobi(final_vals,num_concepts_selected,weighted=True,in_order=False)
         concepts = [concept_list[i] for i in idx]
@@ -523,11 +533,11 @@ def imperfect_lp_selection(env,concept_list,q_estimates,selection_function,targe
         for a in unique_actions:
             relevant_q_estimates = q_values[actions == a]
             relevant_threshold = np.argsort(relevant_q_estimates)
-            for low_idx in relevant_threshold[:1024]:
-                for high_idx in relevant_threshold[-1024:]:
+            for low_idx in relevant_threshold[:500]:
+                for high_idx in relevant_threshold[-500:]:
                     if abs(relevant_q_estimates[low_idx]-relevant_q_estimates[high_idx]) > target_abstraction:
                         tup = (abs(relevant_q_estimates[low_idx]-relevant_q_estimates[high_idx]),[i for i in range(len(concept_list)) if discretized_X[low_idx][i] != discretized_X[high_idx][i]])
-                        if tup[-1] == []:
+                        if tup[-1] == [] or len(final_vals) > 10_000:
                             continue 
                         final_vals.append(tup[-1])
         if len(final_vals) > 10_000:
@@ -790,7 +800,7 @@ def lp_selection_supervised_imperfect(train_matrix,labels,num_concepts,accuracie
     return selected_elements
 
 
-def iterative_selection(env,gold_model,environment_string,concept_list,iterations,selections_per_round,additional_info,seed,max_steps=100,training_timesteps=100_000):
+def iterative_selection(env,gold_model,environment_string,concept_list,iterations,selections_per_round,additional_info,seed,max_steps=10_000,training_timesteps=100_000):
     """Iterative select concepts based on performance, and add on more concepts
     
     Arguments:
@@ -804,8 +814,8 @@ def iterative_selection(env,gold_model,environment_string,concept_list,iteration
     reward_by_iteration = []
     last_model = None 
     
-    for _ in range(iterations):
-        print("On iteration {}".format(_))
+    for iter in range(iterations):
+        print("On iteration {}".format(iter))
         obs, info = env.reset()
         total_steps = 0
 
@@ -813,16 +823,15 @@ def iterative_selection(env,gold_model,environment_string,concept_list,iteration
 
         while total_steps < max_steps:
             actions, _ = gold_model.predict(obs)
-            if environment_string == "mimic":
-                num_envs = 1
-            else:
-                num_envs = env.num_envs
             
-            # if last_model is not None:
-            #     if np.random.random() < 0.05:
-            #         actions = [env.action_space.sample() for i in range(env.num_envs)]
-            #     else:
-            #         actions, _ = last_model.predict(obs[:,current_concepts])
+            if last_model is not None:
+                if np.random.random() < 0.05:
+                    actions = [env.action_space.sample() for i in range(env.num_envs)]
+                    probs_ours = np.array([[1/len(probs_gold[0]) for i in range(len(probs_gold[0]))] for i in range(env.num_envs)])
+                else:
+                    actions, _ = last_model.predict(obs[:,current_concepts])
+                    dist = last_model.policy.get_distribution(torch.Tensor(obs[:,current_concepts]))
+                    probs_ours = dist.distribution.probs.detach().cpu().numpy()
 
             obs_torch = torch.as_tensor(obs, dtype=torch.float32)
             obs_torch = obs_torch.to(gold_model.device)
@@ -836,11 +845,13 @@ def iterative_selection(env,gold_model,environment_string,concept_list,iteration
                 imperfect_obs = [[c(additional_info['centers'][info['observation']]) for c in concept_list]]
             else:
                 imperfect_obs = [[c(inf['observation']) for c in concept_list] for inf in info]
-            X.append(imperfect_obs)
-            y.append(probs_gold)
-            obs, _, terminated, truncated, info = env.step(actions)
-            if environment_string == "mimic" and (terminated or truncated):
-                env.reset()
+            if np.random.random () <0.1:
+                X.append(imperfect_obs)
+                if last_model is not None:
+                    y.append(np.abs(probs_gold-probs_ours))
+                else:
+                    y.append(probs_gold)
+            obs, _, _,_, info = env.step(actions)
 
             total_steps += 1
         X = np.vstack(X)
@@ -859,15 +870,34 @@ def iterative_selection(env,gold_model,environment_string,concept_list,iteration
             topk_idx = topk_idx[np.argsort(-score_by_concept[topk_idx])]
             current_concepts = sorted(topk_idx)
         else:
-            scores = [(i,clustered_cross_group_l1(X, y, current_concepts, split_col=i)) for i in range(len(concept_list)) if i not in current_concepts]
+            scores = []
+            for i in range(X.shape[1]):
+                neg_5 = y[X[:,i] == 0]
+                pos_5 = y[X[:,i] == 1]
+                if neg_5.shape[0] > 0 and pos_5.shape[0] > 0:
+                    scores.append((i,
+                                np.sum(np.abs(np.mean(neg_5,axis=0)-np.mean(pos_5,axis=0))),np.abs(np.mean(neg_5,axis=0)-np.mean(pos_5,axis=0))))
+                else:
+                    scores.append((i,0))
             scores = sorted(scores,key=lambda k: k[1],reverse=True)
-            scores = scores[:selections_per_round]
-            print("Scores are {}".format(scores))
+
+            selected_scores = []
+            i = 0
+            while i<len(scores) and len(selected_scores) < selections_per_round:
+                for j in selected_scores:
+                    dist = np.dot(j[2], scores[i][2]) / (np.linalg.norm(j[2]) * np.linalg.norm(scores[i][2]))
+                    if abs(dist) > 0.99:
+                        break 
+                else:
+                    if scores[i][0] not in current_concepts:
+                        selected_scores.append(scores[i])
+                i += 1
+            scores = selected_scores 
             current_concepts += [i[0] for i in scores]
         concepts_by_iteration.append(deepcopy(current_concepts))
 
         concept_env, concept_eval_env, additional_info = get_environment(environment_string,[concept_list[i] for i in current_concepts],seed)
-        last_model = train_ppo_model(concept_env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
+        last_model = train_ppo_model(concept_env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_iterative_{}".format(environment_string,iter+1))
         reward = evaluate_model(environment_string,concept_eval_env,additional_info,last_model,seed)
         reward_by_iteration.append(reward)
     concepts_by_iteration = [np.array(i).tolist() for i in concepts_by_iteration]

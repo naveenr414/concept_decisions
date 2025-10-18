@@ -24,9 +24,9 @@ declare -A training_timesteps=(
   [tree_31]=25000
   [cart_pole]=1000000
   [mini_grid]=250000
-  [glucose]=250000
-  [pong]=2000000
-  [boxing]=2000000
+  [glucose]=150000 #250000
+  [pong]=4000000
+  [boxing]=5000000
 )
 
 for seed in 42
@@ -35,7 +35,14 @@ do
   # training=${training_timesteps[$env]}
   # tmux send-keys -t concepts_atari "conda activate ${environment}; python train_concept_model.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} >> ${LOGFILE_GLUCOSE} 2>&1"  ENTER 
 
-  env=boxing
-  training=${training_timesteps[$env]}
-  tmux send-keys -t concepts_atari_2 "conda activate ${environment}; python train_concept_model.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} >> ${LOGFILE_GLUCOSE} 2>&1"  ENTER 
+  # env=boxing
+  # training=${training_timesteps[$env]}
+  # tmux send-keys -t concepts_atari_2 "conda activate ${environment}; python train_concept_model.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} >> ${LOGFILE_GLUCOSE} 2>&1"  ENTER 
+
+  for lr in 0.00001 0.00005
+  do 
+    env=glucose
+    training=${training_timesteps[$env]}
+    tmux send-keys -t concepts_atari "conda activate ${environment}; python train_concept_model.py --seed ${seed} --environment_string ${env} --learning_rate ${lr} --training_timesteps ${training} >> ${LOGFILE_GLUCOSE} 2>&1"  ENTER 
+  done 
 done 

@@ -137,6 +137,12 @@ def get_raw_pixels_mini_grid(env,obs=None):
     small_pixels = cv2.resize(gray, (84,84), interpolation=cv2.INTER_NEAREST)
     return small_pixels
 
+def get_raw_pixels_cartpole(env, obs=None):
+    pixels = env.render()
+    gray = cv2.cvtColor(pixels, cv2.COLOR_RGB2GRAY)
+    small_pixels = cv2.resize(gray, (84,84), interpolation=cv2.INTER_NEAREST).astype(np.uint8)
+    return small_pixels
+
 def can_move(position, direction, grid):
     """
     Helper function to determine if movement in a specific direction is possible.
@@ -208,7 +214,7 @@ class GlucoseEnvironment(T1DSimGymnaisumEnv):
         return obs/150, info
     def step(self, action,options={}):
         obs, reward, terminated, truncated, info = super().step(self.action_to_dose[action])
-        
+        info['observation'] = obs/150
         # Current BG (blood glucose)
         bg = obs[0]  # depends on observation structure
         self.bg_history.append(bg)
@@ -321,7 +327,7 @@ def get_n_atari_env(n_envs,atari_env_name,concept_list,observation_space,recorda
         ], start_method='spawn')
     return vec_env
 
-def get_environment(environment_string,concept_list,seed,use_processed=False,fast_predictor=None):
+def get_environment(environment_string,concept_list,seed,concept_idx=[],use_processed=False,fast_predictor=None):
     """Get a specific environment based on a string + concept list
     
     Arguments:
@@ -352,17 +358,6 @@ def get_environment(environment_string,concept_list,seed,use_processed=False,fas
             return env 
         vec_env = SubprocVecEnv([make_env for _ in range(num_envs)])
         gymnasium_env = GymnasiumWrapper(vec_env)
-    elif environment_string == "mimic":
-        physpol, vec_env, centers,new_concept_list, clusterer = create_mimic_environment(concept_list,seed)
-        gymnasium_env = vec_env
-        additional_info = {'physpol': physpol, 'centers': centers, 'concept_list': new_concept_list, 'clusterer': clusterer}
-        eval_dataset = get_mimic_eval_info(additional_info,seed)
-        additional_info['states_val'] = eval_dataset[0]
-        additional_info['actions_val'] = eval_dataset[1]
-        additional_info['trajectories'] = eval_dataset[2]
-        additional_info['rewards'] = eval_dataset[3] 
-        additional_info['phys_probs'] = eval_dataset[4]
-        additional_info['subset_concepts'] = concept_list
     elif environment_string == "glucose":
         register(
             id="simglucose/adolescent2-custom-v0",
@@ -384,9 +379,9 @@ def get_environment(environment_string,concept_list,seed,use_processed=False,fas
                 env = Monitor(gym.make("MiniGrid-DoorKey-5x5-v0",render_mode="rgb_array"))
                 env = FrameSkipWrapper(env, skip=4, get_pixels_fn=get_raw_pixels_mini_grid)
                 env = ConceptWrapper(env,None,spaces.Box(
-                        low=-4, high=4,
-                        shape=(4),  # Height x Width, no color channel
-                        dtype=np.float32
+                        low=0, high=255,
+                        shape=(84,84),  # Height x Width, no color channel
+                        dtype=np.uint8
                     ),lambda env, obs: obs, obs_function=lambda e,o,i: get_raw_state_mini_grid(e,o,i))
                 env = FrameStack(env,num_stack)
                 env = LazyFramesToNumpy(env)
@@ -413,7 +408,7 @@ def get_environment(environment_string,concept_list,seed,use_processed=False,fas
                 env = FrameStack(env,4)
                 env = LazyFramesToNumpy(env)
                 if use_processed:
-                    env = OptimizedConceptWrapper(env, fast_predictor, spaces.MultiBinary(len(concept_list)), lambda env, obs: obs, use_info_obs=True)
+                    env = OptimizedConceptWrapper(env, fast_predictor, spaces.MultiBinary(len(concept_idx)), lambda env, obs: obs, concept_idx,use_info_obs=True)
             else:
                 env = Monitor(gym.make("CartPole-v1"))
                 env = ConceptWrapper(env,concept_list,spaces.MultiBinary(len(concept_list)),get_raw_state_cartpole)

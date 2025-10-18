@@ -30,10 +30,6 @@ from concept_abstraction.env_utils import *
 from concept_abstraction.environments import *
 from concept_abstraction.utils import *
 from concept_abstraction.environments import ConceptEnv
-from concept_abstraction.mimic import get_mimic_eval_info
-from sklearn.tree import DecisionTreeClassifier, export_text
-from sklearn.cluster import KMeans
-import wandb
 import sys 
 import argparse
 import secrets
@@ -56,15 +52,15 @@ if is_main:
     if is_jupyter: 
         # Basics 
         seed        = 42
-        environment_string = "glucose"
-        gold_timesteps = 500_000
+        environment_string = "cart_pole"
+        gold_timesteps = 4_000_000
         training_timesteps = 1
-        num_concepts_selected = 1
+        num_concepts_selected = 15
         selection_function = "q_value"
         # Experiment #1 & #2
-        run_basic = True
+        run_basic = False
         run_iterative = False 
-        run_two_stage = False 
+        run_two_stage = True 
         run_imperfect=False
         run_intervention=False
         # Experiment #3
@@ -79,8 +75,8 @@ if is_main:
         # Experiment #5
         assess_completeness=False
         # Experiment #6
-        num_iterations = 2
-        selections_per_round = 1
+        num_iterations = 0
+        selections_per_round = 0
         initial_concepts = 0
         out_folder = "llm"
     else:
@@ -190,7 +186,7 @@ if is_main:
         
         if environment_string == "mimic":
             additional_info['subset_concepts'] = get_concepts(environment_string,"human_selected",seed)
-            groundtruth_model = train_ppo_model(ground_truth_env,"mimic_raw",total_timesteps=gold_timesteps,policy=policy,additional_info=additional_info)
+            groundtruth_model = train_ppo_model(ground_truth_env,"mimic_raw",total_timesteps=gold_timesteps,policy=policy,)
         else:
             groundtruth_model = train_ppo_model(ground_truth_env,environment_string,total_timesteps=gold_timesteps,policy=policy)
         groundtruth_model.save(model_name)
@@ -198,72 +194,7 @@ if is_main:
     results['ground_truth'] = {'reward':groundtruth_reward}
     print("Basic:",results['ground_truth']['reward'])
 
-# ### Experimental
-
-policy = "MlpPolicy"
-time_per_episode = 250
-num_episodes = 25
-train_ppo_model(ground_truth_env,environment_string,total_timesteps=time_per_episode*num_episodes,policy=policy)
-
-policy = "MlpPolicy"
-time_per_episode = 250
-num_episodes = 25
-model = train_ppo_model(ground_truth_env,environment_string,total_timesteps=time_per_episode*num_episodes,policy=policy,seed=45)
-
-evaluate_model(environment_string,ground_truth_gym_env,additional_info,model,seed)
-
-evaluate_model(environment_string,ground_truth_gym_env,additional_info,model,seed+1)
-
-
-def lambda_to_model(func):
-    class A:
-        def predict(self,obs):
-            return [func(i) for i in obs], None 
-    return A()
-
-
-evaluate_model(environment_string,ground_truth_gym_env,additional_info,lambda_to_model(lambda s: 0),seed)
-
-evaluate_model(environment_string,ground_truth_gym_env,additional_info,lambda_to_model(bg_control_policy),seed)
-
-
-def test_glucose(model):
-    env = gym.make("simglucose/adolescent2-custom-v0", render_mode='human')
-    all_rewards, total_steps = [], []
-    
-    for episode in range(10):
-        obs, info = env.reset()
-        discount = 1
-        total_reward, steps = 0, 0
-        done = False
-        
-        while not done:
-            action = model(obs)
-            obs, reward, terminated, truncated, info = env.step(action)
-            obs = obs[0]
-            done = terminated or truncated 
-            total_reward += reward * discount**steps
-            steps += 1
-        
-        all_rewards.append(total_reward)
-        total_steps.append(steps)
-
-    print(np.mean(all_rewards), np.mean(total_steps))
-    env.close()  # 👈 explicit cleanup
-
-
-
-test_glucose(lambda m: model.predict([[m]])[0][0][0])
-
-test_glucose(bg_control_policy)
-
-test_glucose(lambda m: 30)
-
-test_glucose(lambda m: 0)
-
 # ### Basic Comparison
-
-q_estimates = rollout_q_estimates_td(groundtruth_model,ground_truth_gym_env,concept_list,total_timesteps=20_000)
 
 if is_main:    
     model_name = "../../results/q_estimates/env={}_training={}_seed={}_selection={}_source={}.pkl".format(environment_string,gold_timesteps,seed,selection_function,concept_source)
@@ -272,154 +203,13 @@ if is_main:
         q_estimates = pickle.load(open(model_name,"rb"))
     else:
         if selection_function == "q_value":
-            if environment_string == "mimic":
-                modified_concepts = [lambda s, concept=concept: concept(additional_info['centers'][s]) 
-                            for concept in concept_list]
-
-                q_estimates = rollout_q_estimates_td(groundtruth_model,GymnasiumWrapper(DummyVecEnv([lambda: ground_truth_gym_env])),modified_concepts,learning_rate=1e-2,mimic=True,total_timesteps=10000,final_training=0)
-            elif environment_string == "glucose":
+            if environment_string == "glucose":
                 q_estimates = rollout_q_estimates_td(groundtruth_model,ground_truth_gym_env,concept_list,total_timesteps=20_000)
             else:
                 q_estimates = rollout_q_estimates_td(groundtruth_model,ground_truth_gym_env,concept_list)
         elif selection_function == "policy":
-            if environment_string == "mimic":
-                modified_concepts = [lambda s, concept=concept: concept(additional_info['centers'][s]) 
-                            for concept in concept_list]
-
-                q_estimates = rollout_pi_estimates(groundtruth_model,GymnasiumWrapper(DummyVecEnv([lambda: ground_truth_gym_env])),modified_concepts,mimic=True)
-            else:
-                q_estimates = rollout_pi_estimates(groundtruth_model,ground_truth_gym_env,concept_list)
+            q_estimates = rollout_pi_estimates(groundtruth_model,ground_truth_gym_env,concept_list)
         pickle.dump(q_estimates,open(model_name,"wb"))
-
-
-
-all_rewards=  []
-total_steps = []
-per_rewards = []
-for episode in range(10):
-    env = gymnasium.make("simglucose/adolescent2-custom-v0", render_mode="human")
-    obs = env.reset()
-    discount = 0.99
-
-    total_reward = 0
-    steps = 0
-
-    done = False
-    while not done:
-        action =0  # replace with your agent's action
-        obs, reward, terminated, truncated, info = env.step(action)
-        done = terminated or truncated
-        total_reward += reward*discount**steps
-        per_rewards.append(reward)
-        steps += 1
-    all_rewards.append(total_reward)
-    total_steps.append(int(steps))
-print(np.mean(all_rewards),np.mean(total_steps))
-env.render()
-
-
-all_rewards=  []
-total_steps = []
-for episode in range(10):
-    env = gymnasium.make("simglucose/adolescent2-custom-v0", render_mode="human")
-    obs = env.reset()
-    discount = 0.99
-
-    total_reward = 0
-    steps = 0
-
-    done = False
-    while not done:
-        action = bg_control_policy(obs[0])  # replace with your agent's action
-        obs, reward, terminated, truncated, info = env.step(action)
-        done = terminated or truncated
-        reward = float(reward)
-        if not done:  
-            total_reward += reward*discount**steps
-            steps += 1
-    all_rewards.append(total_reward)
-    total_steps.append(int(steps))
-print(np.mean(all_rewards),np.mean(total_steps))
-env.render()
-
-
-
-
-# +
-# ppo_simglucose_wandb.py
-
-import gymnasium
-import numpy as np
-import wandb
-from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv
-from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.callbacks import BaseCallback
-
-# ------------------------------
-# 1️⃣ Initialize wandb
-# ------------------------------
-
-
-# -
-
-
-
-
-
-all_rewards=  []
-total_steps = []
-all_actions = []
-for episode in range(10):
-    env = gymnasium.make("simglucose/adolescent2-custom-v0", render_mode="human")
-    obs, info = env.reset()
-    discount = 0.99
-
-    total_reward = 0
-    steps = 0
-
-    done = False
-    while not done:
-        action = model.predict(obs)[0][0]  # replace with your agent's action
-        all_actions.append(action)
-        obs, reward, terminated, truncated, info = env.step(action)
-        done = terminated or truncated
-        reward = float(reward)
-        if not done:  
-            total_reward += reward*discount**steps
-            steps += 1
-    all_rewards.append(total_reward)
-    total_steps.append(int(steps))
-print(np.mean(all_rewards),np.mean(total_steps))
-env.render()
-
-
-all_rewards=  []
-total_steps = []
-all_actions = []
-for episode in range(10):
-    env = gymnasium.make("simglucose/adolescent2-custom-v0", render_mode="human")
-    obs, info = env.reset()
-    discount = 0.99
-
-    total_reward = 0
-    steps = 0
-
-    done = False
-    while not done:
-        action = fixed_dose_policy(obs*150)  # replace with your agent's action
-        all_actions.append(action)
-        obs, reward, terminated, truncated, info = env.step(action)
-        done = terminated or truncated
-        reward = float(reward)
-        if not done:  
-            total_reward += reward*discount**steps
-            steps += 1
-    all_rewards.append(total_reward)
-    total_steps.append(int(steps))
-print(np.mean(all_rewards),np.mean(total_steps))
-env.render()
-
 
 if is_main and run_basic:
     # Train a random policy
@@ -436,7 +226,7 @@ if is_main and run_basic:
     subset_concept, random_idx = random_selection(concept_list,num_concepts_selected)
     subset_concept = [concept_list[i] for i in random_idx]
     env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)    
-    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
+    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_random".format(environment_string))
     random_selection_reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
     results['basic_comparison']['random_selection'] = {'reward':random_selection_reward, 'concepts': random_idx}
     print("Random Selection:",results['basic_comparison']['random_selection']['reward'])
@@ -446,7 +236,7 @@ if is_main and run_basic:
     subset_concept, greedy_idx = greedy_selection(concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
     env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
     
-    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
+    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_greedy".format(environment_string))
     greedy_selection_reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
     results['basic_comparison']['greedy'] = {'concepts': greedy_idx, 'reward':greedy_selection_reward}
     print("Greedy:",results['basic_comparison']['greedy']['reward'])
@@ -455,7 +245,7 @@ if is_main and run_basic:
 if is_main and run_basic:
     subset_concept, lp_idx = lp_based_selection(ground_truth_gym_env,concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
     env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
+    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_lp".format(environment_string))
     lp_selection_reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
     results['basic_comparison']['lp'] = {'concepts': lp_idx, 'reward': lp_selection_reward}
     print("LP Selection:",results['basic_comparison']['lp']['reward'])
@@ -463,7 +253,7 @@ if is_main and run_basic:
 if is_main and run_basic:
     subset_concept, multiple_idx = multiple_lp_selection(ground_truth_gym_env,concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
     env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
+    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_multiple".format(environment_string))
     multiple_selection_reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
     results['basic_comparison']['multiple'] = {'concepts': multiple_idx, 'reward': multiple_selection_reward}
     print("Multiple Selection:",results['basic_comparison']['multiple']['reward'])
@@ -485,8 +275,7 @@ if is_main and run_imperfect:
             continue 
         subset_concept, greedy_idx = greedy_selection(modified_concept_predictors,num_concepts_selected,selection_function,q_estimates,concept_source)
         env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
-
+        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_error_greedy".format(environment_string))
         greedy_inaccurate_reward[modification] = {
             'reward': evaluate_model(environment_string,eval_env,additional_info,model,seed),
             'concepts': greedy_idx
@@ -508,7 +297,7 @@ if is_main and run_imperfect:
         _, lp_idx = lp_based_selection(ground_truth_gym_env,modified_concept_predictors,num_concepts_selected,selection_function,q_estimates,concept_source)
         subset_concept = [modified_concept_predictors[i] for i in lp_idx]
         env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
+        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_error_lp".format(environment_string))
         lp_inaccurate_reward[modification] = { 'reward': evaluate_model(environment_string,eval_env,additional_info,model,seed),
         'concepts': lp_idx}
 
@@ -521,7 +310,7 @@ if is_main and run_imperfect:
     modified_concept_predictors = [inaccurate_concepts_binary(func,acc,seed) for func,acc in zip(concept_list,cbm_accuracy_by_concept)]
     subset_concept, multiple_idx = multiple_lp_selection(ground_truth_gym_env,modified_concept_predictors,num_concepts_selected,selection_function,q_estimates,concept_source)
     env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
+    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_error_multiple".format(environment_string))
     multiple_lp_selection_reward = {}
     multiple_lp_selection_reward['reward'] = evaluate_model(environment_string,eval_env,additional_info,model,seed)
     multiple_lp_selection_reward['concepts'] = multiple_idx
@@ -545,7 +334,7 @@ if is_main and run_imperfect:
         else:
             subset_concept, imperfect_idx = imperfect_lp_selection(ground_truth_gym_env,modified_concept_predictors,q_estimates,selection_function,target_abstraction,num_concepts_selected,cbm_accuracy_by_concept,concept_source,environment_string,additional_info,direction='max')
         env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
+        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_error_imperfect".format(environment_string))
         imperfect_lp_selection_reward[modification] = {}
         imperfect_lp_selection_reward[modification]['reward'] = evaluate_model(environment_string,eval_env,additional_info,model,seed)
         imperfect_lp_selection_reward[modification]['concepts'] = imperfect_idx
@@ -569,7 +358,7 @@ if is_main and run_intervention:
         _, greedy_idx = greedy_selection(concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
         subset_concept = [modified_concept_predictors[i] for i in greedy_idx]
         env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
+        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_intervention_greedy".format(environment_string))
 
         modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,intervention_probability,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
         subset_concept = [modified_concept_predictors[i] for i in greedy_idx]
@@ -594,7 +383,7 @@ if is_main and run_intervention:
         _, lp_idx = lp_based_selection(ground_truth_gym_env,concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
         subset_concept = [modified_concept_predictors[i] for i in lp_idx]
         env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
+        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_intervention_lp".format(environment_string))
 
         modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,intervention_probability,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
         subset_concept = [modified_concept_predictors[i] for i in lp_idx]
@@ -616,7 +405,7 @@ if is_main and run_intervention:
     subset_concept, multiple_idx = multiple_lp_selection(ground_truth_gym_env,modified_concept_predictors,num_concepts_selected,selection_function,q_estimates,concept_source)
     env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
 
-    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
+    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_intervention_multiple".format(environment_string))
     multiple_lp_intervention_reward = {}
     modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,intervention_probability,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
     subset_concept = [modified_concept_predictors[i] for i in multiple_idx]
@@ -637,7 +426,7 @@ if is_main and run_intervention:
             continue 
         subset_concept, imperfect_idx = imperfect_lp_selection(ground_truth_gym_env,modified_concept_predictors,q_estimates,selection_function,target_abstraction,num_concepts_selected,cbm_accuracy_by_concept,concept_source,environment_string,additional_info,direction='max')
         env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
+        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_intervention_imperfect".format(environment_string))
         modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,intervention_probability,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
         subset_concept = [modified_concept_predictors[i] for i in imperfect_idx]
         env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
@@ -686,12 +475,12 @@ if is_main and run_iterative:
 
 if is_main and run_two_stage:
     env, eval_env, additional_info = get_environment(environment_string,concept_list,seed)
-    gold_model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
+    gold_model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_gold_two_stage".format(environment_string))
 
 if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
     concept_predictor, acc_list = train_concept_predictor(ground_truth_gym_env,gold_model,concept_list,list(range(len(concept_list))))
     results['two_stage'] = {}
-    results['two_stage']['accuracy'] = acc_list 
+    results['two_stage']['accuracy'] = acc_list.tolist()
 
 
 # +
@@ -699,9 +488,8 @@ if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
     greedy_two_stage = {}
     greedy_concepts, greedy_idx = greedy_selection(concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
 
-    concept_predictor, _ = train_concept_predictor(ground_truth_gym_env,gold_model,concept_list,greedy_idx)
-    two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string, greedy_concepts, seed,fast_predictor=concept_predictor,use_processed=True)   
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps)    
+    two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string, greedy_concepts, seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=greedy_idx)   
+    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_two_stage_greedy".format(environment_string))    
     greedy_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,additional_info,model,seed)
 
     results['two_stage']['greedy'] = {'reward': greedy_two_stage_reward, 'concepts': greedy_idx}
@@ -711,15 +499,14 @@ if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
 
 # +
 if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
-    greedy_iterative_concepts, greedy_iterative_idx = greedy_iterative_selection(concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
+    multiple_concepts, multiple_idx = multiple_lp_selection(ground_truth_gym_env,concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
 
-    concept_predictor, _ = train_concept_predictor(ground_truth_gym_env,gold_model,concept_list,greedy_iterative_idx)
-    two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string, greedy_concepts, seed,fast_predictor=concept_predictor,use_processed=True)   
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps)    
-    greedy_iterative_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,additional_info,model,seed)
+    two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string, multiple_concepts, seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=multiple_idx)   
+    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_two_stage_multiple".format(environment_string))    
+    multiple_iterative_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,additional_info,model,seed)
 
-    results['two_stage']['greedy_iterative'] = {'reward': greedy_iterative_two_stage_reward, 'concepts': greedy_iterative_idx}
-    print(greedy_iterative_two_stage_reward)
+    results['two_stage']['multiple'] = {'reward': multiple_iterative_two_stage_reward, 'concepts': multiple_idx}
+    print(multiple_iterative_two_stage_reward)
 
 
 
@@ -727,9 +514,8 @@ if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
 if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
     lp_concepts, lp_idx = lp_based_selection(ground_truth_gym_env,concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
 
-    concept_predictor, _ = train_concept_predictor(ground_truth_gym_env,gold_model,concept_list,lp_idx)
-    two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string, lp_concepts, seed,fast_predictor=concept_predictor,use_processed=True)   
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps)    
+    two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string, lp_concepts, seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=lp_idx)   
+    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_two_stage_lp".format(environment_string))    
     lp_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,additional_info,model,seed)
 
     results['two_stage']['lp'] = {'reward': lp_two_stage_reward, 'concepts': lp_idx}
@@ -740,12 +526,11 @@ if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
 # +
 if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
     acc_list = results['two_stage']['accuracy']
-    top_k_idx = np.argsort(acc_list)[-num_concepts_selected:]
+    top_k_idx = np.argsort(acc_list)[-num_concepts_selected:].tolist()
     top_k_concepts = [concept_list[i] for i in top_k_idx]
     
-    concept_predictor, _ = train_concept_predictor(ground_truth_gym_env,gold_model,concept_list,top_k_idx)
-    two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string, top_k_concepts, seed,fast_predictor=concept_predictor,use_processed=True)   
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps)    
+    two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string, top_k_concepts, seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=top_k_idx)   
+    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_two_stage_topk".format(environment_string))    
     top_k_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,additional_info,model,seed)
 
     results['two_stage']['top_k'] = {'reward': top_k_two_stage_reward, 'concepts': top_k_idx}
@@ -758,9 +543,8 @@ if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
     acc_list = results['two_stage']['accuracy']
     imperfect_concepts, imperfect_idx = imperfect_lp_selection(ground_truth_gym_env,concept_list,q_estimates,selection_function,target_abstraction,num_concepts_selected,acc_list,concept_source,environment_string,additional_info,direction='max')
     
-    concept_predictor, _ = train_concept_predictor(ground_truth_gym_env,gold_model,concept_list,imperfect_idx)
-    two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string, imperfect_concepts, seed,fast_predictor=concept_predictor,use_processed=True)   
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps)    
+    two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string, imperfect_concepts, seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=imperfect_idx)   
+    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_two_stage_imperfect".format(environment_string))    
     imperfect_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,additional_info,model,seed)
 
     results['two_stage']['imperfect'] = {'reward': imperfect_two_stage_reward, 'concepts': imperfect_idx}
