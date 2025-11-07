@@ -22,7 +22,6 @@ os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 os.environ["GRB_LICENSE_FILE"] = "/usr0/home/naveenr/gurobi.lic"
 # -
 
-from concept_abstraction.training import train_ppo_model, SimpleQEstimator
 from concept_abstraction.selection import greedy_selection_supervised, lp_selection_supervised, lp_selection_supervised_imperfect, multiple_selection_supervised, iterative_selection_supervised, greedy_selection_supervised,imperfect_lp_selection_supervised
 from concept_abstraction.env_utils import *
 from concept_abstraction.utils import *
@@ -47,7 +46,7 @@ is_jupyter = 'ipykernel' in sys.modules
 # +
 if is_jupyter: 
     seed        = 42
-    num_concepts_selected = 11
+    num_concepts_selected = 21
     out_folder = "cub"
     epochs=1
 else:
@@ -225,6 +224,16 @@ results['imperfect']['greedy']
 
 # ## Intervention
 
+cub_s = json.load(open("../../data/cub/cub_s.json"))
+full_test = pickle.load(open("../../data/cub/test.pkl","rb"))
+
+accuracy = []
+for i in cub_s:
+    for j in cub_s[i]:
+        corresponding_row = [k['attribute_label'] for k in full_test if k['id'] == int(i)][0]
+        accuracy.append(np.abs(np.array(corresponding_row)-np.array(j)))
+human_accuracy = 1-np.mean(accuracy,axis=0)
+
 num_concepts = len(manually_selected_concepts)
 lp_selection  = lp_selection_supervised(train_X,train_Y,num_concepts)
 multiple_selection  = multiple_selection_supervised(train_X,train_Y,num_concepts)
@@ -235,6 +244,21 @@ random_selection = random.sample(list(range(312)),num_concepts)
 accuracies = np.mean(test_X == pred_test_X,axis=0)
 imperfect_selection = imperfect_lp_selection_supervised(train_X,train_Y,num_concepts,accuracies)
 
+# +
+n_rows, n_cols = test_X.shape
+
+# Generate random mask of same shape as test_X
+random_vals = np.random.rand(n_rows, n_cols)
+
+# Make a copy
+human_test_X = test_X.copy()
+
+# For each column, flip values with probability (1 - human_accuracy[i])
+for i in range(n_cols):
+    flip_mask = random_vals[:, i] > human_accuracy[i]
+    human_test_X[flip_mask, i] = 1 - human_test_X[flip_mask, i]
+
+# -
 
 def get_performance_real(selected_concepts):
     mlp = MLPClassifier(
@@ -276,6 +300,33 @@ for intervention_percent in [0.2,0.4,0.6,0.8,1.0]:
         if description not in results['intervention']:
             results['intervention'][description] = {}
         results['intervention'][description][intervention_percent] = {
+            'reward': get_performance_real(arr)
+        }
+        print(description,intervention_percent,results['intervention'][description][intervention_percent]['reward'])
+
+
+results['intervention_human'] = {}
+
+for intervention_percent in [0.2,0.4,0.6,0.8,1.0]:
+    mask = np.random.rand(*human_test_X.shape) < intervention_percent
+
+    # Build the mixed array
+    intervention_test_X = np.where(mask, human_test_X, pred_test_X)
+
+    for arr,description in zip([manually_selected_concepts,
+                                lp_selection,
+                                multiple_selection,
+                                iterative_selection,
+                                greedy_selection,
+                                random_selection,
+                                imperfect_selection],[
+                                    "manual","lp","multiple",
+                                    'iterative','greedy','random',
+                                    'imperfect'
+                                ]):
+        if description not in results['intervention_human']:
+            results['intervention_human'][description] = {}
+        results['intervention_human'][description][intervention_percent] = {
             'reward': get_performance_real(arr)
         }
         print(description,intervention_percent,results['intervention'][description][intervention_percent]['reward'])

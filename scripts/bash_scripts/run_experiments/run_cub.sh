@@ -15,5 +15,5 @@ do
     num_concepts_selected=311
     epochs=50
 
-    tmux send-keys -t concepts_cub "conda activate ${environment}; python supervised_learning.py --seed ${seed} --num_concepts_selected ${num_concepts_selected} --epochs ${epochs} --out_folder cub >> ${LOGFILE} 2>&1"  ENTER 
+    tmux send-keys -t concepts_cub "conda activate ${environment}; python -u supervised_learning.py --seed ${seed} --num_concepts_selected ${num_concepts_selected} --epochs ${epochs} --out_folder cub >> ${LOGFILE} 2>&1"  ENTER 
 done 

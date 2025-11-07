@@ -20,26 +20,26 @@ declare -A training_timesteps=(
 
 for seed in 42
 do 
-  env=mini_grid
-  for num_concepts_selected in 40
-  do 
-    training=${training_timesteps[$env]}
-    tmux send-keys -t concept_two_stage "conda activate ${environment}; python -u  main_experiments.py --seed ${seed} --environment_string ${env} --gold_timesteps 4000000 --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder two_stage --concept_source human_selected_binary --run_two_stage >> ${LOGFILE} 2>&1"  ENTER 
-  done 
+  # env=mini_grid
+  # for num_concepts_selected in 40
+  # do 
+  #   training=${training_timesteps[$env]}
+  #   tmux send-keys -t concept_two_stage "conda activate ${environment}; python -u  main_experiments.py --seed ${seed} --environment_string ${env} --gold_timesteps 4000000 --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder two_stage --concept_source human_selected_binary --run_two_stage >> ${LOGFILE} 2>&1"  ENTER 
+  # done 
 
-  env=pong
-  training=${training_timesteps[$env]}
-  for num_concepts_selected in 80
-  do 
-    tmux send-keys -t concept_two_stage "conda activate ${environment}; python -u main_experiments.py --seed ${seed} --environment_string ${env} --gold_timesteps 4000000 --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder two_stage --concept_source human_selected_binary --run_two_stage >> ${LOGFILE} 2>&1"  ENTER 
-  done 
+  # env=pong
+  # training=${training_timesteps[$env]}
+  # for num_concepts_selected in 80
+  # do 
+  #   tmux send-keys -t concept_two_stage "conda activate ${environment}; python -u main_experiments.py --seed ${seed} --environment_string ${env} --gold_timesteps 4000000 --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder two_stage --concept_source human_selected_binary --run_two_stage >> ${LOGFILE} 2>&1"  ENTER 
+  # done 
 
-  env=boxing
-  training=${training_timesteps[$env]}
-  for num_concepts_selected in 80
-  do 
-    tmux send-keys -t concept_two_stage "conda activate ${environment}; python -u  main_experiments.py --seed ${seed} --environment_string ${env} --gold_timesteps 10000000 --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder two_stage --concept_source human_selected_binary --run_two_stage >> ${LOGFILE} 2>&1"  ENTER 
-  done 
+  # env=boxing
+  # training=${training_timesteps[$env]}
+  # for num_concepts_selected in 80
+  # do 
+  #   tmux send-keys -t concept_two_stage "conda activate ${environment}; python -u  main_experiments.py --seed ${seed} --environment_string ${env} --gold_timesteps 10000000 --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder two_stage --concept_source human_selected_binary --run_two_stage >> ${LOGFILE} 2>&1"  ENTER 
+  # done 
 
   env=cart_pole
   for num_concepts_selected in 15

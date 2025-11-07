@@ -225,32 +225,42 @@ class LazyFramesToNumpy(gym.ObservationWrapper):
         if obs.ndim == 4 and obs.shape[1] == 1:
             obs = obs.squeeze(1)
         return obs
-
 class FrameSkipWrapper(gym.Wrapper):
     """
-    Only renders pixels every `skip` frames, repeats last observation otherwise.
+    Executes the same action for `skip` frames, returns only the last observation.
     """
     def __init__(self, env, skip=2, get_pixels_fn=None):
         super().__init__(env)
         self.skip = skip
         self.get_pixels = get_pixels_fn
         self._last_obs = None
-        self._frame_counter = 0
-
+    
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
         info['observation'] = obs
-        self._frame_counter = 0
         self._last_obs = self.get_pixels(self.env, obs)
         return self._last_obs, info
-
+    
     def step(self, action):
-        obs, reward, terminated, truncated, info = self.env.step(action)
-        info['observation'] = obs
-        self._frame_counter += 1
-        if self._frame_counter % self.skip == 0:
-            self._last_obs = self.get_pixels(self.env, obs)
-        return self._last_obs, reward, terminated, truncated, info
+        total_reward = 0.0
+        terminated = False
+        truncated = False
+        
+        # Execute action for `skip` frames
+        for i in range(self.skip):
+            obs, reward, terminated, truncated, info = self.env.step(action)
+            total_reward += reward
+            
+            # Update observation on last frame
+            if i == self.skip - 1:
+                info['observation'] = obs
+                self._last_obs = self.get_pixels(self.env, obs)
+            
+            # Stop early if episode ends
+            if terminated or truncated:
+                break
+        
+        return self._last_obs, total_reward, terminated, truncated, info
 
 class GymnasiumWrapper:
     def __init__(self, vec_env):

@@ -18,7 +18,18 @@ color_schemes = {
                 (0.969, 0.506, 0.749, 0.7),
                 (0.596, 0.306, 0.639, 0.7),
                 (0.894, 0.102, 0.11, 0.7)], 
-'eight_color': [
+    'twelve_color': [(0.216, 0.494, 0.722, 0.7),
+                (1.0, 0.498, 0.0, 0.7),
+                (0.302, 0.686, 0.29, 0.7),
+                (0.969, 0.506, 0.749, 0.7),
+                (0.596, 0.306, 0.639, 0.7),
+                (0.894, 0.102, 0.11, 0.7),(0.216, 0.494, 0.722, 0.7),
+                (1.0, 0.498, 0.0, 0.7),
+                (0.302, 0.686, 0.29, 0.7),
+                (0.969, 0.506, 0.749, 0.7),
+                (0.596, 0.306, 0.639, 0.7),
+                (0.894, 0.102, 0.11, 0.7)], 
+    'eight_color': [
     (0.216, 0.494, 0.722, 0.7),  # blue
     (1.0, 0.498, 0.0, 0.7),      # orange
     (0.302, 0.686, 0.29, 0.7),   # green
@@ -224,9 +235,13 @@ def plot_line(ax,x_values,y_values,y_confidence,labels,formatting):
     linewidth = 0.6
     if 'linewidth' in formatting:
         linewidth = formatting['linewidth']
+    
+    linestyle='-'
+    if 'linestyle' in formatting:
+        linestyle = formatting['linestyle']
 
     for i in range(len(x_values)):
-        ax.plot(x_values[i],y_values[i],label=labels[i],linewidth=linewidth,color=colors[i])
+        ax.plot(x_values[i],y_values[i],label=labels[i],linewidth=linewidth,color=colors[i],linestyle=linestyle)
         ax.fill_between(x_values[i],np.array(y_values[i])-np.array(y_confidence[i]),np.array(y_values[i])+np.array(y_confidence[i]), alpha=0.2,color=colors[i])
 
 def plot_scatter(ax,x_values,y_values,formatting):

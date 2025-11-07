@@ -821,13 +821,17 @@ def iterative_selection(env,gold_model,environment_string,concept_list,iteration
 
         X, y = [], []
 
-        while total_steps < max_steps:
+        while total_steps < 10_000:
             actions, _ = gold_model.predict(obs)
+            if environment_string == "mimic":
+                num_envs = 1
+            else:
+                num_envs = eval_env.num_envs
             
             if last_model is not None:
                 if np.random.random() < 0.05:
                     actions = [env.action_space.sample() for i in range(env.num_envs)]
-                    probs_ours = np.array([[1/len(probs_gold[0]) for i in range(len(probs_gold[0]))] for i in range(env.num_envs)])
+                    probs_ours = np.array([[1/7 for i in range(7)] for i in range(8)])
                 else:
                     actions, _ = last_model.predict(obs[:,current_concepts])
                     dist = last_model.policy.get_distribution(torch.Tensor(obs[:,current_concepts]))
@@ -847,57 +851,41 @@ def iterative_selection(env,gold_model,environment_string,concept_list,iteration
                 imperfect_obs = [[c(inf['observation']) for c in concept_list] for inf in info]
             if np.random.random () <0.1:
                 X.append(imperfect_obs)
-                if last_model is not None:
-                    y.append(np.abs(probs_gold-probs_ours))
-                else:
-                    y.append(probs_gold)
-            obs, _, _,_, info = env.step(actions)
-
+                y.append(np.abs(probs_gold-probs_ours))
+            obs, _, terminated, truncated, info = env.step(actions)
             total_steps += 1
         X = np.vstack(X)
         y = np.vstack(y)
-        if current_concepts == []:
-            score_by_concept = []
-            for i in range(X.shape[1]):
-                mask1 = X[:, i] == 1
-                mask0 = ~mask1 
-                group1 = y[mask1]
-                group0 = y[mask0]
-                diffs = np.abs(group1[:, None, :] - group0[None, :, :]).sum(axis=2)
-                score_by_concept.append(diffs.sum())
-            score_by_concept = np.array(score_by_concept)
-            topk_idx = np.argpartition(-score_by_concept, selections_per_round)[:selections_per_round]
-            topk_idx = topk_idx[np.argsort(-score_by_concept[topk_idx])]
-            current_concepts = sorted(topk_idx)
-        else:
-            scores = []
-            for i in range(X.shape[1]):
-                neg_5 = y[X[:,i] == 0]
-                pos_5 = y[X[:,i] == 1]
-                if neg_5.shape[0] > 0 and pos_5.shape[0] > 0:
-                    scores.append((i,
-                                np.sum(np.abs(np.mean(neg_5,axis=0)-np.mean(pos_5,axis=0))),np.abs(np.mean(neg_5,axis=0)-np.mean(pos_5,axis=0))))
-                else:
-                    scores.append((i,0))
-            scores = sorted(scores,key=lambda k: k[1],reverse=True)
+        scores = []
+        for i in range(X.shape[1]):
+            neg_5 = y[X[:,i] == 0]
+            pos_5 = y[X[:,i] == 1]
+            if neg_5.shape[0] > 0 and pos_5.shape[0] > 0:
+                scores.append((i,
+                            np.sum(np.abs(np.mean(neg_5,axis=0)-np.mean(pos_5,axis=0))),np.mean(neg_5,axis=0)-np.mean(pos_5,axis=0)))
+            else:
+                scores.append((i,0))
+        scores = sorted(scores,key=lambda k: k[1],reverse=True)
 
-            selected_scores = []
-            i = 0
-            while i<len(scores) and len(selected_scores) < selections_per_round:
-                for j in selected_scores:
-                    dist = np.dot(j[2], scores[i][2]) / (np.linalg.norm(j[2]) * np.linalg.norm(scores[i][2]))
-                    if abs(dist) > 0.99:
-                        break 
-                else:
-                    if scores[i][0] not in current_concepts:
-                        selected_scores.append(scores[i])
-                i += 1
-            scores = selected_scores 
-            current_concepts += [i[0] for i in scores]
+        selected_scores = []
+        i = 0
+        while i<len(scores) and len(selected_scores) < selections_per_round:
+            for j in selected_scores:
+                dist = np.dot(j[2], scores[i][2]) / (np.linalg.norm(j[2]) * np.linalg.norm(scores[i][2]))
+                if abs(dist) > 0.99:
+                    break 
+            else:
+                if scores[i][0] not in current_concepts:
+                    selected_scores.append(scores[i])
+            i += 1
+
+        scores = selected_scores 
+        current_concepts += [i[0] for i in scores]
+        concept_env, concept_eval_env, additional_info = get_environment(environment_string,[concept_list[i] for i in current_concepts],seed)
+        last_model = train_ppo_model(concept_env,environment_string,total_timesteps=500_000,policy="MlpPolicy",custom_name="{}_iterative_{}".format(environment_string,iter+2))
+
         concepts_by_iteration.append(deepcopy(current_concepts))
 
-        concept_env, concept_eval_env, additional_info = get_environment(environment_string,[concept_list[i] for i in current_concepts],seed)
-        last_model = train_ppo_model(concept_env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_iterative_{}".format(environment_string,iter+1))
         reward = evaluate_model(environment_string,concept_eval_env,additional_info,last_model,seed)
         reward_by_iteration.append(reward)
     concepts_by_iteration = [np.array(i).tolist() for i in concepts_by_iteration]

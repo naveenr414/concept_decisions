@@ -52,15 +52,15 @@ if is_main:
     if is_jupyter: 
         # Basics 
         seed        = 42
-        environment_string = "cart_pole"
+        environment_string = "pong"
         gold_timesteps = 4_000_000
-        training_timesteps = 1
-        num_concepts_selected = 15
+        training_timesteps = 4_000_000
+        num_concepts_selected = 80
         selection_function = "q_value"
         # Experiment #1 & #2
-        run_basic = False
+        run_basic = True
         run_iterative = False 
-        run_two_stage = True 
+        run_two_stage = False  
         run_imperfect=False
         run_intervention=False
         # Experiment #3
@@ -320,28 +320,19 @@ if is_main and run_imperfect:
         print(multiple_lp_selection_reward)
 
 if is_main and run_imperfect:
-    imperfect_lp_selection_reward = {}
-    for modification in ["continuous","binary"]:
-        if modification == "continuous" and cbm_std_by_concept is not None:
-            modified_concept_predictors = [inaccurate_concepts_continuous(func,0,std) for func,std in zip(concept_list,cbm_std_by_concept)]
-        elif modification == "binary" and cbm_accuracy_by_concept is not None:
-            modified_concept_predictors = [inaccurate_concepts_binary(func,acc,seed) for func,acc in zip(concept_list,cbm_accuracy_by_concept)]
-        else:
-            continue 
-        
-        if modification == "continuous":
-            subset_concept, imperfect_idx = imperfect_lp_selection(ground_truth_gym_env,modified_concept_predictors,q_estimates,selection_function,target_abstraction,num_concepts_selected,cbm_accuracy_by_concept,concept_source,environment_string,additional_info,direction='min')
-        else:
-            subset_concept, imperfect_idx = imperfect_lp_selection(ground_truth_gym_env,modified_concept_predictors,q_estimates,selection_function,target_abstraction,num_concepts_selected,cbm_accuracy_by_concept,concept_source,environment_string,additional_info,direction='max')
-        env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_error_imperfect".format(environment_string))
-        imperfect_lp_selection_reward[modification] = {}
-        imperfect_lp_selection_reward[modification]['reward'] = evaluate_model(environment_string,eval_env,additional_info,model,seed)
-        imperfect_lp_selection_reward[modification]['concepts'] = imperfect_idx
+    multiple_lp_selection_reward = {}
+    modified_concept_predictors = [inaccurate_concepts_binary(func,acc,seed) for func,acc in zip(concept_list,cbm_accuracy_by_concept)]
+    q_estimates_error = rollout_q_estimates_td(groundtruth_model,ground_truth_gym_env,modified_concept_predictors)
+    subset_concept, multiple_idx = multiple_lp_selection(ground_truth_gym_env,modified_concept_predictors,num_concepts_selected,selection_function,q_estimates_error,concept_source)
+    env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
+    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_error_multiple".format(environment_string))
+    multiple_lp_selection_reward = {}
+    multiple_lp_selection_reward['reward'] = evaluate_model(environment_string,eval_env,additional_info,model,seed)
+    multiple_lp_selection_reward['concepts'] = multiple_idx
 
-    if imperfect_lp_selection_reward != {}:
-        results['inaccurate_comparison']['imperfect_lp'] = imperfect_lp_selection_reward
-        print(imperfect_lp_selection_reward)
+    if multiple_lp_selection_reward != {}:
+        results['inaccurate_comparison']['multiple_lp'] = multiple_lp_selection_reward
+        print(multiple_lp_selection_reward)
 
 # ### Intervention
 
@@ -352,7 +343,7 @@ if is_main and run_intervention:
     greedy_intervention_reward = {}
     for modification in ["binary"]:
         if modification == "binary" and cbm_accuracy_by_concept is not None and intervention_accuracy_by_concept is not None:
-            modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,0,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
+            modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,intervention_probability,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
         else:
             continue 
         _, greedy_idx = greedy_selection(concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
@@ -377,7 +368,7 @@ if is_main and run_intervention:
     lp_intervention_reward = {}
     for modification in ["binary"]:
         if modification == "binary" and cbm_accuracy_by_concept is not None and intervention_accuracy_by_concept is not None:
-            modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,0,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
+            modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,intervention_probability,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
         else:
             continue 
         _, lp_idx = lp_based_selection(ground_truth_gym_env,concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
@@ -401,7 +392,7 @@ if is_main and run_intervention:
 
 if is_main and run_intervention:
     multiple_lp_intervention_reward = {}
-    modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,0,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
+    modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,intervention_probability,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
     subset_concept, multiple_idx = multiple_lp_selection(ground_truth_gym_env,modified_concept_predictors,num_concepts_selected,selection_function,q_estimates,concept_source)
     env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
 
@@ -421,7 +412,7 @@ if is_main and run_intervention:
     imperfect_intervention_reward = {}
     for modification in ["binary"]:
         if modification == "binary" and cbm_accuracy_by_concept is not None and intervention_accuracy_by_concept is not None:
-            modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,0,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
+            modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,intervention_probability,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
         else:
             continue 
         subset_concept, imperfect_idx = imperfect_lp_selection(ground_truth_gym_env,modified_concept_predictors,q_estimates,selection_function,target_abstraction,num_concepts_selected,cbm_accuracy_by_concept,concept_source,environment_string,additional_info,direction='max')
@@ -444,7 +435,7 @@ if is_main and run_intervention:
 
 if is_main and run_iterative:
     env, eval_env, additional_info = get_environment(environment_string,concept_list,seed)
-    gold_model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
+    gold_model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="gold_iterative")
     results['iterative'] = {}
 
 if is_main and run_iterative:
@@ -452,6 +443,7 @@ if is_main and run_iterative:
         modified_concept_predictors = concept_list 
     else:
         modified_concept_predictors = [inaccurate_concepts_binary(func,acc,seed+idx) for func,acc,idx in zip(concept_list,cbm_accuracy_by_concept,list(range(len(concept_list))))]
+    env, eval_env, additional_info = get_environment(environment_string,concept_list,seed)
     rewards_iterative, concepts_iterative = iterative_selection(eval_env,gold_model,environment_string,modified_concept_predictors,num_iterations,selections_per_round,additional_info,seed,training_timesteps=training_timesteps)
     results['iterative']['iterative_selection'] = {'reward': rewards_iterative, 'concepts': concepts_iterative}
     print(rewards_iterative)
@@ -475,10 +467,16 @@ if is_main and run_iterative:
 
 if is_main and run_two_stage:
     env, eval_env, additional_info = get_environment(environment_string,concept_list,seed)
-    gold_model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_gold_two_stage".format(environment_string))
+    gold_path = "../../results/models/env={}_training={}_seed={}_two_step.zip".format(environment_string,gold_timesteps,seed)
+    if os.path.exists(gold_path):
+        gold_model = PPO.load(gold_path)
+    else:
+        gold_model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_gold_two_stage".format(environment_string))
+        gold_model.save(gold_path)
+    
 
 if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
-    concept_predictor, acc_list = train_concept_predictor(ground_truth_gym_env,gold_model,concept_list,list(range(len(concept_list))))
+    concept_predictor, acc_list = train_concept_predictor(ground_truth_gym_env,gold_model,concept_list,list(range(len(concept_list))),epochs=100)
     results['two_stage'] = {}
     results['two_stage']['accuracy'] = acc_list.tolist()
 

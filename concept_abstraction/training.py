@@ -9,6 +9,14 @@ import torch.nn as nn
 import torch.optim as optim
 from sklearn.metrics import f1_score
 import time
+import gymnasium as gym
+import cv2
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+from collections import deque
 
 
 import numpy as np
@@ -153,7 +161,7 @@ def get_model(environment_string,policy,override={}):
 
     return default_model_dict
 
-def train_ppo_model(env,environment_string,seed=42,total_timesteps=150_000,policy="MlpPolicy",override={},custom_name=""):
+def train_ppo_model(env,environment_string,seed=42,total_timesteps=150_000,policy="MlpPolicy",override={},custom_name="",model=None,silent=False):
     """Train an environment according to a stable baseline policy
     
     Arguments:
@@ -170,27 +178,34 @@ def train_ppo_model(env,environment_string,seed=42,total_timesteps=150_000,polic
     name = "{}_{}".format(environment_string,policy)
     if custom_name != "":
         name = custom_name
-    wandb.init(
-        project="Concept Decisions",
-        name=name,
-        config=model_params
-    )
-    model = PPO(
-        policy,
-        env,
-        policy_kwargs=model_params['policy_kwargs'],
-        n_steps=model_params['n_steps'],
-        batch_size=model_params['batch_size'],
-        n_epochs=model_params['n_epochs'],
-        learning_rate=model_params['learning_rate'],
-        ent_coef=model_params['ent_coef'],
-        gamma=0.99,
-        verbose=0,
-        device=model_params['device'],
-    )
-    model.learn(total_timesteps=total_timesteps, callback=WandbLoggingCallback())
+    
+    if not silent:
+        wandb.init(
+            project="Concept Decisions",
+            name=name,
+            config=model_params
+        )
 
-    wandb.finish()
+    if model is None:
+        model = PPO(
+            policy,
+            env,
+            policy_kwargs=model_params['policy_kwargs'],
+            n_steps=model_params['n_steps'],
+            batch_size=model_params['batch_size'],
+            n_epochs=model_params['n_epochs'],
+            learning_rate=model_params['learning_rate'],
+            ent_coef=model_params['ent_coef'],
+            gamma=0.99,
+            verbose=0,
+            device=model_params['device'],
+        )
+
+    if silent:
+        model.learn(total_timesteps=total_timesteps)
+    else:
+        model.learn(total_timesteps=total_timesteps, callback=WandbLoggingCallback())
+        wandb.finish()
     return model 
 
 class DistributionWrapper:
@@ -272,7 +287,72 @@ class CartPoleConceptCNN(nn.Module):
 
     def forward(self, x):
         return self.fc(self.features(x))
+
+class TemporalCartPoleCNN(nn.Module):
+    """
+    CNN that explicitly models temporal information for stacked frames.
+    Uses both spatial convolutions and temporal processing.
+    """
+    def __init__(self, num_outputs, num_frames=4, input_size=84):
+        super().__init__()
+        self.num_frames = num_frames
+        
+        # Process each frame independently with shared weights
+        self.spatial_encoder = nn.Sequential(
+            nn.Conv2d(1, 16, kernel_size=8, stride=4, padding=2),  # 84x84 -> 21x21
+            nn.ReLU(),
+            nn.Conv2d(16, 32, kernel_size=4, stride=2, padding=1),  # 21x21 -> 11x11
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),  # 11x11 -> 6x6
+            nn.ReLU(),
+        )
+        
+        # Calculate spatial feature size
+        # Run a dummy forward pass to get the dimensions
+        with torch.no_grad():
+            dummy = torch.zeros(1, 1, input_size, input_size)
+            spatial_out = self.spatial_encoder(dummy)
+            spatial_feature_size = spatial_out.view(1, -1).shape[1]
+        
+        # Temporal convolution over the frame dimension
+        self.temporal_conv = nn.Sequential(
+            nn.Conv1d(spatial_feature_size, 256, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv1d(256, 128, kernel_size=num_frames),  # Reduces temporal dim to 1
+            nn.ReLU(),
+        )
+        
+        # Final decision layers
+        self.fc = nn.Sequential(
+            nn.Linear(128, 128),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(128, num_outputs)
+        )
     
+    def forward(self, x):
+        # x shape: (batch, num_frames, H, W)
+        batch_size = x.shape[0]
+        
+        # Process each frame through spatial encoder
+        # Reshape to process all frames at once
+        x = x.view(batch_size * self.num_frames, 1, x.shape[2], x.shape[3])
+        spatial_features = self.spatial_encoder(x)  # (batch*frames, C, H', W')
+        
+        # Reshape for temporal processing
+        spatial_features = spatial_features.view(batch_size, self.num_frames, -1)  # (batch, frames, C*H'*W')
+        spatial_features = spatial_features.transpose(1, 2)  # (batch, C*H'*W', frames)
+        
+        # Apply temporal convolution
+        temporal_features = self.temporal_conv(spatial_features)  # (batch, 128, 1)
+        temporal_features = temporal_features.squeeze(-1)  # (batch, 128)
+        
+        # Final output
+        return self.fc(temporal_features)
+
+
+
+
 class FocalLoss(nn.Module):
     def __init__(self, alpha=1.0, gamma=2.0, smoothing=0.05):
         super().__init__()
@@ -303,7 +383,7 @@ def get_concept_labels_avg(env, model, concept_list, num_steps=5000, batch_size=
             Y_batch.append(Yb)
 
             # Take action
-            if np.random.random() < 0.1:
+            if np.random.random() < 1.0:
                 action = [env.action_space.sample() for _ in range(len(obs))]
             else:
                 concepts = [[c(inf['observation']) for c in concept_list] for inf in infos]
@@ -321,26 +401,88 @@ def get_concept_labels_avg(env, model, concept_list, num_steps=5000, batch_size=
         yield X_batch, Y_batch
         del X_batch, Y_batch
 
+def collect_cartpole_data(ground_truth_gym_env,num_episodes=100):
+    """
+    Collect data from CartPole environment
+    Returns:
+        X: array of shape (N, num_frames, 84, 84) - frame sequences
+        Y: array of shape (N,) - cart velocities
+    """
+    env = gym.make("CartPole-v1", render_mode="rgb_array")
+    
+    X_data = []
+    Y_data = []
+    
+    print(f"Collecting data from {num_episodes} episodes...")
+    
+    for episode in range(num_episodes):
+        obs = ground_truth_gym_env.reset()[0]
+        
+        done = False
+        step_count = 0
+        
+        while not done:
+            # Take random action
+            action = ground_truth_gym_env.action_space.sample()
+            
+            obs, reward, terminated, truncated, info = ground_truth_gym_env.step([action for i in range(8)])
+            done = terminated[0] or truncated[0]
+            # Store frame sequence and velocity (obs[1] is cart velocity)
+            X_data.append(np.array(obs[0]))
+            Y_data.append(info[0]['observation'])  # Cart velocity
+            
+            step_count += 1
+        
+        if (episode + 1) % 10 == 0:
+            print(f"Episode {episode + 1}/{num_episodes}, steps: {step_count}")
+    
+    env.close()
+    
+    X_data = np.array(X_data, dtype=np.float32)
+    Y_data = np.array(Y_data, dtype=np.float32)
+    
+    print(f"\nCollected {len(X_data)} samples")
+    print(f"X shape: {X_data.shape}")
+    print(f"Y shape: {Y_data.shape}")
+    print(f"Velocity range: [{Y_data.min():.3f}, {Y_data.max():.3f}]")
+    print(f"Samples with velocity < -0.02: {(Y_data < -0.02).sum()} ({100*(Y_data < -0.02).mean():.2f}%)")
+    
+    return X_data, Y_data
+
+class FrameSequenceDataset(Dataset):
+    def __init__(self, X, Y, normalize=True):
+        """
+        X: numpy array of shape (N, num_frames, 84, 84)
+        Y: numpy array of shape (N,) - velocities
+        """
+        # Normalize pixel values to [0, 1]
+        if normalize:
+            X = X / 255.0
+        
+        self.X = torch.FloatTensor(X)
+        # Binary classification: 1 if velocity < -0.02, else 0
+        self.Y = torch.FloatTensor((Y < 0.02).astype(np.float32))
+        
+        # Store original velocities for debugging
+        self.Y_original = Y
+    
+    def __len__(self):
+        return len(self.X)
+    
+    def __getitem__(self, idx):
+        return self.X[idx], self.Y[idx]
+
+
 def train_concept_predictor(ground_truth_gym_env, gold_model, concept_list, idx, epochs=25): 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    sample_X, sample_Y = [], []
-    for Xb, Yb in get_concept_labels_avg(ground_truth_gym_env, gold_model, concept_list, num_steps=500, batch_size=100):
-        sample_X.append(Xb)
-        sample_Y.append(Yb[:,idx])
-
-    sample_Y = np.concatenate(sample_Y, axis=0)
-    pos_counts = sample_Y.sum(axis=0)
-    neg_counts = len(sample_Y) - pos_counts
-    pos_weights = torch.tensor([max(min(neg/p, 3.0), 0.5) if p>0 else 1.0
-                                for p, neg in zip(pos_counts, neg_counts)], dtype=torch.float32, device='cuda')
-
+    
     # ----------------------------
     # Initialize model, criterion, optimizer
     # ----------------------------
-    model = CartPoleConceptCNN(len(idx)).to('cuda')
+    model = TemporalCartPoleCNN(len(idx)).to('cuda')
     criterion = FocalLoss(alpha=1.0, gamma=2.0, smoothing=0.05)
-    optimizer = optim.Adam(model.parameters(), lr=3e-4)
+    optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
     best_f1 = 0.0
     device = 'cuda'
@@ -351,18 +493,53 @@ def train_concept_predictor(ground_truth_gym_env, gold_model, concept_list, idx,
     # ----------------------------
     # Generate validation set ONCE before training
     # ----------------------------
-    val_X_list, val_Y_list = [], []
-    for Xb, Yb in get_concept_labels_avg(env, gold_model, concept_list,
-                                        num_steps=1000, batch_size=batch_size):
-        val_X_list.append(Xb)
-        val_Y_list.append(Yb[:,idx])
+    # val_X_list, val_Y_list = [], []
+    # for Xb, Yb in get_concept_labels_avg(env, gold_model, concept_list,
+    #                                     num_steps=1000, batch_size=batch_size):
+    #     val_X_list.append(Xb)
+    #     val_Y_list.append(Yb[:,idx])
 
-    val_X = np.concatenate(val_X_list, axis=0)
-    val_Y = np.concatenate(val_Y_list, axis=0)
+    # val_X = np.concatenate(val_X_list, axis=0)
+    # val_Y = np.concatenate(val_Y_list, axis=0)
 
-    def val_loader(val_X, val_Y, batch_size=100):
-        for i in range(0, len(val_X), batch_size):
-            yield val_X[i:i+batch_size], val_Y[i:i+batch_size]
+    # def val_loader(val_X, val_Y, batch_size=100):
+    #     for i in range(0, len(val_X), batch_size):
+    #         yield val_X[i:i+batch_size], val_Y[i:i+batch_size]
+
+    # train_X_list, train_Y_list = [], []
+    # for Xb, Yb in get_concept_labels_avg(env, gold_model, concept_list,
+    #                                     num_steps=1000, batch_size=batch_size):
+    #     train_X_list.append(Xb)
+    #     train_Y_list.append(Yb[:,idx])
+
+    # train_X_list = val_X_list 
+    # train_Y_list = val_Y_list
+
+    # train_X = np.concatenate(train_X_list, axis=0)
+    # train_Y = np.concatenate(train_Y_list, axis=0)
+
+    # def train_loader(train_X, train_Y, batch_size=100):
+    #     for i in range(0, len(train_X), batch_size):
+    #         yield train_X[i:i+batch_size], train_Y[i:i+batch_size]
+    NUM_EPISODES = 200
+    NUM_FRAMES=4
+    X_data, Y_data = collect_cartpole_data(env,num_episodes=NUM_EPISODES)
+    Y_data = [[c(i) for c in concept_list] for i in Y_data] 
+    Y_data = np.array(Y_data)[:,idx]
+    print(Y_data.shape)
+
+    # Split data
+    train_size = int(0.8 * len(X_data))
+    indices = np.random.permutation(len(X_data))
+    train_indices = indices[:train_size]
+    val_indices = indices[train_size:]
+    X_train, Y_train = X_data[train_indices], Y_data[train_indices]
+    X_val, Y_val = X_data[val_indices], Y_data[val_indices]
+    train_dataset = FrameSequenceDataset(X_train, Y_train)
+    val_dataset = FrameSequenceDataset(X_val, Y_val)
+    BATCH_SIZE = 64
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
     # ----------------------------
     # Training loop
@@ -372,10 +549,9 @@ def train_concept_predictor(ground_truth_gym_env, gold_model, concept_list, idx,
         model.train()
         train_loss, train_count = 0.0, 0
 
-        for Xb, Yb in get_concept_labels_avg(env, gold_model, concept_list, num_steps=num_steps, batch_size=batch_size):
+        for Xb, Yb in train_loader:
             X_tensor = torch.tensor(Xb, dtype=torch.float32, device=device)
-            Y_tensor = torch.tensor(Yb, dtype=torch.float32, device=device)[:,idx]
-
+            Y_tensor = torch.tensor(Yb, dtype=torch.float32, device=device)
             optimizer.zero_grad()
             logits = model(X_tensor)
             loss = criterion(logits, Y_tensor)
@@ -391,12 +567,12 @@ def train_concept_predictor(ground_truth_gym_env, gold_model, concept_list, idx,
         # ----------------------------
         # Validation using the FIXED validation set
         # ----------------------------
-        model.eval()
+        # model.eval()
         val_loss, val_count, f1_list = 0.0, 0, []
         with torch.no_grad():
-            for Xb, Yb in val_loader(val_X, val_Y):
-                X_tensor = torch.tensor(Xb, dtype=torch.float32, device=device)
-                Y_tensor = torch.tensor(Yb, dtype=torch.float32, device=device)
+            for Xb, Yb in val_loader:
+                X_tensor = Xb.to(device)
+                Y_tensor = Yb.to(device)
                 logits = model(X_tensor)
                 loss = criterion(logits, Y_tensor)
                 val_loss += loss.item()
@@ -404,7 +580,6 @@ def train_concept_predictor(ground_truth_gym_env, gold_model, concept_list, idx,
 
                 preds = (torch.sigmoid(logits) > 0.5).cpu().numpy()
                 f1_list.append(f1_score(Y_tensor.cpu().numpy().ravel(), preds.ravel()))
-
         avg_val_loss = val_loss / max(val_count, 1)
         avg_val_f1 = np.mean(f1_list)
 
@@ -419,7 +594,7 @@ def train_concept_predictor(ground_truth_gym_env, gold_model, concept_list, idx,
 
     acc_list = np.zeros(len(idx))
     tot = 0
-    for Xb, Yb in val_loader(val_X, val_Y):
+    for Xb, Yb in val_loader:
         X_tensor = torch.tensor(Xb, dtype=torch.float32, device=device)
         Y_tensor = torch.tensor(Yb, dtype=torch.float32, device=device)
         logits = model(X_tensor)
