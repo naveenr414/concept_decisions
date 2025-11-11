@@ -140,7 +140,8 @@ def get_raw_pixels_mini_grid(env,obs=None):
 def get_raw_pixels_cartpole(env, obs=None):
     pixels = env.render()
     gray = cv2.cvtColor(pixels, cv2.COLOR_RGB2GRAY)
-    small_pixels = cv2.resize(gray, (84,84), interpolation=cv2.INTER_NEAREST).astype(np.uint8)
+    # TODO: Change this, changign the width/height
+    small_pixels = cv2.resize(gray, (240,160), interpolation=cv2.INTER_NEAREST).astype(np.uint8)
     return small_pixels
 
 def can_move(position, direction, grid):
@@ -358,6 +359,29 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
             return env 
         vec_env = SubprocVecEnv([make_env for _ in range(num_envs)])
         gymnasium_env = GymnasiumWrapper(vec_env)
+    elif environment_string == "cart_pole":
+        def make_env():
+            if concept_list is None or use_processed:
+                env = gym.make("CartPole-v1", render_mode="rgb_array")
+                env = Monitor(env)
+                env = FrameSkipWrapper(env, skip=1, get_pixels_fn=get_raw_pixels_cartpole)
+                env = ConceptWrapper(env,None,spaces.Box(
+                        low=0, high=255,
+                        shape=(160,240),  # Height x Width, no color channel
+                        dtype=np.uint8
+                    ),lambda env, obs: obs,use_info_obs=True)
+                env = FrameStack(env,4)
+                env = LazyFramesToNumpy(env)
+                # if use_processed:
+                #     env = OptimizedConceptWrapper(env, fast_predictor, spaces.MultiBinary(len(concept_idx)), lambda env, obs: obs, concept_idx,use_info_obs=True)
+            else:
+                env = Monitor(gym.make("CartPole-v1"))
+                env = ConceptWrapper(env,concept_list,spaces.MultiBinary(len(concept_list)),get_raw_state_cartpole)
+            return env 
+
+        vec_env = SubprocVecEnv([make_env for _ in range(num_envs)])
+
+        gymnasium_env = GymnasiumWrapper(vec_env)
     elif environment_string == "glucose":
         register(
             id="simglucose/adolescent2-custom-v0",
@@ -374,10 +398,11 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
         gymnasium_env = GymnasiumWrapper(vec_env)
 
     elif environment_string  == "mini_grid":
+        num_stack = 1
         def make_env():
             if concept_list is None:
                 env = Monitor(gym.make("MiniGrid-DoorKey-5x5-v0",render_mode="rgb_array"))
-                env = FrameSkipWrapper(env, skip=4, get_pixels_fn=get_raw_pixels_mini_grid)
+                env = FrameSkipWrapper(env, skip=1, get_pixels_fn=get_raw_pixels_mini_grid)
                 env = ConceptWrapper(env,None,spaces.Box(
                         low=0, high=255,
                         shape=(84,84),  # Height x Width, no color channel

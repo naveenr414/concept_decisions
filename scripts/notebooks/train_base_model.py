@@ -17,9 +17,9 @@ import random
 import os
 import resource
 
-torch.cuda.set_per_process_memory_fraction(0.5)
-torch.set_num_threads(1)
-resource.setrlimit(resource.RLIMIT_AS, (30 * 1024 * 1024 * 1024, -1))
+# torch.cuda.set_per_process_memory_fraction(0.5)
+# torch.set_num_threads(1)
+# resource.setrlimit(resource.RLIMIT_AS, (30 * 1024 * 1024 * 1024, -1))
 
 
 is_jupyter = 'ipykernel' in sys.modules

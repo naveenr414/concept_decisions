@@ -18,6 +18,7 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from collections import deque
 from stable_baselines3.common.utils import get_schedule_fn
+from stable_baselines3.common.torch_layers import NatureCNN
 
 
 import numpy as np
@@ -124,11 +125,9 @@ def get_model(environment_string,policy,override={}):
             default_model_dict['n_epochs'] = 4
         elif environment_string == "pong":
             default_model_dict['policy_kwargs'] = {'net_arch': [128,128]}
-            default_model_dict['n_steps'] = 4096
-            default_model_dict['batch_size'] = 256
-            default_model_dict['n_epochs'] = 6
-            default_model_dict['learning_rate'] = 2e-3
-            default_model_dict['ent_coef'] = 0.02
+            default_model_dict['n_steps'] = 1024
+            default_model_dict['batch_size'] = 512
+            default_model_dict['n_epochs'] = 10
         elif environment_string == "boxing":
             default_model_dict['policy_kwargs'] = {'net_arch': [128,128]}
             default_model_dict['n_steps'] = 4096
@@ -138,16 +137,17 @@ def get_model(environment_string,policy,override={}):
             default_model_dict['ent_coef'] = 0.015
     else:
         if environment_string == "cart_pole":
-            default_model_dict['n_steps'] = 2048
-            default_model_dict['batch_size'] = 1024
-            default_model_dict['n_epochs'] = 4
-            default_model_dict['ent_coef'] = 0.0
-            default_model_dict['learning_rate'] = get_schedule_fn(1e-4)
+            default_model_dict['n_steps'] = 4096
+            default_model_dict['batch_size'] = 512
+            default_model_dict['n_epochs'] = 10
+            default_model_dict['ent_coef'] = 0.01
+            default_model_dict['learning_rate'] = 3*10**-4
+            default_model_dict['vf_coef'] = 0.5
             default_model_dict['device'] = 'cuda'
         elif environment_string == 'mini_grid':
-            default_model_dict['n_steps'] = 512
-            default_model_dict['batch_size'] = 4096
-            default_model_dict['n_epochs'] = 10
+            default_model_dict['n_steps'] = 1024
+            default_model_dict['batch_size'] = 1024
+            default_model_dict['n_epochs'] = 4
             default_model_dict['device'] = 'cuda'
         elif environment_string == "pong":
             default_model_dict['n_steps'] = 1024
@@ -409,7 +409,7 @@ def get_concept_labels_avg(env, model, concept_list, num_steps=5000, batch_size=
         Y_batch = np.concatenate(Y_batch, axis=0)
         yield X_batch, Y_batch
         del X_batch, Y_batch
-def collect_cartpole_data(ground_truth_gym_env, gold_model, concept_list, num_episodes=100, use_gold=False):
+def collect_cartpole_data(ground_truth_gym_env, groundtruth_model, concept_list, num_episodes=100, max_episode_length=500,use_gold=False):
     """
     Collect data from CartPole environment - Memory efficient version
     Returns:
@@ -423,17 +423,17 @@ def collect_cartpole_data(ground_truth_gym_env, gold_model, concept_list, num_ep
     
     for episode in range(num_episodes):
         # Use gold model every 20th episode for better data
-        use_gold_this_episode = (episode % 10 == 0)
+        use_gold_this_episode = (episode % 2 == 0)
         
         obs, info = ground_truth_gym_env.reset()
         done = [False for i in range(8)]
         step_count = 0
 
-        for i in range(500):        
+        for i in range(max_episode_length):        
             concepts = [[c(info[i]['observation']) for c in concept_list] for i in range(len(info)) if not done[i]]
             actions = [ground_truth_gym_env.action_space.sample() for _ in range(len(concepts))]
             if use_gold_this_episode:
-                actions = gold_model.predict(concepts)[0] 
+                actions = groundtruth_model.predict(obs)[0] 
             obs, _, _, _, info = ground_truth_gym_env.step(actions)
             for i in range(len(obs)):
                 if np.random.random() < 0.15 and 'observation' in info[i]:
@@ -489,13 +489,24 @@ class FrameSequenceDataset(Dataset):
     def __getitem__(self, idx):
         return self.X[idx], self.Y[idx]
 
-def train_concept_predictor(ground_truth_gym_env, gold_model, concept_list, idx, epochs=25): 
+def train_concept_predictor(ground_truth_gym_env, groundtruth_model, concept_list, idx, environment_string,epochs=25): 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     # ----------------------------
     # Initialize model, criterion, optimizer
     # ----------------------------
-    model = RegularizedMotionAwareCNN(len(idx)).to('cuda')
+
+    if environment_string == "mini_grid":
+        num_frames = 1
+    else:
+        num_frames = 4
+
+    max_episode_length = 500
+    if environment_string == "pong":
+        max_episode_length = 10_000
+        NUM_EPISODES = 5
+
+    model = ConceptPredictorCNN(len(idx), num_frames=num_frames).to(device)
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=3e-4, weight_decay=1e-4)
     
@@ -503,9 +514,9 @@ def train_concept_predictor(ground_truth_gym_env, gold_model, concept_list, idx,
     NUM_EPISODES = 25 
     
     # Collect data
-    X_data, Y_data = collect_cartpole_data(ground_truth_gym_env, gold_model, 
+    X_data, Y_data = collect_cartpole_data(ground_truth_gym_env, groundtruth_model, 
                                            concept_list=concept_list, num_episodes=NUM_EPISODES, 
-                                           use_gold=True)
+                                           use_gold=True,max_episode_length=max_episode_length)
     
     # Process concepts
     Y_data = [[c(i) for c in concept_list] for i in Y_data] 
@@ -655,6 +666,25 @@ def train_concept_predictor(ground_truth_gym_env, gold_model, concept_list, idx,
         print(f"  {status} Concept {i}: {acc:.3f}")
     
     return model, acc_list
+
+class ConceptPredictorCNN(nn.Module):
+    def __init__(self, num_concepts, num_frames=4, features_dim=512, height=84, width=84):
+        super().__init__()
+        # Use a real Box space so SB3 doesn't complain
+        obs_space = gym.spaces.Box(low=0, high=255, shape=(num_frames, height, width), dtype=np.uint8)
+        
+        # NatureCNN automatically normalizes and flattens
+        self.feature_extractor = NatureCNN(obs_space, features_dim)
+        self.classifier = nn.Linear(features_dim, num_concepts)
+    
+    def forward(self, x):
+        # x should be (B, num_frames, H, W)
+        # If your data is (B, H, W, num_frames), permute:
+        if x.ndim == 4 and x.shape[1] not in [1, 3, 4]:
+            x = x.permute(0, 3, 1, 2)
+        features = self.feature_extractor(x)
+        return self.classifier(features)
+
 
 class RegularizedMotionAwareCNN(nn.Module):
     def __init__(self, num_outputs, num_frames=2, input_size=84, dropout=0.2):
