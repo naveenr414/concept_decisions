@@ -2,6 +2,8 @@ import gymnasium as gym
 import numpy as np
 from concept_abstraction.utils import one_hot_state
 import torch 
+import time 
+from stable_baselines3.common.vec_env import VecEnvWrapper
 
 class ConceptEnv(gym.Env):
     """Build a new concept-based environment"""
@@ -123,53 +125,66 @@ class ObservationSubsetWrapper(gym.ObservationWrapper):
         return observation[self.indices]
 
 
-class OptimizedConceptWrapper(gym.ObservationWrapper):
-    def __init__(self, env, fast_predictor, observation_space, get_raw_state, concept_idx,
-                 use_info_obs=False, obs_function=lambda env, obs, info: obs):
-        super().__init__(env)
-        self.observation_space = observation_space
-        self.fast_predictor = fast_predictor  # The FastGPUPredictor instance
-        self.get_raw_state = get_raw_state
-        self.use_info_obs = use_info_obs
-        self.obs_function = obs_function
+class VecConceptWrapper(VecEnvWrapper):
+    """Applies concept prediction to all environments in one batch"""
+    
+    def __init__(self, venv, fast_predictor, concept_idx):
+        super().__init__(venv)
+        self.fast_predictor = fast_predictor
         self.concept_idx = concept_idx
         
-    def reset(self, **kwargs):
-        obs, info = self.env.reset(**kwargs)
-        if self.use_info_obs:
-            return self._process(obs, info), {'observation': self.obs_function(self, info['observation'], info)}
-        return self._process(obs, info), {'observation': self.obs_function(self, obs, info)}
-    
-    def observation(self, obs):
-        return np.array(self._process(obs))
-    
-    def step(self, action):
-        obs, reward, terminated, truncated, info = self.env.step(action)
-        processed_obs = self._process(obs, info)
-        info = dict(info)
+        # Update observation space to concept space
+        self.observation_space = gym.spaces.MultiBinary(len(concept_idx))
         
-        if not self.use_info_obs:
-            info["observation"] = self.obs_function(self, obs, info)
+        # Pre-allocate GPU buffer
+        self.obs_buffer = None
         
-        return processed_obs, reward, terminated, truncated, info
+    def reset(self):
+        obs = self.venv.reset()
+        return self._process_batch(obs)
     
-    def _process(self, obs, info):
+    def step_wait(self):
+        obs, rewards, dones, infos = self.venv.step_wait()
+        processed_obs = self._process_batch(obs)
+        
+        # Store original observations in info
+        for i, info in enumerate(infos):
+            # obs[i] is (4, 84, 84), transpose to (84, 84, 4) for consistency
+            info['observation'] = np.transpose(obs[i], (1, 2, 0))
+            
+        return processed_obs, rewards, dones, infos
+    
+    def _process_batch(self, obs_batch):
+        """Process entire batch in one GPU call"""
         if self.fast_predictor is None:
-            return self.get_raw_state(self, obs)
+            return obs_batch
         
-        processed_obs = self.obs_function(self, obs, info)
-        obs_array = torch.Tensor([processed_obs]).cuda()
+        # obs_batch shape is ALREADY (num_envs, 4, 84, 84) - correct format!
+        num_envs = obs_batch.shape[0]
         
-        # SINGLE MODEL CALL instead of 24 separate calls
-        predictions = self.fast_predictor(obs_array)[0,self.concept_idx]
+        # Normalize to [0, 1] like in training
+        obs_normalized = obs_batch.astype(np.float32) / 255.0
         
-        # Convert GPU tensor to CPU list
-        if hasattr(predictions, 'cpu'):
-            return predictions.cpu().tolist()
-        else:
-            return predictions.tolist()
-
-
+        # NO TRANSPOSE NEEDED - already in correct shape (num_envs, 4, 84, 84)
+        
+        # Allocate buffer once (or reallocate if num_envs changed)
+        if self.obs_buffer is None or self.obs_buffer.shape[0] != num_envs:
+            self.obs_buffer = torch.zeros(
+                (num_envs, 2, 84, 84), 
+                device='cuda', 
+                dtype=torch.float32
+            )
+        # Copy batch to GPU buffer
+        self.obs_buffer[:] = torch.as_tensor(obs_normalized, dtype=torch.float32, device='cuda')
+        
+        # SINGLE batched inference for all environments
+        with torch.no_grad():
+            logits = self.fast_predictor(self.obs_buffer)[:, self.concept_idx]
+            # Apply sigmoid and threshold to binary predictions
+            predictions = (torch.sigmoid(logits) > 0.5).float()
+        
+        # Return as numpy array (num_envs, len(concept_idx))
+        return predictions.cpu().numpy()
 class BinaryObservationSubsetWrapper(gym.ObservationWrapper):
     """Wrapper that selects a subset of observations from a binary
         observation space"""

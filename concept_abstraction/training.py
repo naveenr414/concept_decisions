@@ -17,6 +17,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from collections import deque
+from stable_baselines3.common.utils import get_schedule_fn
 
 
 import numpy as np
@@ -111,10 +112,11 @@ def get_model(environment_string,policy,override={}):
             default_model_dict['n_epochs'] = 5
             default_model_dict['learning_rate'] = 1e-5
         elif environment_string == "cart_pole":
-            default_model_dict['policy_kwargs'] = {'net_arch': [128]}
-            default_model_dict['batch_size'] = 1024
-            default_model_dict['n_epochs'] = 5
-            default_model_dict['ent_coef'] = 0.005
+            default_model_dict['policy_kwargs'] = {'net_arch': [128,128]}
+            default_model_dict['batch_size'] = 512
+            default_model_dict['n_epochs'] = 10
+            default_model_dict['ent_coef'] = 0.01
+            default_model_dict['learning_rate'] = 2.5e-4
         elif environment_string == "mini_grid":
             default_model_dict['learning_rate'] = 3e-4
             default_model_dict['n_steps'] = 1024
@@ -135,7 +137,14 @@ def get_model(environment_string,policy,override={}):
             default_model_dict['learning_rate'] = 1e-3
             default_model_dict['ent_coef'] = 0.015
     else:
-        if environment_string == "cart_pole" or environment_string == "mini_grid":
+        if environment_string == "cart_pole":
+            default_model_dict['n_steps'] = 2048
+            default_model_dict['batch_size'] = 1024
+            default_model_dict['n_epochs'] = 4
+            default_model_dict['ent_coef'] = 0.0
+            default_model_dict['learning_rate'] = get_schedule_fn(1e-4)
+            default_model_dict['device'] = 'cuda'
+        elif environment_string == 'mini_grid':
             default_model_dict['n_steps'] = 512
             default_model_dict['batch_size'] = 4096
             default_model_dict['n_epochs'] = 10
@@ -293,7 +302,7 @@ class TemporalCartPoleCNN(nn.Module):
     CNN that explicitly models temporal information for stacked frames.
     Uses both spatial convolutions and temporal processing.
     """
-    def __init__(self, num_outputs, num_frames=4, input_size=84):
+    def __init__(self, num_outputs, num_frames=8, input_size=84):
         super().__init__()
         self.num_frames = num_frames
         
@@ -400,55 +409,63 @@ def get_concept_labels_avg(env, model, concept_list, num_steps=5000, batch_size=
         Y_batch = np.concatenate(Y_batch, axis=0)
         yield X_batch, Y_batch
         del X_batch, Y_batch
-
-def collect_cartpole_data(ground_truth_gym_env,num_episodes=100):
+def collect_cartpole_data(ground_truth_gym_env, gold_model, concept_list, num_episodes=100, use_gold=False):
     """
-    Collect data from CartPole environment
+    Collect data from CartPole environment - Memory efficient version
     Returns:
-        X: array of shape (N, num_frames, 84, 84) - frame sequences
-        Y: array of shape (N,) - cart velocities
+        X: array of shape (N, 4, 84, 84) - frame sequences (uint8)
+        Y: array of shape (N, ...) - observations (float32)
     """
-    env = gym.make("CartPole-v1", render_mode="rgb_array")
-    
     X_data = []
     Y_data = []
     
     print(f"Collecting data from {num_episodes} episodes...")
     
     for episode in range(num_episodes):
-        obs = ground_truth_gym_env.reset()[0]
+        # Use gold model every 20th episode for better data
+        use_gold_this_episode = (episode % 10 == 0)
         
-        done = False
+        obs, info = ground_truth_gym_env.reset()
+        done = [False for i in range(8)]
         step_count = 0
-        
-        while not done:
-            # Take random action
-            action = ground_truth_gym_env.action_space.sample()
-            
-            obs, reward, terminated, truncated, info = ground_truth_gym_env.step([action for i in range(8)])
-            done = terminated[0] or truncated[0]
-            # Store frame sequence and velocity (obs[1] is cart velocity)
-            X_data.append(np.array(obs[0]))
-            Y_data.append(info[0]['observation'])  # Cart velocity
+
+        for i in range(500):        
+            concepts = [[c(info[i]['observation']) for c in concept_list] for i in range(len(info)) if not done[i]]
+            actions = [ground_truth_gym_env.action_space.sample() for _ in range(len(concepts))]
+            if use_gold_this_episode:
+                actions = gold_model.predict(concepts)[0] 
+            obs, _, _, _, info = ground_truth_gym_env.step(actions)
+            for i in range(len(obs)):
+                if np.random.random() < 0.15 and 'observation' in info[i]:
+                    # Store as uint8 (0-255) instead of float32 (0-1)
+                    X_data.append(obs[i].astype(np.uint8))
+                    Y_data.append(info[i]['observation'])
             
             step_count += 1
         
         if (episode + 1) % 10 == 0:
-            print(f"Episode {episode + 1}/{num_episodes}, steps: {step_count}")
+            print(f"Episode {episode + 1}/{num_episodes}, steps: {step_count}, samples collected: {len(X_data)}")
+            # Print memory usage estimate
+            if len(X_data) > 0:
+                mem_mb = len(X_data) * np.prod(X_data[0].shape) / (1024**2)
+                print(f"  Estimated memory: {mem_mb:.1f} MB")
     
-    env.close()
-    
-    X_data = np.array(X_data, dtype=np.float32)
+    # Convert to numpy arrays
+    # Keep X as uint8 (4x smaller than float32)
+    X_data = np.array(X_data, dtype=np.uint8)
     Y_data = np.array(Y_data, dtype=np.float32)
     
-    print(f"\nCollected {len(X_data)} samples")
-    print(f"X shape: {X_data.shape}")
-    print(f"Y shape: {Y_data.shape}")
-    print(f"Velocity range: [{Y_data.min():.3f}, {Y_data.max():.3f}]")
-    print(f"Samples with velocity < -0.02: {(Y_data < -0.02).sum()} ({100*(Y_data < -0.02).mean():.2f}%)")
+    print(f"\n✅ Collection complete!")
+    print(f"X shape: {X_data.shape}, dtype: {X_data.dtype}, size: {X_data.nbytes / (1024**2):.1f} MB")
+    print(f"Y shape: {Y_data.shape}, dtype: {Y_data.dtype}")
+    
+    # Only compute these stats if Y_data is 1D (single value per sample)
+    if len(Y_data.shape) == 1 or Y_data.shape[1] == 1:
+        print(f"Value range: [{Y_data.min():.3f}, {Y_data.max():.3f}]")
+    else:
+        print(f"Y contains {Y_data.shape[1]} features per sample")
     
     return X_data, Y_data
-
 class FrameSequenceDataset(Dataset):
     def __init__(self, X, Y, normalize=True):
         """
@@ -461,7 +478,7 @@ class FrameSequenceDataset(Dataset):
         
         self.X = torch.FloatTensor(X)
         # Binary classification: 1 if velocity < -0.02, else 0
-        self.Y = torch.FloatTensor((Y < 0.02).astype(np.float32))
+        self.Y = torch.FloatTensor(Y)
         
         # Store original velocities for debugging
         self.Y_original = Y
@@ -472,135 +489,230 @@ class FrameSequenceDataset(Dataset):
     def __getitem__(self, idx):
         return self.X[idx], self.Y[idx]
 
-
 def train_concept_predictor(ground_truth_gym_env, gold_model, concept_list, idx, epochs=25): 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
     
     # ----------------------------
     # Initialize model, criterion, optimizer
     # ----------------------------
-    model = TemporalCartPoleCNN(len(idx)).to('cuda')
-    criterion = FocalLoss(alpha=1.0, gamma=2.0, smoothing=0.05)
-    optimizer = optim.Adam(model.parameters(), lr=1e-4)
-
+    model = RegularizedMotionAwareCNN(len(idx)).to('cuda')
+    criterion = nn.BCEWithLogitsLoss()
+    optimizer = optim.Adam(model.parameters(), lr=3e-4, weight_decay=1e-4)
+    
     best_f1 = 0.0
-    device = 'cuda'
-    num_steps = 1000
-    batch_size = 64
-    env = ground_truth_gym_env
+    NUM_EPISODES = 25 
+    
+    # Collect data
+    X_data, Y_data = collect_cartpole_data(ground_truth_gym_env, gold_model, 
+                                           concept_list=concept_list, num_episodes=NUM_EPISODES, 
+                                           use_gold=True)
+    
+    # Process concepts
+    Y_data = [[c(i) for c in concept_list] for i in Y_data] 
+    Y_data = np.array(Y_data, dtype=np.float32)[:, idx]  # Use float32 explicitly
+    
+    print(f"X_data shape: {X_data.shape}, dtype: {X_data.dtype}")
+    print(f"Y_data shape: {Y_data.shape}, dtype: {Y_data.dtype}")
     
     # ----------------------------
-    # Generate validation set ONCE before training
+    # MEMORY EFFICIENT: Use indices instead of copying arrays
     # ----------------------------
-    # val_X_list, val_Y_list = [], []
-    # for Xb, Yb in get_concept_labels_avg(env, gold_model, concept_list,
-    #                                     num_steps=1000, batch_size=batch_size):
-    #     val_X_list.append(Xb)
-    #     val_Y_list.append(Yb[:,idx])
-
-    # val_X = np.concatenate(val_X_list, axis=0)
-    # val_Y = np.concatenate(val_Y_list, axis=0)
-
-    # def val_loader(val_X, val_Y, batch_size=100):
-    #     for i in range(0, len(val_X), batch_size):
-    #         yield val_X[i:i+batch_size], val_Y[i:i+batch_size]
-
-    # train_X_list, train_Y_list = [], []
-    # for Xb, Yb in get_concept_labels_avg(env, gold_model, concept_list,
-    #                                     num_steps=1000, batch_size=batch_size):
-    #     train_X_list.append(Xb)
-    #     train_Y_list.append(Yb[:,idx])
-
-    # train_X_list = val_X_list 
-    # train_Y_list = val_Y_list
-
-    # train_X = np.concatenate(train_X_list, axis=0)
-    # train_Y = np.concatenate(train_Y_list, axis=0)
-
-    # def train_loader(train_X, train_Y, batch_size=100):
-    #     for i in range(0, len(train_X), batch_size):
-    #         yield train_X[i:i+batch_size], train_Y[i:i+batch_size]
-    NUM_EPISODES = 200
-    NUM_FRAMES=4
-    X_data, Y_data = collect_cartpole_data(env,num_episodes=NUM_EPISODES)
-    Y_data = [[c(i) for c in concept_list] for i in Y_data] 
-    Y_data = np.array(Y_data)[:,idx]
-    print(Y_data.shape)
-
-    # Split data
     train_size = int(0.8 * len(X_data))
     indices = np.random.permutation(len(X_data))
     train_indices = indices[:train_size]
     val_indices = indices[train_size:]
-    X_train, Y_train = X_data[train_indices], Y_data[train_indices]
-    X_val, Y_val = X_data[val_indices], Y_data[val_indices]
-    train_dataset = FrameSequenceDataset(X_train, Y_train)
-    val_dataset = FrameSequenceDataset(X_val, Y_val)
+    
+    # Don't create copies - use SubsetDataset or index on-the-fly
+    class IndexedDataset(Dataset):
+        def __init__(self, X, Y, indices, normalize=True):
+            self.X = X  # Keep reference, don't copy
+            self.Y = Y  # Keep reference, don't copy
+            self.indices = indices
+            self.normalize = normalize
+        
+        def __len__(self):
+            return len(self.indices)
+        
+        def __getitem__(self, idx):
+            actual_idx = self.indices[idx]
+            x = self.X[actual_idx]
+            y = self.Y[actual_idx]
+            
+            # Normalize on-the-fly to save memory
+            if self.normalize:
+                x = x.astype(np.float32) / 255.0
+            
+            return torch.from_numpy(x), torch.from_numpy(y)
+    
+    # Create datasets using indices (no data copying)
+    train_dataset = IndexedDataset(X_data, Y_data, train_indices)
+    val_dataset = IndexedDataset(X_data, Y_data, val_indices)
+    
     BATCH_SIZE = 64
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
-
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, 
+                             num_workers=2, pin_memory=True)  # Speed up data loading
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False,
+                           num_workers=2, pin_memory=True)
+    
     # ----------------------------
     # Training loop
     # ----------------------------
+    patience = 10
+    patience_counter = 0
+    
     for epoch in range(epochs):
         epoch_start = time.time()
         model.train()
         train_loss, train_count = 0.0, 0
-
+        
         for Xb, Yb in train_loader:
-            X_tensor = torch.tensor(Xb, dtype=torch.float32, device=device)
-            Y_tensor = torch.tensor(Yb, dtype=torch.float32, device=device)
+            X_tensor = Xb.to(device, non_blocking=True)
+            Y_tensor = Yb.to(device, non_blocking=True)
+            
             optimizer.zero_grad()
             logits = model(X_tensor)
             loss = criterion(logits, Y_tensor)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
-
+            
             train_loss += loss.item()
             train_count += 1
-
+        
         avg_train_loss = train_loss / max(train_count, 1)
         
         # ----------------------------
-        # Validation using the FIXED validation set
+        # Validation
         # ----------------------------
-        # model.eval()
-        val_loss, val_count, f1_list = 0.0, 0, []
+        model.eval()
+        val_loss, val_count = 0.0, 0
+        all_preds = []
+        all_targets = []
+        
         with torch.no_grad():
             for Xb, Yb in val_loader:
-                X_tensor = Xb.to(device)
-                Y_tensor = Yb.to(device)
+                X_tensor = Xb.to(device, non_blocking=True)
+                Y_tensor = Yb.to(device, non_blocking=True)
+                
                 logits = model(X_tensor)
                 loss = criterion(logits, Y_tensor)
                 val_loss += loss.item()
                 val_count += 1
-
+                
                 preds = (torch.sigmoid(logits) > 0.5).cpu().numpy()
-                f1_list.append(f1_score(Y_tensor.cpu().numpy().ravel(), preds.ravel()))
+                all_preds.append(preds)
+                all_targets.append(Y_tensor.cpu().numpy())
+        
+        # Compute F1 once on all data
+        all_preds = np.concatenate(all_preds, axis=0)
+        all_targets = np.concatenate(all_targets, axis=0)
+        avg_val_f1 = f1_score(all_targets.ravel(), all_preds.ravel())
+        
         avg_val_loss = val_loss / max(val_count, 1)
-        avg_val_f1 = np.mean(f1_list)
-
         epoch_time = time.time() - epoch_start
+        
         print(f"📉 Epoch {epoch+1}/{epochs} | "
-                f"Train Loss {avg_train_loss:.4f} | Val Loss {avg_val_loss:.4f}, "
-                f"Val Macro F1 {avg_val_f1:.4f} | Took {epoch_time:.2f} sec")
-
+              f"Train Loss {avg_train_loss:.4f} | Val Loss {avg_val_loss:.4f} | "
+              f"Val F1 {avg_val_f1:.4f} | Took {epoch_time:.2f}s")
+        
         if avg_val_f1 > best_f1:
             best_f1 = avg_val_f1
-            best_model_state = model.state_dict()
-
+            best_model_state = model.state_dict().copy()
+            patience_counter = 0
+        else:
+            patience_counter += 1
+        
+        if patience_counter >= patience:
+            print(f"Early stopping at epoch {epoch+1}")
+            break
+    
+    # Load best model
+    model.load_state_dict(best_model_state)
+    
+    # ----------------------------
+    # Calculate per-concept accuracy
+    # ----------------------------
+    model.eval()
     acc_list = np.zeros(len(idx))
     tot = 0
-    for Xb, Yb in val_loader:
-        X_tensor = torch.tensor(Xb, dtype=torch.float32, device=device)
-        Y_tensor = torch.tensor(Yb, dtype=torch.float32, device=device)
-        logits = model(X_tensor)
-        preds = (torch.sigmoid(logits) > 0.5).cpu().numpy()
-        acc_list += np.sum(preds == Y_tensor.cpu().numpy(),axis=0)
-        tot += len(logits)
-    acc_list /= tot 
     
-    return model,acc_list 
+    with torch.no_grad():
+        for Xb, Yb in val_loader:
+            X_tensor = Xb.to(device)
+            Y_tensor = Yb.to(device)
+            
+            logits = model(X_tensor)
+            preds = (torch.sigmoid(logits) > 0.5).cpu().numpy()
+            
+            acc_list += np.sum(preds == Y_tensor.cpu().numpy(), axis=0)
+            tot += len(logits)
+    
+    acc_list /= tot
+    
+    print(f"\n📊 Per-concept accuracy:")
+    for i, acc in enumerate(acc_list):
+        status = "✅" if acc >= 0.85 else "⚠️" if acc >= 0.75 else "❌"
+        print(f"  {status} Concept {i}: {acc:.3f}")
+    
+    return model, acc_list
+
+class RegularizedMotionAwareCNN(nn.Module):
+    def __init__(self, num_outputs, num_frames=2, input_size=84, dropout=0.2):
+        super().__init__()
+        self.num_frames = num_frames
+        
+        # Separate encoders for appearance and motion
+        self.appearance_encoder = nn.Sequential(
+            nn.Conv2d(num_frames, 32, kernel_size=8, stride=4, padding=2),
+            nn.ReLU(),
+            nn.BatchNorm2d(32),
+        )
+        
+        self.motion_encoder = nn.Sequential(
+            nn.Conv2d(num_frames - 1, 32, kernel_size=8, stride=4, padding=2),
+            nn.ReLU(),
+            nn.BatchNorm2d(32),
+        )
+        
+        # Fusion layer
+        self.fusion = nn.Sequential(
+            nn.Conv2d(64, 64, kernel_size=4, stride=2, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(64),
+            
+            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(),
+            nn.BatchNorm2d(128),
+        )
+        
+        with torch.no_grad():
+            dummy_appear = torch.zeros(1, num_frames, input_size, input_size)
+            dummy_motion = torch.zeros(1, num_frames - 1, input_size, input_size)
+            appear_feat = self.appearance_encoder(dummy_appear)
+            motion_feat = self.motion_encoder(dummy_motion)
+            fused = self.fusion(torch.cat([appear_feat, motion_feat], dim=1))
+            feature_size = fused.view(1, -1).shape[1]
+        
+        self.classifier = nn.Sequential(
+            nn.Linear(feature_size, 256),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(256, num_outputs)
+        )
+    
+    def forward(self, x):
+        batch_size = x.shape[0]
+        
+        # Appearance pathway
+        appear_features = self.appearance_encoder(x)
+        
+        # Motion pathway (frame differences)
+        motion = x[:, 1:] - x[:, :-1]
+        motion_features = self.motion_encoder(motion)
+        
+        # Fuse
+        combined = torch.cat([appear_features, motion_features], dim=1)
+        fused = self.fusion(combined)
+        features = fused.view(batch_size, -1)
+        
+        return self.classifier(features)

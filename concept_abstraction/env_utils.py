@@ -7,148 +7,6 @@ import torch.optim as optim
 import random
 
 
-def get_average_reward(vec_env, model, max_steps=50000,max_steps_per=5000):
-    """
-    Evaluate a model on a SubprocVecEnv (or any VecEnv) and return the average reward.
-
-    Arguments:
-        vec_env: SB3 VecEnv (SubprocVecEnv, DummyVecEnv, etc.)
-            But in Gymnasium Form
-        model: Object with `predict` function
-        num_restarts: Number of episodes to average over
-        max_steps: Max steps per episode
-
-    Returns:
-        Float: average reward
-    """
-    num_envs = vec_env.num_envs
-    episode_rewards = [0]
-    rewards_accum = np.zeros(num_envs)
-    obs, _ = vec_env.reset()
-    total_steps = 0
-    steps_per = np.zeros(num_envs)
-
-    while total_steps < max_steps:
-        actions, _ = model.predict(obs)
-        obs, rewards, terminated, truncated, infos = vec_env.step(actions)
-        rewards_accum += rewards
-        total_steps += num_envs 
-        steps_per += 1
-
-        for i in range(num_envs):
-            if terminated[i] or truncated[i] or steps_per[i] >= max_steps_per:
-                episode_rewards.append(rewards_accum[i])
-                rewards_accum[i] = 0  # reset for next episode
-                steps_per[i] = 0
-    return np.mean(episode_rewards)
-
-def get_average_reward_mimic(env, model, max_steps=50000,max_steps_per=100):
-    """
-    Evaluate a model on a SubprocVecEnv (or any VecEnv) and return the average reward.
-
-    Arguments:
-        vec_env: SB3 VecEnv (SubprocVecEnv, DummyVecEnv, etc.)
-            But in Gymnasium Form
-        model: Object with `predict` function
-        num_restarts: Number of episodes to average over
-        max_steps: Max steps per episode
-
-    Returns:
-        Float: average reward
-    """
-    episode_rewards = []
-    obs, info = env.reset()
-    total_steps = 0
-    rewards_accum = 0
-    steps_per = 0
-
-    while total_steps < max_steps:
-        valid_action =  np.sum(env.transitions[info['observation']],axis=1)
-
-        if not hasattr(model,"policy"):
-            if np.sum(valid_action) == 0:
-                action = env.action_space.sample()
-            else:
-                action = random.choice([idx for idx,i in enumerate(valid_action) if i>0])
-        else:
-            valid_action = torch.ones(len(valid_action))# torch.Tensor(valid_action).to(model.device)
-            action = model.policy.get_distribution(torch.Tensor(obs).unsqueeze(0).to(model.device)).distribution.probs 
-            action *= valid_action
-            action = torch.argmax(action).item()
-        obs, rewards, terminated, truncated, info = env.step(action)
-        if rewards == -10:
-            rewards = 0.
-            
-        rewards_accum += rewards
-        total_steps += 1 
-        steps_per += 1
-        if terminated or truncated or steps_per >= max_steps_per:
-            episode_rewards.append(rewards_accum)
-            rewards_accum = 0  # reset for next episode
-            steps_per = 0
-            obs, info = env.reset()
-    return episode_rewards
-
-
-def rollout_pi_estimates(model, env, concept_list, num_rollouts=200, max_steps=2500,mimic=False):
-    """
-    Estimate the policy/action pairs for different states using a vectorized environment.
-    
-    Arguments:
-        model: policy with `predict(obs, deterministic=True)`
-        env: vectorized Gymnasium environment (e.g., SubprocVecEnv)
-        concept_list: list of concept extraction functions
-        num_rollouts: total number of rollouts to collect (across all envs)
-        max_steps: max steps per rollout
-    
-    Returns:
-        pair_list: list of (concept, action) pairs
-    """
-    num_envs = env.num_envs
-    pair_list = []
-
-    rollouts_done = 0
-    steps = 0
-
-    # Initial reset
-    obs, infos = env.reset()
-
-    while rollouts_done < num_rollouts and steps < max_steps * num_rollouts:
-        # Compute concepts for each env
-        concepts = []
-        for i in range(num_envs):
-            info_i = infos[i] if infos and len(infos) > i else {}
-            obs_i = obs[i]
-            concepts.append([c(info_i.get("observation", obs_i)) for c in concept_list])
-
-        # Predict actions
-        actions = []
-        for i in range(num_envs):
-            if mimic:
-                valid_action =  np.sum(env.envs[0].transitions[infos[i]['observation']],axis=1)
-                valid_action = torch.Tensor(valid_action).to(model.device)
-                action = model.policy.get_distribution(torch.Tensor(obs_i).unsqueeze(0).to(model.device)).distribution.probs 
-                action *= valid_action
-                action = torch.argmax(action).item()
-            else:
-                action, _ = model.predict(obs[i], deterministic=True)
-            actions.append(int(action))
-            pair_list.append((concepts[i], int(action)))
-
-        # Step environments
-        next_obs, rewards, terms, truncs, infos = env.step(actions)
-        dones = np.logical_or(terms, truncs)
-
-        # Count finished rollouts
-        for d in dones:
-            if d:
-                rollouts_done += 1
-
-        obs = next_obs
-        steps += 1
-
-    return pair_list
-
 class QNetwork(nn.Module):
     """Simple neural network for Q-function approximation"""
     def __init__(self, state_dim, action_dim, hidden_dim=64):
@@ -163,94 +21,6 @@ class QNetwork(nn.Module):
     
     def forward(self, state):
         return self.network(state)
-
-class TDQLearning:
-    """Improved TD Learning for Q-value estimation with target network"""
-    def __init__(self, state_dim, action_dim, lr=0.0001, gamma=0.99, epsilon=0.05):
-        self.state_dim = state_dim
-        self.action_dim = action_dim
-        self.gamma = gamma
-        self.epsilon = epsilon
-        
-        # Q-network and target network
-        self.q_net = QNetwork(state_dim, action_dim)
-        self.target_net = QNetwork(state_dim, action_dim)
-        self.optimizer = optim.Adam(self.q_net.parameters(), lr=lr)
-        
-        # Copy weights to target network
-        self.target_net.load_state_dict(self.q_net.state_dict())
-        
-        # Experience replay buffer
-        self.replay_buffer = deque(maxlen=10000)
-        self.update_count = 0
-        self.target_update_freq = 100  # Update target network every 100 updates
-        
-    def add_experience(self, state, action, reward, next_state, done):
-        """Add experience to replay buffer"""
-        self.replay_buffer.append((state, action, reward, next_state, done))
-    
-    def get_q_value(self, state, action):
-        """Get Q-value for a specific state-action pair"""
-        with torch.no_grad():
-            state_tensor = torch.FloatTensor(state).unsqueeze(0)
-            q_values = self.q_net(state_tensor)
-            return q_values[0][action].item()
-    
-    def get_action(self, state, deterministic=False):
-        """Get action using epsilon-greedy policy"""
-        if not deterministic and np.random.rand() < self.epsilon:
-            return np.random.randint(self.action_dim)
-        
-        with torch.no_grad():
-            state_tensor = torch.FloatTensor(state).unsqueeze(0)
-            q_values = self.q_net(state_tensor)
-            return q_values.argmax().item()
-    
-    def update(self, batch_size=32):
-        """Update Q-network using TD learning with target network"""
-        if len(self.replay_buffer) < batch_size:
-            return None
-        
-        # Sample batch from replay buffer
-        batch = random.sample(self.replay_buffer, batch_size)
-        states, actions, rewards, next_states, dones = zip(*batch)
-        
-        states = torch.FloatTensor(states)
-        actions = torch.LongTensor(actions)
-        rewards = torch.FloatTensor(rewards)
-        next_states = torch.FloatTensor(next_states)
-        dones = torch.BoolTensor(dones)
-        
-        # Current Q-values from main network
-        current_q_values = self.q_net(states).gather(1, actions.unsqueeze(1))
-        
-        # Next Q-values from target network (stable targets)
-        with torch.no_grad():
-            next_q_values = self.target_net(next_states).max(1)[0]
-            td_targets = rewards + (self.gamma * next_q_values * ~dones)
-        
-        # TD loss with gradient clipping
-        loss = nn.MSELoss()(current_q_values.squeeze(), td_targets)
-        
-        # Update network
-        self.optimizer.zero_grad()
-        loss.backward()
-        # Clip gradients to prevent exploding gradients
-        torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), max_norm=1.0)
-        self.optimizer.step()
-        
-        self.update_count += 1
-        
-        # Update target network periodically
-        if self.update_count % self.target_update_freq == 0:
-            self.target_net.load_state_dict(self.q_net.state_dict())
-            print(f"Updated target network at step {self.update_count}")
-        
-        return loss.item()
-    
-    def decay_epsilon(self, decay_rate=0.995, min_epsilon=0.01):
-        """Decay exploration rate"""
-        self.epsilon = max(min_epsilon, self.epsilon * decay_rate)
 
 class QNetwork(nn.Module):
     """Simple but stable neural network for Q-function approximation"""
@@ -566,6 +336,102 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
         return td_learner 
     else:
         return q_estimate_list
+
+def rollout_pi_estimates(model, env, concept_list, num_rollouts=200, max_steps=2500,mimic=False):
+    """
+    Estimate the policy/action pairs for different states using a vectorized environment.
+    
+    Arguments:
+        model: policy with `predict(obs, deterministic=True)`
+        env: vectorized Gymnasium environment (e.g., SubprocVecEnv)
+        concept_list: list of concept extraction functions
+        num_rollouts: total number of rollouts to collect (across all envs)
+        max_steps: max steps per rollout
+    
+    Returns:
+        pair_list: list of (concept, action) pairs
+    """
+    num_envs = env.num_envs
+    pair_list = []
+
+    rollouts_done = 0
+    steps = 0
+
+    # Initial reset
+    obs, infos = env.reset()
+
+    while rollouts_done < num_rollouts and steps < max_steps * num_rollouts:
+        # Compute concepts for each env
+        concepts = []
+        for i in range(num_envs):
+            info_i = infos[i] if infos and len(infos) > i else {}
+            obs_i = obs[i]
+            concepts.append([c(info_i.get("observation", obs_i)) for c in concept_list])
+
+        # Predict actions
+        actions = []
+        for i in range(num_envs):
+            if mimic:
+                valid_action =  np.sum(env.envs[0].transitions[infos[i]['observation']],axis=1)
+                valid_action = torch.Tensor(valid_action).to(model.device)
+                action = model.policy.get_distribution(torch.Tensor(obs_i).unsqueeze(0).to(model.device)).distribution.probs 
+                action *= valid_action
+                action = torch.argmax(action).item()
+            else:
+                action, _ = model.predict(obs[i], deterministic=True)
+            actions.append(int(action))
+            pair_list.append((concepts[i], int(action)))
+
+        # Step environments
+        next_obs, rewards, terms, truncs, infos = env.step(actions)
+        dones = np.logical_or(terms, truncs)
+
+        # Count finished rollouts
+        for d in dones:
+            if d:
+                rollouts_done += 1
+
+        obs = next_obs
+        steps += 1
+
+    return pair_list
+
+
+def get_average_reward(vec_env, model, max_steps=50000,max_steps_per=5000):
+    """
+    Evaluate a model on a SubprocVecEnv (or any VecEnv) and return the average reward.
+
+    Arguments:
+        vec_env: SB3 VecEnv (SubprocVecEnv, DummyVecEnv, etc.)
+            But in Gymnasium Form
+        model: Object with `predict` function
+        num_restarts: Number of episodes to average over
+        max_steps: Max steps per episode
+
+    Returns:
+        Float: average reward
+    """
+    num_envs = vec_env.num_envs
+    episode_rewards = [0]
+    rewards_accum = np.zeros(num_envs)
+    obs, _ = vec_env.reset()
+    total_steps = 0
+    steps_per = np.zeros(num_envs)
+
+    while total_steps < max_steps:
+        actions, _ = model.predict(obs)
+        obs, rewards, terminated, truncated, infos = vec_env.step(actions)
+        rewards_accum += rewards
+        total_steps += num_envs 
+        steps_per += 1
+
+        for i in range(num_envs):
+            if terminated[i] or truncated[i] or steps_per[i] >= max_steps_per:
+                episode_rewards.append(rewards_accum[i])
+                rewards_accum[i] = 0  # reset for next episode
+                steps_per[i] = 0
+    return np.mean(episode_rewards)
+
 def list_to_string(obs):
     """Convert a list of numbers to its string concatenated version
     

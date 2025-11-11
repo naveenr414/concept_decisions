@@ -394,30 +394,6 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
         vec_env = SubprocVecEnv([make_env for _ in range(num_envs)])
         gymnasium_env = GymnasiumWrapper(vec_env)
 
-    elif environment_string == "cart_pole":
-        def make_env():
-            if concept_list is None or use_processed:
-                env = gym.make("CartPole-v1", render_mode="rgb_array")
-                env = Monitor(env)
-                env = FrameSkipWrapper(env, skip=1, get_pixels_fn=get_raw_pixels_cartpole)
-                env = ConceptWrapper(env,None,spaces.Box(
-                        low=0, high=255,
-                        shape=(84,84),  # Height x Width, no color channel
-                        dtype=np.uint8
-                    ),lambda env, obs: obs,use_info_obs=True)
-                env = FrameStack(env,4)
-                env = LazyFramesToNumpy(env)
-                if use_processed:
-                    env = OptimizedConceptWrapper(env, fast_predictor, spaces.MultiBinary(len(concept_idx)), lambda env, obs: obs, concept_idx,use_info_obs=True)
-            else:
-                env = Monitor(gym.make("CartPole-v1"))
-                env = ConceptWrapper(env,concept_list,spaces.MultiBinary(len(concept_list)),get_raw_state_cartpole)
-            return env 
-
-        vec_env = SubprocVecEnv([make_env for _ in range(num_envs)])
-
-        gymnasium_env = GymnasiumWrapper(vec_env)
-
     elif environment_string == "boxing":
         if concept_list is None:
             vec_env = get_n_atari_env(num_envs,"BoxingNoFrameskip-v4",None,gym.spaces.Box(

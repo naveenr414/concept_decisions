@@ -1,8 +1,4 @@
 import numpy as np
-from sklearn.cluster import MiniBatchKMeans
-from sklearn.model_selection import train_test_split
-import pandas as pd 
-import gymnasium as gym
 import hashlib 
 
 ### Cyclic Concepts
@@ -236,8 +232,12 @@ def get_concepts(environment_string,concept_source,seed):
 
     human_selected['cart_pole'] = [get_cart_pole_concept(i) for i in range(4)]
     full_lst = []
-    for threshold in [-0.02,0,0.02]:
-        full_lst += binarize_function_list( [get_cart_pole_concept(i) for i in range(4)],[threshold for i in range(4)])
+
+    thresholds = [[-0.02,0.02],[-0.2,-0.1,0.1,0.2],[-0.02,0.02],[-0.3,-0.15,0.15,0.3]]
+
+    for i in range(4):
+        for t in thresholds[i]:
+            full_lst.append(less_function(get_cart_pole_concept(i),t))   
     human_selected_binary['cart_pole'] = full_lst
 
     human_selected['mini_grid'] = get_all_mini_grid_concepts()

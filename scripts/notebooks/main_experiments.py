@@ -52,17 +52,17 @@ if is_main:
     if is_jupyter: 
         # Basics 
         seed        = 42
-        environment_string = "pong"
+        environment_string = "cart_pole"
         gold_timesteps = 4_000_000
-        training_timesteps = 4_000_000
-        num_concepts_selected = 80
+        training_timesteps = 1_000_000
+        num_concepts_selected = 24
         selection_function = "q_value"
         # Experiment #1 & #2
-        run_basic = True
+        run_basic = False
         run_iterative = False 
         run_two_stage = False  
-        run_imperfect=False
-        run_intervention=False
+        run_imperfect=True
+        run_intervention=True
         # Experiment #3
         cbm_accuracy_by_concept = None 
         intervention_probability = 0
@@ -263,23 +263,16 @@ if is_main and run_basic:
 if is_main and run_imperfect:
     results['inaccurate_comparison'] = {}
 
-
 if is_main and run_imperfect:
     greedy_inaccurate_reward = {}
-    for modification in ["continuous","binary"]:
-        if modification == "continuous" and cbm_std_by_concept is not None:
-            modified_concept_predictors = [inaccurate_concepts_continuous(func,0,std) for func,std in zip(concept_list,cbm_std_by_concept)]
-        elif modification == "binary" and cbm_accuracy_by_concept is not None:
-            modified_concept_predictors = [inaccurate_concepts_binary(func,acc,seed) for (func,acc) in zip(concept_list,cbm_accuracy_by_concept)]
-        else:
-            continue 
-        subset_concept, greedy_idx = greedy_selection(modified_concept_predictors,num_concepts_selected,selection_function,q_estimates,concept_source)
-        env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_error_greedy".format(environment_string))
-        greedy_inaccurate_reward[modification] = {
-            'reward': evaluate_model(environment_string,eval_env,additional_info,model,seed),
-            'concepts': greedy_idx
-        }
+    modified_concept_predictors = [inaccurate_concepts_binary(func,acc,seed) for (func,acc) in zip(concept_list,cbm_accuracy_by_concept)]
+    subset_concept, greedy_idx = greedy_selection(modified_concept_predictors,num_concepts_selected,selection_function,q_estimates,concept_source)
+    env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
+    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_error_greedy".format(environment_string))
+    greedy_inaccurate_reward = {
+        'reward': evaluate_model(environment_string,eval_env,additional_info,model,seed),
+        'concepts': greedy_idx
+    }
 
     if greedy_inaccurate_reward != {}:
         results['inaccurate_comparison']['greedy'] = greedy_inaccurate_reward
@@ -287,19 +280,12 @@ if is_main and run_imperfect:
 
 if is_main and run_imperfect:
     lp_inaccurate_reward = {}
-    for modification in ["continuous","binary"]:
-        if modification == "continuous" and cbm_std_by_concept is not None:
-            modified_concept_predictors = [inaccurate_concepts_continuous(func,0,std) for func,std in zip(concept_list,cbm_std_by_concept)]
-        elif modification == "binary" and cbm_accuracy_by_concept is not None:
-            modified_concept_predictors = [inaccurate_concepts_binary(func,acc,seed) for func,acc in zip(concept_list,cbm_accuracy_by_concept)]
-        else:
-            continue 
-        _, lp_idx = lp_based_selection(ground_truth_gym_env,modified_concept_predictors,num_concepts_selected,selection_function,q_estimates,concept_source)
-        subset_concept = [modified_concept_predictors[i] for i in lp_idx]
-        env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_error_lp".format(environment_string))
-        lp_inaccurate_reward[modification] = { 'reward': evaluate_model(environment_string,eval_env,additional_info,model,seed),
-        'concepts': lp_idx}
+    modified_concept_predictors = [inaccurate_concepts_binary(func,acc,seed) for func,acc in zip(concept_list,cbm_accuracy_by_concept)]
+    _, lp_idx = lp_based_selection(ground_truth_gym_env,modified_concept_predictors,num_concepts_selected,selection_function,q_estimates,concept_source)
+    subset_concept = [modified_concept_predictors[i] for i in lp_idx]
+    env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
+    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_error_lp".format(environment_string))
+    lp_inaccurate_reward = { 'reward': evaluate_model(environment_string,eval_env,additional_info,model,seed),'concepts': lp_idx}
 
     if lp_inaccurate_reward != {}:
         results['inaccurate_comparison']['lp'] = lp_inaccurate_reward
@@ -319,21 +305,6 @@ if is_main and run_imperfect:
         results['inaccurate_comparison']['multiple_lp'] = multiple_lp_selection_reward
         print(multiple_lp_selection_reward)
 
-if is_main and run_imperfect:
-    multiple_lp_selection_reward = {}
-    modified_concept_predictors = [inaccurate_concepts_binary(func,acc,seed) for func,acc in zip(concept_list,cbm_accuracy_by_concept)]
-    q_estimates_error = rollout_q_estimates_td(groundtruth_model,ground_truth_gym_env,modified_concept_predictors)
-    subset_concept, multiple_idx = multiple_lp_selection(ground_truth_gym_env,modified_concept_predictors,num_concepts_selected,selection_function,q_estimates_error,concept_source)
-    env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_error_multiple".format(environment_string))
-    multiple_lp_selection_reward = {}
-    multiple_lp_selection_reward['reward'] = evaluate_model(environment_string,eval_env,additional_info,model,seed)
-    multiple_lp_selection_reward['concepts'] = multiple_idx
-
-    if multiple_lp_selection_reward != {}:
-        results['inaccurate_comparison']['multiple_lp'] = multiple_lp_selection_reward
-        print(multiple_lp_selection_reward)
-
 # ### Intervention
 
 if is_main and run_intervention and intervention_accuracy_by_concept is not None:
@@ -341,24 +312,16 @@ if is_main and run_intervention and intervention_accuracy_by_concept is not None
 
 if is_main and run_intervention:
     greedy_intervention_reward = {}
-    for modification in ["binary"]:
-        if modification == "binary" and cbm_accuracy_by_concept is not None and intervention_accuracy_by_concept is not None:
-            modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,intervention_probability,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
-        else:
-            continue 
-        _, greedy_idx = greedy_selection(concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
-        subset_concept = [modified_concept_predictors[i] for i in greedy_idx]
-        env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_intervention_greedy".format(environment_string))
+    modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,intervention_probability,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
+    _, greedy_idx = greedy_selection(concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
+    subset_concept = [modified_concept_predictors[i] for i in greedy_idx]
+    env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
+    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_intervention_greedy".format(environment_string))
 
-        modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,intervention_probability,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
-        subset_concept = [modified_concept_predictors[i] for i in greedy_idx]
-        env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-
-        greedy_intervention_reward[modification] = {
-            'reward': evaluate_model(environment_string,eval_env,additional_info,model,seed),
-            'concepts': greedy_idx
-        }
+    greedy_intervention_reward] = {
+        'reward': evaluate_model(environment_string,eval_env,additional_info,model,seed),
+        'concepts': greedy_idx
+    }
 
     if greedy_intervention_reward != {}:
         results['intervention_comparison']['greedy'] = greedy_intervention_reward
@@ -366,104 +329,37 @@ if is_main and run_intervention:
 
 if is_main and run_intervention:
     lp_intervention_reward = {}
-    for modification in ["binary"]:
-        if modification == "binary" and cbm_accuracy_by_concept is not None and intervention_accuracy_by_concept is not None:
-            modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,intervention_probability,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
-        else:
-            continue 
-        _, lp_idx = lp_based_selection(ground_truth_gym_env,concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
-        subset_concept = [modified_concept_predictors[i] for i in lp_idx]
-        env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_intervention_lp".format(environment_string))
+    modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,intervention_probability,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
+    _, lp_idx = lp_based_selection(ground_truth_gym_env,concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
+    subset_concept = [modified_concept_predictors[i] for i in lp_idx]
+    env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
+    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_intervention_lp".format(environment_string))
 
-        modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,intervention_probability,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
-        subset_concept = [modified_concept_predictors[i] for i in lp_idx]
-
-        env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-
-        lp_intervention_reward[modification] = {
-            'reward': evaluate_model(environment_string,eval_env,additional_info,model,seed),
-            'concepts': lp_idx
-        }
+    lp_intervention_reward = {
+        'reward': evaluate_model(environment_string,eval_env,additional_info,model,seed),
+        'concepts': lp_idx
+    }
 
     if lp_intervention_reward != {}:
         results['intervention_comparison']['lp'] = lp_intervention_reward
         print(lp_intervention_reward)
 
 if is_main and run_intervention:
-    multiple_lp_intervention_reward = {}
     modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,intervention_probability,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
     subset_concept, multiple_idx = multiple_lp_selection(ground_truth_gym_env,modified_concept_predictors,num_concepts_selected,selection_function,q_estimates,concept_source)
     env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-
     model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_intervention_multiple".format(environment_string))
-    multiple_lp_intervention_reward = {}
-    modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,intervention_probability,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
-    subset_concept = [modified_concept_predictors[i] for i in multiple_idx]
-    env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-    multiple_lp_intervention_reward['reward'] = evaluate_model(environment_string,eval_env,additional_info,model,seed)
-    multiple_lp_intervention_reward['concepts'] = multiple_idx
-
+    multiple_lp_intervention_reward = {
+        'reward': evaluate_model(environment_string,eval_env,additional_info,model,seed),
+        'concepts': multiple_idx
+    }
     if multiple_lp_intervention_reward != {}:
         results['intervention_comparison']['multiple_lp'] = multiple_lp_intervention_reward
         print(multiple_lp_intervention_reward)
 
-if is_main and run_intervention:
-    imperfect_intervention_reward = {}
-    for modification in ["binary"]:
-        if modification == "binary" and cbm_accuracy_by_concept is not None and intervention_accuracy_by_concept is not None:
-            modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,intervention_probability,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
-        else:
-            continue 
-        subset_concept, imperfect_idx = imperfect_lp_selection(ground_truth_gym_env,modified_concept_predictors,q_estimates,selection_function,target_abstraction,num_concepts_selected,cbm_accuracy_by_concept,concept_source,environment_string,additional_info,direction='max')
-        env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-        model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_intervention_imperfect".format(environment_string))
-        modified_concept_predictors = [inaccurate_concepts_binary_intervention(func,acc,intervene_acc,intervention_probability,seed+idx) for (func,acc,intervene_acc,idx) in zip(concept_list,cbm_accuracy_by_concept,intervention_accuracy_by_concept,list(range(len(concept_list))))]
-        subset_concept = [modified_concept_predictors[i] for i in imperfect_idx]
-        env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-
-        imperfect_intervention_reward[modification] = {
-            'reward': evaluate_model(environment_string,eval_env,additional_info,model,seed),
-            'concepts': imperfect_idx
-        }
-
-    if imperfect_intervention_reward != {}:
-        results['intervention_comparison']['imperfect_lp'] = imperfect_intervention_reward
-        print(imperfect_intervention_reward)
-
-# ### Iterative
-
-if is_main and run_iterative:
-    env, eval_env, additional_info = get_environment(environment_string,concept_list,seed)
-    gold_model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="gold_iterative")
-    results['iterative'] = {}
-
-if is_main and run_iterative:
-    if cbm_accuracy_by_concept is None:
-        modified_concept_predictors = concept_list 
-    else:
-        modified_concept_predictors = [inaccurate_concepts_binary(func,acc,seed+idx) for func,acc,idx in zip(concept_list,cbm_accuracy_by_concept,list(range(len(concept_list))))]
-    env, eval_env, additional_info = get_environment(environment_string,concept_list,seed)
-    rewards_iterative, concepts_iterative = iterative_selection(eval_env,gold_model,environment_string,modified_concept_predictors,num_iterations,selections_per_round,additional_info,seed,training_timesteps=training_timesteps)
-    results['iterative']['iterative_selection'] = {'reward': rewards_iterative, 'concepts': concepts_iterative}
-    print(rewards_iterative)
-
-if is_main and run_iterative:
-    if cbm_accuracy_by_concept is None:
-        modified_concept_predictors = concept_list 
-    else:
-        modified_concept_predictors = [inaccurate_concepts_binary(func,acc,seed+idx) for func,acc,idx in zip(concept_list,cbm_accuracy_by_concept,list(range(len(concept_list))))]
-
-    num_concepts_selected = num_iterations*selections_per_round
-    bayesian_reward, bayesian_idx = bayesian_iterative_selection(ground_truth_gym_env,environment_string,seed,modified_concept_predictors,num_iterations+1,num_concepts_selected,additional_info,training_timesteps=training_timesteps)
-
-    results['iterative']['bayesian'] = {
-        'reward': bayesian_reward, 
-        'concepts': bayesian_idx
-    }
-    print(bayesian_reward)
-
 # ### Two-Stage Training
+
+run_two_stage = True
 
 if is_main and run_two_stage:
     env, eval_env, additional_info = get_environment(environment_string,concept_list,seed)
@@ -480,31 +376,16 @@ if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
     results['two_stage'] = {}
     results['two_stage']['accuracy'] = acc_list.tolist()
 
-
 # +
 if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
     greedy_two_stage = {}
     greedy_concepts, greedy_idx = greedy_selection(concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
-
     two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string, greedy_concepts, seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=greedy_idx)   
     model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_two_stage_greedy".format(environment_string))    
     greedy_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,additional_info,model,seed)
 
     results['two_stage']['greedy'] = {'reward': greedy_two_stage_reward, 'concepts': greedy_idx}
     print(greedy_two_stage_reward)
-
-
-
-# +
-if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
-    multiple_concepts, multiple_idx = multiple_lp_selection(ground_truth_gym_env,concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
-
-    two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string, multiple_concepts, seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=multiple_idx)   
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_two_stage_multiple".format(environment_string))    
-    multiple_iterative_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,additional_info,model,seed)
-
-    results['two_stage']['multiple'] = {'reward': multiple_iterative_two_stage_reward, 'concepts': multiple_idx}
-    print(multiple_iterative_two_stage_reward)
 
 
 
@@ -523,6 +404,19 @@ if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
 
 # +
 if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
+    multiple_concepts, multiple_idx = multiple_lp_selection(ground_truth_gym_env,concept_list,num_concepts_selected,selection_function,q_estimates,concept_source)
+
+    two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string, multiple_concepts, seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=multiple_idx)   
+    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_two_stage_multiple".format(environment_string))    
+    multiple_iterative_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,additional_info,model,seed)
+
+    results['two_stage']['multiple'] = {'reward': multiple_iterative_two_stage_reward, 'concepts': multiple_idx}
+    print(multiple_iterative_two_stage_reward)
+
+
+
+# +
+if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
     acc_list = results['two_stage']['accuracy']
     top_k_idx = np.argsort(acc_list)[-num_concepts_selected:].tolist()
     top_k_concepts = [concept_list[i] for i in top_k_idx]
@@ -536,75 +430,6 @@ if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
 
 
 # -
-
-if is_main and not isinstance(ground_truth_env, ConceptEnv) and run_two_stage:
-    acc_list = results['two_stage']['accuracy']
-    imperfect_concepts, imperfect_idx = imperfect_lp_selection(ground_truth_gym_env,concept_list,q_estimates,selection_function,target_abstraction,num_concepts_selected,acc_list,concept_source,environment_string,additional_info,direction='max')
-    
-    two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string, imperfect_concepts, seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=imperfect_idx)   
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_two_stage_imperfect".format(environment_string))    
-    imperfect_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,additional_info,model,seed)
-
-    results['two_stage']['imperfect'] = {'reward': imperfect_two_stage_reward, 'concepts': imperfect_idx}
-    print(imperfect_two_stage_reward)
-
-# ## Ablations
-
-# ### Reward Perturbation
-
-if is_main and reward_error > 0:
-    results['reward_error'] = {}
-    perturbed_groundtruth_eval_env = RewardPerturbationWrapper(ground_truth_gym_env,reward_error)
-
-    if selection_function == "q_value":
-        if environment_string == "mimic":
-            q_estimates_perturbed = rollout_q_estimates_td(groundtruth_model,GymnasiumWrapper(DummyVecEnv([lambda: ground_truth_gym_env])),concept_list,learning_rate=1e-3,mimic=True,total_timesteps=5000,final_training=0)
-        else:
-            q_estimates_perturbed = rollout_q_estimates_td(groundtruth_model,ground_truth_gym_env,concept_list)
-    elif selection_function == "policy":
-        if environment_string == "mimic":
-            q_estimates_perturbed = rollout_pi_estimates(groundtruth_model,GymnasiumWrapper(DummyVecEnv([lambda: ground_truth_gym_env])),concept_list,mimic=True)
-        else:
-            q_estimates_perturbed = rollout_pi_estimates(groundtruth_model,ground_truth_gym_env,concept_list)
-
-    subset_concept, greedy_perturbed_idx = greedy_selection(concept_list,num_concepts_selected,selection_function,q_estimates_perturbed,concept_source)
-    env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-    perturbed_model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
-    greedy_selection_perturbed_reward = evaluate_model(environment_string,eval_env,additional_info,perturbed_model,seed)
-    results['reward_error']['greedy'] = {
-        'reward': greedy_selection_perturbed_reward,
-        'concepts': greedy_perturbed_idx
-    }
-    print(greedy_selection_perturbed_reward)
-
-if is_main and reward_error > 0:
-    subset_concept, greedy_perturbed_iterative_idx = greedy_iterative_selection(concept_list,num_concepts_selected,selection_function,q_estimates_perturbed,concept_source)
-    env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
-    greedy_iterative_selection_perturbed_reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
-    results['reward_error']['greedy_iterative'] = {
-        'reward': greedy_iterative_selection_perturbed_reward,
-        'concepts': greedy_perturbed_iterative_idx
-    }
-    print(greedy_iterative_selection_perturbed_reward)
-
-if is_main and reward_error > 0:
-    subset_concept, lp_perturbed_idx = lp_based_selection(concept_list,num_concepts_selected,selection_function,q_estimates_perturbed,concept_source)
-    env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
-    model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",additional_info=additional_info)
-    lp_selection_perturbed_reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
-    results['reward_error']['lp'] = {
-        'reward': lp_selection_perturbed_reward,
-        'concepts': lp_perturbed_idx
-    }
-    print(lp_selection_perturbed_reward)
-
-# ### Comparison with Concept Completeness
-
-# TODO: Create a Shapley-based baseline
-if is_main and assess_completeness:
-    pass 
-
 
 # ## Save Data
 
