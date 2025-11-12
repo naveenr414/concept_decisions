@@ -131,10 +131,10 @@ def get_raw_state_cartpole(env,obs):
 
     return obs 
 
-def get_raw_pixels_mini_grid(env,obs=None):
-    pixels = env.render()[:160,:160]
-    gray = cv2.cvtColor(pixels, cv2.COLOR_RGB2GRAY)
-    small_pixels = cv2.resize(gray, (84,84), interpolation=cv2.INTER_NEAREST)
+def get_raw_pixels_mini_grid(env, obs=None):
+    pixels = env.render()[:160, :160]
+    gray = np.dot(pixels[..., :3], [0.2989, 0.5870, 0.1140]).astype(np.uint8)
+    small_pixels = cv2.resize(gray, (84, 84), interpolation=cv2.INTER_NEAREST)
     return small_pixels
 
 def get_raw_pixels_cartpole(env, obs=None):
@@ -372,14 +372,14 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
                     ),lambda env, obs: obs,use_info_obs=True)
                 env = FrameStack(env,4)
                 env = LazyFramesToNumpy(env)
-                # if use_processed:
-                #     env = OptimizedConceptWrapper(env, fast_predictor, spaces.MultiBinary(len(concept_idx)), lambda env, obs: obs, concept_idx,use_info_obs=True)
             else:
                 env = Monitor(gym.make("CartPole-v1"))
                 env = ConceptWrapper(env,concept_list,spaces.MultiBinary(len(concept_list)),get_raw_state_cartpole)
             return env 
 
         vec_env = SubprocVecEnv([make_env for _ in range(num_envs)])
+        if use_processed:
+            vec_env = VecConceptWrapper(vec_env, fast_predictor, concept_idx,height=160,width=240)
 
         gymnasium_env = GymnasiumWrapper(vec_env)
     elif environment_string == "glucose":
@@ -399,28 +399,42 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
 
     elif environment_string  == "mini_grid":
         num_stack = 1
+        
         def make_env():
-            if concept_list is None:
-                env = Monitor(gym.make("MiniGrid-DoorKey-5x5-v0",render_mode="rgb_array"))
+            if concept_list is None or use_processed:
+                env = Monitor(gym.make("MiniGrid-DoorKey-5x5-v0", render_mode="rgb_array"))
                 env = FrameSkipWrapper(env, skip=1, get_pixels_fn=get_raw_pixels_mini_grid)
-                env = ConceptWrapper(env,None,spaces.Box(
-                        low=0, high=255,
-                        shape=(84,84),  # Height x Width, no color channel
-                        dtype=np.uint8
-                    ),lambda env, obs: obs, obs_function=lambda e,o,i: get_raw_state_mini_grid(e,o,i))
-                env = FrameStack(env,num_stack)
+                env = ConceptWrapper(
+                    env, None,
+                    spaces.Box(low=0, high=255, shape=(84,84), dtype=np.uint8),
+                    lambda env, obs: obs, 
+                    obs_function=lambda e,o,i: get_raw_state_mini_grid(e,o,i)
+                )
+                env = FrameStack(env, num_stack)
                 env = LazyFramesToNumpy(env)
-
             else:
                 env = Monitor(gym.make("MiniGrid-DoorKey-5x5-v0"))
-                env = ConceptWrapper(env,concept_list,spaces.MultiBinary(len(concept_list)),lambda env, obs: obs, obs_function=lambda env, obs, info: get_raw_state_mini_grid(env,info,{'observation': obs}))
-            return env 
-
+                env = ConceptWrapper(
+                    env, concept_list,
+                    spaces.MultiBinary(len(concept_list)),
+                    lambda env, obs: obs, 
+                    obs_function=lambda env, obs, info: get_raw_state_mini_grid(env, info, {'observation': obs})
+                )
+            return env
+        
+        # Use SubprocVecEnv for true parallelism (not DummyVecEnv)
         vec_env = SubprocVecEnv([make_env for _ in range(num_envs)])
+        
+        if use_processed:
+            # Apply optimized wrapper
+            vec_env = VecConceptWrapper(
+                vec_env, fast_predictor, concept_idx, num_frames=1
+            )
+            vec_env.observation_space = spaces.MultiBinary(len(concept_list))
+        
         gymnasium_env = GymnasiumWrapper(vec_env)
-
     elif environment_string == "boxing":
-        if concept_list is None:
+        if concept_list is None or use_processed:
             vec_env = get_n_atari_env(num_envs,"BoxingNoFrameskip-v4",None,gym.spaces.Box(
                     low=0, high=255,
                     shape=(84,84),  # Height x Width, no color channel
@@ -428,10 +442,14 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
                 ),num_stack=num_stack)
         else:
             vec_env = get_n_atari_env(num_envs,"BoxingNoFrameskip-v4",concept_list,spaces.Box(low=-255, high=255, shape=(len(concept_list),), dtype=np.float32))
+        
+        if use_processed:
+            vec_env = VecConceptWrapper(vec_env, fast_predictor, concept_idx)
+
         gymnasium_env = GymnasiumWrapper(vec_env)
 
     elif environment_string == "pong":
-        if concept_list is None:
+        if concept_list is None or use_processed:
             vec_env = get_n_atari_env(num_envs,"PongNoFrameskip-v4",None,gym.spaces.Box(
                     low=0, high=255,
                     shape=(84,84),  # Height x Width, no color channel
@@ -439,5 +457,8 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
                 ),num_stack=num_stack)
         else:
             vec_env = get_n_atari_env(num_envs,"PongNoFrameskip-v4",concept_list,spaces.Box(low=-1, high=1, shape=(len(concept_list),), dtype=np.float32))
+        if use_processed:
+            vec_env = VecConceptWrapper(vec_env, fast_predictor, concept_idx)
+
         gymnasium_env = GymnasiumWrapper(vec_env)
     return vec_env, gymnasium_env, additional_info

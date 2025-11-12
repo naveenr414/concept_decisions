@@ -33,55 +33,77 @@ with redirect_stderr(stderr_buffer):
 
 class WandbLoggingCallback(BaseCallback):
     """
-    Logs PPO diagnostics to wandb.
-    Works with Monitor-wrapped environments.
+    Optimized WandB logging - batches metrics and logs less frequently.
+    
+    Key changes:
+    1. Only ONE wandb.log() call per step (not two)
+    2. Only logs when there's meaningful data (episodes completed or PPO update)
+    3. Batches episode metrics instead of logging each one immediately
     """
-    def __init__(self, smooth_alpha=0.9):
+    
+    def __init__(self, smooth_alpha=0.9, log_freq=10):
         super().__init__()
         self.smoothed_avg_norm_reward = 0
-        self.alpha = smooth_alpha  # EMA smoothing for normalized reward
-
+        self.alpha = smooth_alpha
+        self.log_freq = log_freq  # Log every N steps
+        
+        # Buffer episode data
+        self.episode_rewards = []
+        self.episode_lengths = []
+        
     def _on_step(self) -> bool:
-        # ---- Episode info from Monitor ----
+        # Collect episode info (don't log yet)
         infos = self.locals.get("infos", [])
         for info in infos:
             if "episode" in info.keys():
                 raw_reward = info["episode"]["r"]
-                # normalized reward if you implement reward normalization
                 norm_reward = raw_reward
+                
                 # EMA smoothing
                 self.smoothed_avg_norm_reward = (
                     self.alpha * self.smoothed_avg_norm_reward
                     + (1 - self.alpha) * norm_reward
                 )
-
-                # Log episode metrics to wandb
-                wandb.log({
-                    "episode_reward": raw_reward,
-                    "episode_length": info["episode"]["l"],
-                    "avg_norm_reward": norm_reward,
+                
+                # Buffer instead of immediate logging
+                self.episode_rewards.append(raw_reward)
+                self.episode_lengths.append(info["episode"]["l"])
+        
+        # Only log every N steps OR when PPO updates happen
+        if self.n_calls % self.log_freq == 0:
+            metrics = {}
+            
+            # Add episode metrics if any completed
+            if self.episode_rewards:
+                metrics.update({
+                    "episode_reward_mean": np.mean(self.episode_rewards),
+                    "episode_reward_max": np.max(self.episode_rewards),
+                    "episode_reward_min": np.min(self.episode_rewards),
+                    "episode_length_mean": np.mean(self.episode_lengths),
+                    "episodes_completed": len(self.episode_rewards),
                     "ema_norm_reward": self.smoothed_avg_norm_reward
-                }, step=self.num_timesteps)
-
-        # ---- PPO internal diagnostics ----
-        logger_data = getattr(self.model.logger, "name_to_value", {})
-        ev = logger_data.get("train/explained_variance", None)
-        vl = logger_data.get("train/value_loss", None)
-        kl = logger_data.get("train/approx_kl", None)
-        cf = logger_data.get("train/clip_fraction", None)
-        ent = logger_data.get("train/entropy_loss", None)
-        gn = logger_data.get("diagnostics/grad_norm", None)
-
-        # Log PPO diagnostics to wandb
-        wandb.log({
-            "explained_variance": ev,
-            "value_loss": vl,
-            "approx_kl": kl,
-            "clip_fraction": cf,
-            "entropy_loss": ent,
-            "grad_norm": gn
-        }, step=self.num_timesteps)
-
+                })
+                # Clear buffers
+                self.episode_rewards.clear()
+                self.episode_lengths.clear()
+            
+            # Add PPO diagnostics (only if available - these update during training)
+            logger_data = getattr(self.model.logger, "name_to_value", {})
+            ppo_metrics = {
+                "explained_variance": logger_data.get("train/explained_variance"),
+                "value_loss": logger_data.get("train/value_loss"),
+                "approx_kl": logger_data.get("train/approx_kl"),
+                "clip_fraction": logger_data.get("train/clip_fraction"),
+                "entropy_loss": logger_data.get("train/entropy_loss"),
+                "grad_norm": logger_data.get("diagnostics/grad_norm"),
+            }
+            # Only add non-None values
+            metrics.update({k: v for k, v in ppo_metrics.items() if v is not None})
+            
+            # Single batched log call (instead of 2 separate calls)
+            if metrics:
+                wandb.log(metrics, step=self.num_timesteps)
+        
         return True
 
 def get_model(environment_string,policy,override={}):
@@ -130,11 +152,10 @@ def get_model(environment_string,policy,override={}):
             default_model_dict['n_epochs'] = 10
         elif environment_string == "boxing":
             default_model_dict['policy_kwargs'] = {'net_arch': [128,128]}
-            default_model_dict['n_steps'] = 4096
+            default_model_dict['n_steps'] = 128
             default_model_dict['batch_size'] = 256
             default_model_dict['n_epochs'] = 4
-            default_model_dict['learning_rate'] = 1e-3
-            default_model_dict['ent_coef'] = 0.015
+            default_model_dict['ent_coef'] = 0.01
     else:
         if environment_string == "cart_pole":
             default_model_dict['n_steps'] = 4096
@@ -155,7 +176,7 @@ def get_model(environment_string,policy,override={}):
             default_model_dict['n_epochs'] = 10
             default_model_dict['device'] = 'cuda'
         elif environment_string == "boxing":
-            default_model_dict['n_steps'] = 2048
+            default_model_dict['n_steps'] = 128
             default_model_dict['batch_size'] = 256
             default_model_dict['n_epochs'] = 3
             default_model_dict['device'] = 'cuda'
@@ -489,29 +510,29 @@ class FrameSequenceDataset(Dataset):
     def __getitem__(self, idx):
         return self.X[idx], self.Y[idx]
 
-def train_concept_predictor(ground_truth_gym_env, groundtruth_model, concept_list, idx, environment_string,epochs=25): 
+def train_concept_predictor(ground_truth_gym_env, groundtruth_model, concept_list, idx, environment_string,epochs=25,NUM_EPISODES=5,max_episode_length=10_000): 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     # ----------------------------
     # Initialize model, criterion, optimizer
     # ----------------------------
 
+    height = width = 84
+
     if environment_string == "mini_grid":
         num_frames = 1
     else:
         num_frames = 4
+    
+    if environment_string == "cart_pole":
+        height = 160
+        width = 240
 
-    max_episode_length = 500
-    if environment_string == "pong":
-        max_episode_length = 10_000
-        NUM_EPISODES = 5
-
-    model = ConceptPredictorCNN(len(idx), num_frames=num_frames).to(device)
+    model = ConceptPredictorCNN(len(idx), num_frames=num_frames,height=height,width=width).to(device)
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=3e-4, weight_decay=1e-4)
     
     best_f1 = 0.0
-    NUM_EPISODES = 25 
     
     # Collect data
     X_data, Y_data = collect_cartpole_data(ground_truth_gym_env, groundtruth_model, 
