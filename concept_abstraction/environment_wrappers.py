@@ -125,128 +125,218 @@ class ObservationSubsetWrapper(gym.ObservationWrapper):
         return observation[self.indices]
 
 class VecConceptWrapper(VecEnvWrapper):
-    """
-    Optimized wrapper addressing the 17.5% overhead in _process_batch.
+    """Applies concept prediction to all environments in one batch"""
     
-    Key optimizations:
-    1. Pinned memory for faster CPU→GPU transfers
-    2. torch.inference_mode() instead of no_grad()
-    3. Pre-allocated buffers (no repeated malloc)
-    4. Async CUDA operations
-    5. Disabled gradient tracking
-    """
-    
-    def __init__(self, venv, fast_predictor, concept_idx, height=84, width=84, num_frames=4):
+    def __init__(self, venv, fast_predictor, concept_idx,num_frames=4,height=84,width=84):
         super().__init__(venv)
         self.fast_predictor = fast_predictor
         self.concept_idx = concept_idx
+        
+        # Update observation space to concept space
         self.observation_space = gym.spaces.MultiBinary(len(concept_idx))
         
-        self.height = height
-        self.width = width
-        self.num_frames = num_frames
-        
-        num_envs = venv.num_envs
-        
         # Pre-allocate GPU buffer
-        self.obs_buffer = torch.zeros(
-            (num_envs, num_frames, height, width),
-            device='cuda',
-            dtype=torch.float32
-        ).half().to(memory_format=torch.channels_last)
+        self.obs_buffer = None
+        self.num_frames = num_frames
+        self.terminal_buffer = None
+        self.width = width 
+        self.height = height 
         
-        # Pre-allocate CPU output buffer (reused every call)
-        self.concept_buffer = np.zeros((num_envs, len(concept_idx)), dtype=np.uint8)
-        
-        # Model optimizations
-        if self.fast_predictor is not None:
-            self.fast_predictor = torch.compile(
-                self.fast_predictor.eval().to(dtype=torch.float16, memory_format=torch.channels_last),
-                mode="max-autotune"
-            )
-
-            # Optional: capture a CUDA graph for reuse
-            example_input = torch.zeros((venv.num_envs, num_frames, height, width), 
-                                        device="cuda", dtype=torch.float16)
-            torch.cuda.synchronize()
-            with torch.inference_mode(), torch.cuda.amp.autocast():
-                self.fast_predictor(example_input)  # warmup
-            torch.cuda.synchronize()
-            # Disable gradient tracking completely
-            for param in self.fast_predictor.parameters():
-                param.requires_grad = False
-            
-            # Pre-compute concept indices tensor
-            self.concept_idx_tensor = torch.tensor(
-                concept_idx, 
-                device='cuda', 
-                dtype=torch.long
-            )
-        self.timings = {'resize': 0, 'gpu_copy': 0, 'predictor': 0,'step_wait': 0, 'batch': 0}
-    
     def reset(self):
         obs = self.venv.reset()
-        self.timings = {'resize': 0, 'gpu_copy': 0, 'predictor': 0,'step_wait': 0, 'batch': 0}
         return self._process_batch(obs)
     
     def step_wait(self):
-        t_0 = time.time() 
         obs, rewards, dones, infos = self.venv.step_wait()
-        self.timings['step_wait'] += time.time()-t_0
-        # Process terminal observations
-        for idx, info in enumerate(infos):
-            if "terminal_observation" in info:
-                terminal_obs = info["terminal_observation"]
-                terminal_concepts = self._process_single(terminal_obs)
-                info["terminal_observation"] = terminal_concepts
+        processed_obs = self._process_batch(obs)
         
-        return self._process_batch(obs), rewards, dones, infos
-    
-    def _process_single(self, obs):
-        """Process single observation (for terminal states)"""
-        if self.fast_predictor is None:
-            return obs
+        # Store original observations in info
+        for i, info in enumerate(infos):
+            # obs[i] is (4, 84, 84), transpose to (84, 84, 4) for consistency
+            info['observation'] = np.transpose(obs[i], (1, 2, 0))
+            
+            # CRITICAL FIX: Process terminal observations through concept predictor
+            if 'terminal_observation' in info:
+                terminal_obs = info['terminal_observation']
+                
+                # Lazy allocate terminal buffer
+                if self.terminal_buffer is None:
+                    self.terminal_buffer = torch.zeros(
+                        (1, self.num_frames, self.height, self.width), device='cuda', dtype=torch.float32
+                    )
+                
+                # Normalize and copy
+                torch_term = torch.from_numpy(terminal_obs).to(
+                    device='cuda', dtype=torch.float32, non_blocking=True
+                )
+                torch_term.div_(255.0)
+                self.terminal_buffer[0] = torch_term
+                
+                with torch.no_grad():
+                    logits = self.fast_predictor(self.terminal_buffer)[:, self.concept_idx]
+                    processed_terminal = (torch.sigmoid(logits) > 0.5).float().cpu().numpy()[0]
+                
+                info['terminal_observation'] = processed_terminal
+                info['terminal_observation_pixels'] = np.transpose(terminal_obs, (1, 2, 0))
         
-        # Direct GPU tensor creation
-        obs_tensor = (
-            torch.as_tensor(obs, device="cuda", dtype=torch.float16) / 255.0
-        ).unsqueeze(0)
-        
-        with torch.inference_mode():
-            logits = self.fast_predictor(obs_tensor)[:, self.concept_idx_tensor]
-            predictions = (torch.sigmoid(logits) > 0.5)
-        
-        return predictions.cpu().numpy().squeeze(0).astype(np.uint8)
-    
+        return processed_obs, rewards, dones, infos    
     def _process_batch(self, obs_batch):
-        start = time.time()
+        """Process entire batch in one GPU call"""
         if self.fast_predictor is None:
             return obs_batch
+        
+        # obs_batch shape is ALREADY (num_envs, 4, 84, 84) - correct format!
+        num_envs = obs_batch.shape[0]
+        
+        # Normalize to [0, 1] like in training
+        
+        
+        # Allocate buffer once (or reallocate if num_envs changed)
+        if self.obs_buffer is None or self.obs_buffer.shape[0] != num_envs:
+            self.obs_buffer = torch.zeros(
+                (num_envs, self.num_frames, self.height, self.width), 
+                device='cuda', 
+                dtype=torch.float32
+            )
+        # Copy batch to GPU buffer
+        torch_obs = torch.from_numpy(obs_batch).to(device='cuda', dtype=torch.float32, non_blocking=True)
+        torch_obs.div_(255.0)  # In-place division
+        self.obs_buffer[:] = torch_obs
+        
+        # SINGLE batched inference for all environments
+        with torch.no_grad():
+            logits = self.fast_predictor(self.obs_buffer)[:, self.concept_idx]
+            # Apply sigmoid and threshold to binary predictions
+            predictions = (torch.sigmoid(logits) > 0.5).float()
+        
+        # Return as numpy array (num_envs, len(concept_idx))
+        return predictions.cpu().numpy()
 
-        t_render = time.time()
 
-        # Normalize to [0, 1]
-        obs_normalized = obs_batch.astype(np.float32) * (1.0 / 255.0)
-        self.timings["resize"] += time.time() - t_render
 
-        t_copy = time.time()
-        self.obs_buffer.copy_(
-            torch.from_numpy(obs_normalized), 
-            non_blocking=True
-        )
-        torch.cuda.synchronize()  # isolate transfer
-        self.timings["gpu_copy"] += time.time() - t_copy
+# class VecConceptWrapper(VecEnvWrapper):
+#     """
+#     Optimized wrapper addressing the 17.5% overhead in _process_batch.
+    
+#     Key optimizations:
+#     1. Pinned memory for faster CPU→GPU transfers
+#     2. torch.inference_mode() instead of no_grad()
+#     3. Pre-allocated buffers (no repeated malloc)
+#     4. Async CUDA operations
+#     5. Disabled gradient tracking
+#     """
+    
+#     def __init__(self, venv, fast_predictor, concept_idx, height=84, width=84, num_frames=4):
+#         super().__init__(venv)
+#         self.fast_predictor = fast_predictor
+#         self.concept_idx = concept_idx
+#         self.observation_space = gym.spaces.MultiBinary(len(concept_idx))
+        
+#         self.height = height
+#         self.width = width
+#         self.num_frames = num_frames
+        
+#         num_envs = venv.num_envs
+        
+#         # Pre-allocate GPU buffer
+#         self.obs_buffer = torch.zeros(
+#             (num_envs, num_frames, height, width),
+#             device='cuda',
+#             dtype=torch.float32
+#         ).half().to(memory_format=torch.channels_last)
+        
+#         # Pre-allocate CPU output buffer (reused every call)
+#         self.concept_buffer = np.zeros((num_envs, len(concept_idx)), dtype=np.uint8)
+        
+#         # Model optimizations
+#         if self.fast_predictor is not None:
+#             self.fast_predictor = torch.compile(
+#                 self.fast_predictor.eval().to(dtype=torch.float16, memory_format=torch.channels_last),
+#                 mode="max-autotune"
+#             )
 
-        t_pred = time.time()
-        with torch.inference_mode():
-            logits = self.fast_predictor(self.obs_buffer)[:, self.concept_idx_tensor]
-            predictions = (torch.sigmoid(logits) > 0.5)
-        torch.cuda.synchronize()
-        self.timings["predictor"] += time.time() - t_pred
+#             # Optional: capture a CUDA graph for reuse
+#             example_input = torch.zeros((venv.num_envs, num_frames, height, width), 
+#                                         device="cuda", dtype=torch.float16)
+#             torch.cuda.synchronize()
+#             with torch.inference_mode(), torch.cuda.amp.autocast():
+#                 self.fast_predictor(example_input)  # warmup
+#             torch.cuda.synchronize()
+#             # Disable gradient tracking completely
+#             for param in self.fast_predictor.parameters():
+#                 param.requires_grad = False
+            
+#             # Pre-compute concept indices tensor
+#             self.concept_idx_tensor = torch.tensor(
+#                 concept_idx, 
+#                 device='cuda', 
+#                 dtype=torch.long
+#             )
+#         self.timings = {'resize': 0, 'gpu_copy': 0, 'predictor': 0,'step_wait': 0, 'batch': 0}
+    
+#     def reset(self):
+#         obs = self.venv.reset()
+#         self.timings = {'resize': 0, 'gpu_copy': 0, 'predictor': 0,'step_wait': 0, 'batch': 0}
+#         return self._process_batch(obs)
+    
+#     def step_wait(self):
+#         t_0 = time.time() 
+#         obs, rewards, dones, infos = self.venv.step_wait()
+#         self.timings['step_wait'] += time.time()-t_0
+#         # Process terminal observations
+#         for idx, info in enumerate(infos):
+#             if "terminal_observation" in info:
+#                 terminal_obs = info["terminal_observation"]
+#                 terminal_concepts = self._process_single(terminal_obs)
+#                 info["terminal_observation"] = terminal_concepts
+        
+#         return self._process_batch(obs), rewards, dones, infos
+    
+#     def _process_single(self, obs):
+#         """Process single observation (for terminal states)"""
+#         if self.fast_predictor is None:
+#             return obs
+        
+#         # Direct GPU tensor creation
+#         obs_tensor = (
+#             torch.as_tensor(obs, device="cuda", dtype=torch.float16) / 255.0
+#         ).unsqueeze(0)
+        
+#         with torch.inference_mode():
+#             logits = self.fast_predictor(obs_tensor)[:, self.concept_idx_tensor]
+#             predictions = (torch.sigmoid(logits) > 0.5).float()
+        
+#         return predictions.cpu().numpy().squeeze(0).astype(np.uint8)
+    
+#     def _process_batch(self, obs_batch):
+#         start = time.time()
+#         if self.fast_predictor is None:
+#             return obs_batch
 
-        self.concept_buffer[:] = predictions.cpu().numpy()
-        self.timings['batch'] += time.time()-start
-        return self.concept_buffer
+#         t_render = time.time()
+
+#         # Normalize to [0, 1]
+#         obs_normalized = obs_batch.astype(np.float32) * (1.0 / 255.0)
+#         self.timings["resize"] += time.time() - t_render
+
+#         t_copy = time.time()
+#         self.obs_buffer.copy_(
+#             torch.from_numpy(obs_normalized), 
+#             non_blocking=True
+#         )
+#         torch.cuda.synchronize()  # isolate transfer
+#         self.timings["gpu_copy"] += time.time() - t_copy
+
+#         t_pred = time.time()
+#         with torch.inference_mode():
+#             logits = self.fast_predictor(self.obs_buffer)[:, self.concept_idx_tensor]
+#             predictions = (torch.sigmoid(logits) > 0.5)
+#         torch.cuda.synchronize()
+#         self.timings["predictor"] += time.time() - t_pred
+
+#         self.concept_buffer[:] = predictions.cpu().numpy()
+#         self.timings['batch'] += time.time()-start
+#         return self.concept_buffer
 
 
 

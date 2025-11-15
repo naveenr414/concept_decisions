@@ -61,7 +61,28 @@ if is_main:
     groundtruth_model = PPO.load(model_name)
 
 if is_main:
-    concept_predictor, acc_list = train_concept_predictor(ground_truth_gym_env,groundtruth_model,concept_list,list(range(len(concept_list))),environment_string,epochs=25)
+    model_name = "../../results/models/concept_predictor_env={}_training={}_seed={}.pth".format(environment_string,100,seed)
+    
+    height = width = 84
+
+    if environment_string == "mini_grid":
+        num_frames = 1
+    else:
+        num_frames = 4
+
+    if environment_string == "cart_pole":
+        height = 160
+        width = 240
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    if os.path.exists(model_name):
+        concept_predictor = ConceptPredictorCNN(len(concept_list), num_frames=num_frames,height=height,width=width).to(device)
+        concept_predictor.load_state_dict(torch.load(model_name, weights_only=True))
+        concept_predictor.eval()
+    else:
+        concept_predictor, acc_list = train_concept_predictor(ground_truth_gym_env,groundtruth_model,concept_list,list(range(len(concept_list))),environment_string,epochs=25,max_episode_length=10_000)
+        torch.save(concept_predictor.state_dict(), model_name)
+        concept_predictor.eval()
 
 if is_main:
     two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string, concept_list, seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=list(range(len(concept_list))))   
