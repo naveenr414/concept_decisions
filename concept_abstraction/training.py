@@ -146,13 +146,13 @@ def get_model(environment_string,policy,override={}):
             default_model_dict['batch_size'] = 1024
             default_model_dict['n_epochs'] = 4
         elif environment_string == "pong":
-            default_model_dict['policy_kwargs'] = {'net_arch': [128,128]}
+            default_model_dict['policy_kwargs'] = {'net_arch': [256,256]} # TODO: Cahnge this back to 128x128
             default_model_dict['n_steps'] = 1024
             default_model_dict['batch_size'] = 512
             default_model_dict['n_epochs'] = 10
         elif environment_string == "boxing":
-            default_model_dict['policy_kwargs'] = {'net_arch': [128,128]}
-            default_model_dict['n_steps'] = 128
+            default_model_dict['policy_kwargs'] = {'net_arch': [256,256]} # TODO: Cahnge this back to 128x128
+            default_model_dict['n_steps'] = 1024
             default_model_dict['batch_size'] = 256
             default_model_dict['n_epochs'] = 4
             default_model_dict['ent_coef'] = 0.01
@@ -456,13 +456,16 @@ def collect_cartpole_data(ground_truth_gym_env, groundtruth_model, concept_list,
             if use_gold_this_episode:
                 actions = groundtruth_model.predict(obs)[0] 
             obs, _, _, _, info = ground_truth_gym_env.step(actions)
-            for i in range(len(obs)):
-                if np.random.random() < 0.15 and 'observation' in info[i]:
+            for j in range(len(obs)):
+                if np.random.random() < 0.3 and 'observation' in info[j]:
                     # Store as uint8 (0-255) instead of float32 (0-1)
-                    X_data.append(obs[i].astype(np.uint8))
-                    Y_data.append(info[i]['observation'])
+                    X_data.append(obs[j].astype(np.uint8))
+                    Y_data.append(info[j]['observation'])
             
             step_count += 1
+        
+            if (i+1)%1_000 == 0:
+                print("Iteration {}/{}".format(i+1,max_episode_length))
         
         if (episode + 1) % 10 == 0:
             print(f"Episode {episode + 1}/{num_episodes}, steps: {step_count}, samples collected: {len(X_data)}")
@@ -687,6 +690,121 @@ def train_concept_predictor(ground_truth_gym_env, groundtruth_model, concept_lis
         print(f"  {status} Concept {i}: {acc:.3f}")
     
     return model, acc_list
+
+def evaluate_concept_predictor(
+    concept_predictor,
+    ground_truth_gym_env,
+    groundtruth_model,
+    concept_list,
+    NUM_EPISODES=5,
+    max_episode_length=10_000,
+    batch_size=64
+):
+    """
+    Evaluate a trained concept predictor on fresh data.
+    
+    Args:
+        concept_predictor: Trained ConceptPredictorCNN model
+        ground_truth_gym_env: The gym environment to collect data from
+        groundtruth_model: The ground truth policy model
+        concept_list: List of concept functions
+        NUM_EPISODES: Number of episodes to collect for evaluation
+        max_episode_length: Maximum length of each episode
+        batch_size: Batch size for evaluation
+    
+    Returns:
+        acc_list: Per-concept accuracy array
+        overall_f1: Overall F1 score across all concepts
+    """
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
+    # Collect fresh evaluation data
+    print("Collecting evaluation data...")
+    X_data, Y_data = collect_cartpole_data(
+        ground_truth_gym_env, 
+        groundtruth_model,
+        concept_list=concept_list,
+        num_episodes=NUM_EPISODES,
+        use_gold=True,
+        max_episode_length=max_episode_length
+    )
+    
+    # Process concepts
+    Y_data = [[c(i) for c in concept_list] for i in Y_data]
+    Y_data = np.array(Y_data, dtype=np.float32)
+    
+    print(f"Evaluation data - X shape: {X_data.shape}, Y shape: {Y_data.shape}")
+    
+    # Create evaluation dataset
+    class EvalDataset(Dataset):
+        def __init__(self, X, Y):
+            self.X = X
+            self.Y = Y
+        
+        def __len__(self):
+            return len(self.X)
+        
+        def __getitem__(self, idx):
+            x = self.X[idx].astype(np.float32) / 255.0
+            y = self.Y[idx]
+            return torch.from_numpy(x), torch.from_numpy(y)
+    
+    eval_dataset = EvalDataset(X_data, Y_data)
+    eval_loader = DataLoader(
+        eval_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=2,
+        pin_memory=True
+    )
+    
+    # Evaluate
+    concept_predictor.eval()
+    concept_predictor.to(device)
+    
+    acc_list = np.zeros(len(concept_list))
+    all_preds = []
+    all_targets = []
+    total_samples = 0
+    
+    print("Evaluating concept predictor...")
+    with torch.no_grad():
+        for Xb, Yb in eval_loader:
+            X_tensor = Xb.to(device, non_blocking=True)
+            Y_tensor = Yb.to(device, non_blocking=True)
+            
+            logits = concept_predictor(X_tensor)
+            preds = (torch.sigmoid(logits) > 0.5).cpu().numpy()
+            targets = Y_tensor.cpu().numpy()
+            
+            # Accumulate per-concept accuracy
+            acc_list += np.sum(preds == targets, axis=0)
+            total_samples += len(preds)
+            
+            # Store for F1 calculation
+            all_preds.append(preds)
+            all_targets.append(targets)
+    
+    # Calculate per-concept accuracy
+    acc_list /= total_samples
+    
+    # Calculate overall F1 score
+    all_preds = np.concatenate(all_preds, axis=0)
+    all_targets = np.concatenate(all_targets, axis=0)
+    
+    from sklearn.metrics import f1_score
+    overall_f1 = f1_score(all_targets.ravel(), all_preds.ravel())
+    
+    # Print results
+    print(f"\n📊 Evaluation Results:")
+    print(f"Overall F1 Score: {overall_f1:.4f}")
+    print(f"\nPer-concept accuracy:")
+    for i, acc in enumerate(acc_list):
+        status = "✅" if acc >= 0.85 else "⚠️" if acc >= 0.75 else "❌"
+        print(f"  {status} Concept {i}: {acc:.3f}")
+    
+    return acc_list
+
 
 class ConceptPredictorCNN(nn.Module):
     def __init__(self, num_concepts, num_frames=4, features_dim=512, height=84, width=84):

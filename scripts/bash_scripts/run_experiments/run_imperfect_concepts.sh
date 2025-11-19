@@ -1,174 +1,119 @@
-#!/bin/bash 
-: > runs/logs/error_imperfect.txt
-LOGFILE=../../runs/logs/error_imperfect.txt
+#!/bin/bash
+# Create log files for each environment
+: > runs/logs/error_imperfect_mini_grid.txt
+: > runs/logs/error_imperfect_cart_pole.txt
+: > runs/logs/error_imperfect_pong.txt
+: > runs/logs/error_imperfect_boxing.txt
 
-# : > runs/logs/error_glucose.txt
-# LOGFILE_GLUCOSE=../../runs/logs/error_glucose.txt
+LOGFILE_MINI_GRID=../../runs/logs/error_imperfect_mini_grid.txt
+LOGFILE_CART_POLE=../../runs/logs/error_imperfect_cart_pole.txt
+LOGFILE_PONG=../../runs/logs/error_imperfect_pong.txt
+LOGFILE_BOXING=../../runs/logs/error_imperfect_boxing.txt
 
 environment=food
-tmux new-session -d -s concept_imperfect
-tmux send-keys -t concept_imperfect ENTER 
-tmux send-keys -t concept_imperfect "source ~/.bashrc" ENTER
-tmux send-keys -t concept_imperfect "cd scripts/notebooks" ENTER
-tmux send-keys -t concept_imperfect "export PYTHONWARNINGS='ignore'" ENTER
-tmux send-keys -t concept_imperfect "export GYMNASIUM_DISABLE_WARNINGS=1" ENTER
 
-# tmux new-session -d -s concepts_glucose
-# tmux send-keys -t concepts_glucose ENTER 
-# tmux send-keys -t concepts_glucose "source ~/.bashrc" ENTER
-# tmux send-keys -t concepts_glucose "cd scripts/notebooks" ENTER
-# tmux send-keys -t concepts_glucose "export PYTHONWARNINGS='ignore'" ENTER
-# tmux send-keys -t concepts_glucose "export GYMNASIUM_DISABLE_WARNINGS=1" ENTER
-
-declare -A training_timesteps=(
-  [cyclic_4]=10000
-  [cyclic_16]=10000
-  [tree_7]=25000
-  [tree_31]=25000
-  [cart_pole]=1000000
-  [mini_grid]=250000
-  [glucose]=1 #250000
-  [pong]=4000000
-  [boxing]=4000000
+# Define timesteps and concepts for each environment
+declare -A gold_timesteps=(
+  [mini_grid]=1000000
+  [cart_pole]=4000000
+  [pong]=15000000
+  [boxing]=15000000
 )
 
+declare -A training_timesteps=(
+  [mini_grid]=1000000
+  [cart_pole]=4000000
+  [pong]=15000000
+  [boxing]=15000000
+)
 
-for seed in 43
+declare -A num_concepts=(
+  [mini_grid]=11
+  [cart_pole]=3
+  [pong]=57
+  [boxing]=48
+)
+
+# Function to create and setup tmux session
+setup_tmux_session() {
+  local session_name=$1
+  tmux new-session -d -s ${session_name}
+  tmux send-keys -t ${session_name} ENTER 
+  tmux send-keys -t ${session_name} "source ~/.bashrc" ENTER
+  tmux send-keys -t ${session_name} "cd scripts/notebooks" ENTER
+  tmux send-keys -t ${session_name} "export PYTHONWARNINGS='ignore'" ENTER
+  tmux send-keys -t ${session_name} "export GYMNASIUM_DISABLE_WARNINGS=1" ENTER
+}
+
+# Create tmux sessions for each environment
+setup_tmux_session "imperfect_mini_grid"
+# setup_tmux_session "imperfect_cart_pole"
+# setup_tmux_session "imperfect_pong"
+# setup_tmux_session "imperfect_boxing"
+
+# Run experiments
+for seed in 42
 do 
-    # env=cyclic_4
-    # num_concepts_selected=2
-    # training=${training_timesteps[$env]}
-    # for fixed_accuracy in 0.5 0.75 0.9
-    # do 
-    #     cbm_accuracy=$(printf "%s " $(yes "$fixed_accuracy" | head -n 3))
-    #     tmux send-keys -t concept_imperfect "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder imperfect --run_imperfect --concept_source human_selected_binary --cbm_accuracy_by_concept ${cbm_accuracy} >> ${LOGFILE} 2>&1"  ENTER 
-    # done 
-    # fixed_accuracy=0.75
-    # for num_concepts_selected in 1 2 3
-    # do 
-    #     cbm_accuracy=$(printf "%s " $(yes "$fixed_accuracy" | head -n 3))
-    #     tmux send-keys -t concept_imperfect "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder imperfect --run_imperfect --concept_source human_selected_binary --cbm_accuracy_by_concept ${cbm_accuracy} >> ${LOGFILE} 2>&1"  ENTER 
-    # done 
+  # Mini Grid - vary concept_accuracy and num_concepts_selected
+  env=mini_grid
+  for concept_accuracy in 0.75 0.85 0.975
+  do
+    for concept_fraction in 0.25 0.5 1
+    do
+      num_concepts_selected=$(printf "%.0f" $(echo "${num_concepts[$env]} * ${concept_fraction}" | bc))
+      tmux send-keys -t imperfect_mini_grid "conda activate ${environment}; python -u only_lp.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts_selected} --concept_accuracy ${concept_accuracy} --out_folder imperfect >> ${LOGFILE_MINI_GRID} 2>&1" ENTER
+    done
+  done
 
-    # env=cyclic_16
-    # num_concepts_selected=2
-    # training=${training_timesteps[$env]}
-    # for fixed_accuracy in 0.5 0.75 0.9
-    # do 
-    #     cbm_accuracy=$(printf "%s " $(yes "$fixed_accuracy" | head -n 15))
-    #     tmux send-keys -t concept_imperfect "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder imperfect --run_imperfect --concept_source human_selected_binary --cbm_accuracy_by_concept ${cbm_accuracy} >> ${LOGFILE} 2>&1"  ENTER 
-    # done 
-    # fixed_accuracy=0.75
-    # for num_concepts_selected in 1 2 3 4
-    # do 
-    #     cbm_accuracy=$(printf "%s " $(yes "$fixed_accuracy" | head -n 15))
-    #     tmux send-keys -t concept_imperfect "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder imperfect --run_imperfect --concept_source human_selected_binary --cbm_accuracy_by_concept ${cbm_accuracy} >> ${LOGFILE} 2>&1"  ENTER 
-    # done 
+  # Mini Grid - vary concept_accuracy and training_timesteps (fix num_concepts_selected)
+  for concept_accuracy in 0.75 0.85 0.975
+  do
+    for training_ts in 250000 500000 750000 1000000
+    do
+      tmux send-keys -t imperfect_mini_grid "conda activate ${environment}; python -u only_lp.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_ts} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts[$env]} --concept_accuracy ${concept_accuracy} --out_folder imperfect >> ${LOGFILE_MINI_GRID} 2>&1" ENTER
+    done
+  done
 
-    # env=tree_7
-    # num_concepts_selected=2
-    # training=${training_timesteps[$env]}
-    # for fixed_accuracy in 0.5 0.75 0.9
-    # do 
-    #     cbm_accuracy=$(printf "%s " $(yes "$fixed_accuracy" | head -n 4))
-    #     tmux send-keys -t concept_imperfect "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder imperfect --run_imperfect --concept_source human_selected_binary --cbm_accuracy_by_concept ${cbm_accuracy} >> ${LOGFILE} 2>&1"  ENTER 
-    # done 
-    # fixed_accuracy=0.95
-    # for num_concepts_selected in 1 2 3 4
-    # do 
-    #     cbm_accuracy=$(printf "%s " $(yes "$fixed_accuracy" | head -n 4))
-    #     tmux send-keys -t concept_imperfect "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder imperfect --run_imperfect --concept_source human_selected_binary --cbm_accuracy_by_concept ${cbm_accuracy} >> ${LOGFILE} 2>&1"  ENTER 
-    # done 
+  # Mini Grid - vary num_concepts_selected and training_timesteps (fix concept_accuracy=0.95)
+  for concept_fraction in 0.25 0.5 1
+  do
+    num_concepts_selected=$(printf "%.0f" $(echo "${num_concepts[$env]} * ${concept_fraction}" | bc))
+    for training_ts in 250000 500000 750000 1000000
+    do
+      tmux send-keys -t imperfect_mini_grid "conda activate ${environment}; python -u only_lp.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_ts} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts_selected} --concept_accuracy 0.95 --out_folder imperfect >> ${LOGFILE_MINI_GRID} 2>&1" ENTER
+    done
+  done
 
-    # env=tree_31
-    # num_concepts_selected=2
-    # training=${training_timesteps[$env]}
-    # for fixed_accuracy in 0.95 # 0.5 0.75 0.9
-    # do 
-    #     cbm_accuracy=$(printf "%s " $(yes "$fixed_accuracy" | head -n 6))
-    #     tmux send-keys -t concept_imperfect "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder imperfect --run_imperfect --concept_source human_selected_binary --cbm_accuracy_by_concept ${cbm_accuracy} >> ${LOGFILE} 2>&1"  ENTER 
-    # done 
-    # fixed_accuracy=0.95
-    # for num_concepts_selected in 1 2 3 4
-    # do 
-    #     cbm_accuracy=$(printf "%s " $(yes "$fixed_accuracy" | head -n 6))
-    #     tmux send-keys -t concept_imperfect "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder imperfect --run_imperfect --concept_source human_selected_binary --cbm_accuracy_by_concept ${cbm_accuracy} >> ${LOGFILE} 2>&1"  ENTER 
-    # done 
+  # # Cart Pole - vary concept_accuracy and num_concepts_selected
+  # env=cart_pole
+  # for concept_accuracy in 0.75 0.85 0.975
+  # do
+  #   for concept_fraction in 0.25 0.5 1
+  #   do
+  #     num_concepts_selected=$(printf "%.0f" $(echo "${num_concepts[$env]} * ${concept_fraction}" | bc))
+  #     tmux send-keys -t imperfect_cart_pole "conda activate ${environment}; python -u only_lp.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts_selected} --concept_accuracy ${concept_accuracy} --out_folder imperfect >> ${LOGFILE_CART_POLE} 2>&1" ENTER
+  #   done
+  # done
 
-    # env=cart_pole
-    # for num_concepts_selected in 5 10 #15
-    # do 
-    #     training=${training_timesteps[$env]}
-    #     for fixed_accuracy in 0.5 0.75 0.9
-    #     do 
-    #         cbm_accuracy=$(printf "%s " $(yes "$fixed_accuracy" | head -n 24))
-    #         tmux send-keys -t concept_imperfect "conda activate ${environment}; python -u main_experiments.py --seed ${seed} --environment_string ${env} --gold_timesteps 4000000 --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder imperfect --run_imperfect --concept_source human_selected_binary --cbm_accuracy_by_concept ${cbm_accuracy} >> ${LOGFILE} 2>&1"  ENTER 
-    #     done 
-    # done 
+  # # Pong - vary concept_accuracy and num_concepts_selected
+  # env=pong
+  # for concept_accuracy in 0.75 0.85 0.975
+  # do
+  #   for concept_fraction in 0.25 0.5 1
+  #   do
+  #     num_concepts_selected=$(printf "%.0f" $(echo "${num_concepts[$env]} * ${concept_fraction}" | bc))
+  #     tmux send-keys -t imperfect_pong "conda activate ${environment}; python -u only_lp.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts_selected} --concept_accuracy ${concept_accuracy} --out_folder imperfect >> ${LOGFILE_PONG} 2>&1" ENTER
+  #   done
+  # done
 
-    # env=mini_grid
-    # for num_concepts_selected in 20 30 #20 30 40
-    # do 
-    #     training=${training_timesteps[$env]}
-    #     for fixed_accuracy in 0.5 0.75 0.9
-    #     do 
-    #         cbm_accuracy=$(printf "%s " $(yes "$fixed_accuracy" | head -n 44))
-    #         tmux send-keys -t concept_imperfect "conda activate ${environment}; python -u main_experiments.py --seed ${seed} --environment_string ${env} --gold_timesteps 4000000  --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder imperfect --run_imperfect --concept_source human_selected_binary --cbm_accuracy_by_concept ${cbm_accuracy} >> ${LOGFILE} 2>&1"  ENTER 
-    #     done 
-    # done 
-
-    # env=mini_grid
-    # training=1000000
-    # fixed_accuracy=0.9
-    # for num_concepts_selected in 5 10 20
-    # do 
-    #     cbm_accuracy=$(printf "%s " $(yes "$fixed_accuracy" | head -n 44))
-    #     tmux send-keys -t concept_imperfect "conda activate ${environment}; python -u main_experiments_fast.py --seed ${seed} --environment_string ${env} --gold_timesteps 4000000  --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder imperfect --run_per_epoch --concept_source human_selected_binary --cbm_accuracy_by_concept ${cbm_accuracy} >> ${LOGFILE} 2>&1"  ENTER 
-    # done 
-    # num_concepts_selected=20
-    # for fixed_accuracy in 0.5 0.75 0.9 1.0
-    # do 
-    #     cbm_accuracy=$(printf "%s " $(yes "$fixed_accuracy" | head -n 44))
-    #     tmux send-keys -t concept_imperfect "conda activate ${environment}; python -u main_experiments_fast.py --seed ${seed} --environment_string ${env} --gold_timesteps 4000000  --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder imperfect --run_per_epoch --concept_source human_selected_binary --cbm_accuracy_by_concept ${cbm_accuracy} >> ${LOGFILE} 2>&1"  ENTER 
-    # done 
-
-    env=mini_grid
-    training=${training_timesteps[$env]}
-    fixed_accuracy=0.9
-    num_concepts_selected=20
-    cbm_accuracy=$(printf "%s " $(yes "$fixed_accuracy" | head -n 44))
-    tmux send-keys -t concept_imperfect "conda activate ${environment}; python -u accuracy_correlation.py --seed ${seed} --environment_string ${env} --gold_timesteps 4000000  --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --num_trials 100 --out_folder correlation --cbm_accuracy_by_concept ${cbm_accuracy} >> ${LOGFILE} 2>&1"  ENTER 
-
-    # env=glucose
-    # for num_concepts_selected in 4 # 20 40 60 80
-    # do 
-    #     training=${training_timesteps[$env]}
-    #     for fixed_accuracy in 0.5 0.75 0.9
-    #     do 
-    #         cbm_accuracy=$(printf "%s " $(yes "$fixed_accuracy" | head -n 13))
-    #         tmux send-keys -t concepts_glucose "conda activate ${environment}; python -u main_experiments.py --seed ${seed} --environment_string ${env} --gold_timesteps 250000 --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder imperfect --run_imperfect --concept_source human_selected_binary --cbm_accuracy_by_concept ${cbm_accuracy} >> ${LOGFILE_GLUCOSE} 2>&1"  ENTER 
-    #     done 
-    # done 
-
-    # env=pong
-    # for num_concepts_selected in 20 40 60 # 20 40 60 80
-    # do 
-    #     training=${training_timesteps[$env]}
-    #     for fixed_accuracy in 0.5 0.75 # 0.9
-    #     do 
-    #         cbm_accuracy=$(printf "%s " $(yes "$fixed_accuracy" | head -n 228))
-    #         tmux send-keys -t concept_imperfect "conda activate ${environment}; python -u main_experiments_fast.py --seed ${seed} --environment_string ${env} --gold_timesteps 4000000 --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder imperfect --run_imperfect --concept_source human_selected_binary --cbm_accuracy_by_concept ${cbm_accuracy} >> ${LOGFILE} 2>&1"  ENTER 
-    #     done 
-    # done 
-
-    # env=boxing
-    # for num_concepts_selected in 20 40 60 # 20 40 60 80
-    # do 
-    #     training=${training_timesteps[$env]}
-    #     for fixed_accuracy in 0.5 0.75 0.9
-    #     do 
-    #         cbm_accuracy=$(printf "%s " $(yes "$fixed_accuracy" | head -n 190))
-    #         tmux send-keys -t concept_imperfect "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --gold_timesteps 10000000 --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder imperfect --run_imperfect --concept_source human_selected_binary --cbm_accuracy_by_concept ${cbm_accuracy} >> ${LOGFILE} 2>&1"  ENTER 
-    #     done 
-    # done 
-done 
+  # # Boxing - vary concept_accuracy and num_concepts_selected
+  # env=boxing
+  # for concept_accuracy in 0.75 0.85 0.975
+  # do
+  #   for concept_fraction in 0.25 0.5 1
+  #   do
+  #     num_concepts_selected=$(printf "%.0f" $(echo "${num_concepts[$env]} * ${concept_fraction}" | bc))
+  #     tmux send-keys -t imperfect_boxing "conda activate ${environment}; python -u only_lp.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts_selected} --concept_accuracy ${concept_accuracy} --out_folder imperfect >> ${LOGFILE_BOXING} 2>&1" ENTER
+  #   done
+  # done
+done

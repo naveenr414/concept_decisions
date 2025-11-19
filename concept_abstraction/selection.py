@@ -14,6 +14,7 @@ from concept_abstraction.environments import get_environment
 import torch
 from itertools import combinations
 from collections import defaultdict, Counter 
+from sklearn.feature_selection import mutual_info_regression
 
 def random_selection(concept_list,num_concepts):
     """Randomly select {num_concepts} from env.concepts
@@ -29,6 +30,31 @@ def random_selection(concept_list,num_concepts):
     idx = np.random.choice(list(range(total_concepts)),num_concepts,replace=False)
     idx = sorted(idx)
     return [concept_list[i] for i in idx], [int(i) for i in idx]
+
+def basic_greedy_selection(concept_list,num_concepts_selected,selection_function,q_estimates,concept_source):
+    """Select {num_concepts} greedily
+        by first learning the Q(s,a) values from a rollout
+        Then selecting the concepts that reduce the standard deviation 
+        across all partitions
+    
+    Arguments:
+        env: Gymasium environment
+        concept_list: List of functions
+        num_concepts_selected: Integer, number of concepts to select
+        reference_model: A policy that performs well
+            which we are trying to distill
+        selection_function: String, whether we're selecting according to 
+            Q value, etc."""
+    
+    all_x_vals = np.array([i[0] for i in q_estimates])
+    mean_vals = np.mean(all_x_vals,axis=0)
+    mean_vals = mean_vals*(1-mean_vals)
+    idx = np.argsort(mean_vals)[-num_concepts_selected:]
+    concepts = [concept_list[i] for i in idx]
+
+    return concepts, idx
+
+
 
 def greedy_selection(concept_list,num_concepts_selected,selection_function,q_estimates,concept_source):
     """Select {num_concepts} greedily
@@ -304,12 +330,11 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
     
     if selection_function == "q_value":
         q_values = np.array([i[2] for i in q_estimates])
-        
+
         final_vals = []
         seen = set()
         for a in unique_actions:
             relevant_idx = np.where(actions == a)[0]
-            
             if len(relevant_idx) <= 500:
                 relevant_low = relevant_high = relevant_idx
             else:
@@ -321,10 +346,10 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
                     # tuple of differing concept indices
                     diffs = tuple(i for i, (l, h) in enumerate(zip(discretized_X[low_idx], discretized_X[high_idx])) if l != h)
                     tup = (diff, diffs)
-                    if tup not in seen and diffs != ():
-                        seen.add(tup)
+                    if diffs not in seen and diffs != ():
+                        seen.add(diffs)
                         final_vals.append(tup)
-        final_vals = sorted(final_vals,reverse=True)[:50000]
+        final_vals = sorted(final_vals,reverse=True)
         idx, _ = max_prefix_gurobi(final_vals,num_concepts_selected)
         concepts = [concept_list[i] for i in idx]
     elif selection_function == "policy":
@@ -359,6 +384,34 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
         return [concept_list[0]],[0]
 
     return concepts, idx
+
+
+def select_concepts_by_mi(states, q_values,num_concepts_selected,concept_list):
+    """
+    Select concepts using mutual information between each concept dimension
+    (binary feature) and the ΔQ value or policy target.
+    
+    Arguments:
+        states: np.array shape (N, D), binary 0/1
+        q_values: np.array shape (N,2) with Q(s,0), Q(s,1)
+        k: number of concepts to select
+    
+    Returns:
+        idx: indices of concepts selected
+        scores: MI scores for all features
+    """
+    k = num_concepts_selected
+    # Compute ΔQ as continuous target for MI
+    delta_q = q_values[:, 1] - q_values[:, 0]
+
+    # Compute MI between each feature X[:, i] and delta-q
+    # mutual_info_regression works fine for binary inputs
+    mi_scores = mutual_info_regression(states, delta_q, discrete_features=True)
+
+    # Pick top-k concepts
+    idx = list(np.argsort(mi_scores)[::-1][:k])
+
+    return [concept_list[i] for i in idx], idx
 
 def multiple_lp_selection(env,concept_list,num_concepts_selected,selection_function,q_estimates,concept_source):
     """Select {num_concepts} greedily
@@ -798,3 +851,39 @@ def lp_selection_supervised_imperfect(train_matrix,labels,num_concepts,accuracie
     
     selected_elements = [U[i] for i in range(m) if x[i].X > 0.5]
     return selected_elements
+
+def lp_vector_fqe_selection(states,fqe,state_mean,state_std,concept_list,num_concepts_selected):
+    q_values, q_std = fqe.get_q_values(states)
+    print(f"Q-values shape: {q_values.shape}")  # (100, 2)
+    print(f"Q-values std shape: {q_std.shape}")  # (100, 2)
+
+
+    diffs = []
+    modified_q_estimates = []
+    s = ((states*state_std)+state_mean).astype(np.int8)
+
+    for idx,_ in enumerate(states):
+        action_list =  q_values[idx]
+
+        modified_q_estimates.append((tuple(s[idx]),tuple(action_list)))
+
+
+    modified_q_estimates = list(set(modified_q_estimates))
+
+    for i in range(len(modified_q_estimates)):
+        for j in range(len(modified_q_estimates)):
+            if i>=j:
+                m_i = modified_q_estimates[i]
+                m_j = modified_q_estimates[j]
+
+                diff = 0
+
+                for k in range(len(m_i[1])):
+                    diff = max(m_i[1][k]-m_j[1][k],diff)
+
+                diffs.append((diff,[k for k in range(len(m_i[0])) if m_i[0][k] != m_j[0][k]]))
+
+    sorted_diffs = sorted(diffs,key=lambda k: k[0],reverse=True)
+    idx, _ = max_prefix_gurobi(sorted_diffs,num_concepts_selected)
+    concepts = [concept_list[i] for i in idx]
+    return concepts, idx

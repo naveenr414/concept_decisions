@@ -328,7 +328,7 @@ def get_n_atari_env(n_envs,atari_env_name,concept_list,observation_space,recorda
         ], start_method='spawn')
     return vec_env
 
-def get_environment(environment_string,concept_list,seed,concept_idx=[],use_processed=False,fast_predictor=None):
+def get_environment(environment_string,concept_list,seed,concept_idx=[],use_processed=False,fast_predictor=None,intervention_prob=0.0):
     """Get a specific environment based on a string + concept list
     
     Arguments:
@@ -379,7 +379,7 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
 
         vec_env = SubprocVecEnv([make_env for _ in range(num_envs)])
         if use_processed:
-            vec_env = VecConceptWrapper(vec_env, fast_predictor, concept_idx,height=160,width=240)
+            vec_env = VecConceptWrapper(vec_env, fast_predictor, concept_idx,height=160,width=240,intervention_prob=intervention_prob,concept_list=concept_list)
 
         gymnasium_env = GymnasiumWrapper(vec_env)
     elif environment_string == "glucose":
@@ -428,7 +428,7 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
         if use_processed:
             # Apply optimized wrapper
             vec_env = VecConceptWrapper(
-                vec_env, fast_predictor, concept_idx, num_frames=1
+                vec_env, fast_predictor, concept_idx, num_frames=1,intervention_prob=intervention_prob,concept_list=concept_list
             )
             vec_env.observation_space = spaces.MultiBinary(len(concept_list))
         
@@ -444,7 +444,7 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
             vec_env = get_n_atari_env(num_envs,"BoxingNoFrameskip-v4",concept_list,spaces.Box(low=-255, high=255, shape=(len(concept_list),), dtype=np.float32))
         
         if use_processed:
-            vec_env = VecConceptWrapper(vec_env, fast_predictor, concept_idx)
+            vec_env = VecConceptWrapper(vec_env, fast_predictor, concept_idx,intervention_prob=intervention_prob,concept_list=concept_list)
 
         gymnasium_env = GymnasiumWrapper(vec_env)
 
@@ -458,7 +458,7 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
         else:
             vec_env = get_n_atari_env(num_envs,"PongNoFrameskip-v4",concept_list,spaces.Box(low=-1, high=1, shape=(len(concept_list),), dtype=np.float32))
         if use_processed:
-            vec_env = VecConceptWrapper(vec_env, fast_predictor, concept_idx)
+            vec_env = VecConceptWrapper(vec_env, fast_predictor, concept_idx,intervention_prob=intervention_prob,concept_list=concept_list)
 
         gymnasium_env = GymnasiumWrapper(vec_env)
     return vec_env, gymnasium_env, additional_info

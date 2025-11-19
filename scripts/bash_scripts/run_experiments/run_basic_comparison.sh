@@ -1,100 +1,87 @@
-#!/bin/bash 
-: > runs/logs/error_concepts.txt
-LOGFILE=../../runs/logs/error_concepts.txt
+#!/bin/bash
 
-# : > runs/logs/error_glucose.txt
-# LOGFILE_GLUCOSE=../../runs/logs/error_glucose.txt
+# Create log files for each environment
+: > runs/logs/error_basic_mini_grid.txt
+: > runs/logs/error_basic_cart_pole.txt
+: > runs/logs/error_basic_pong.txt
+: > runs/logs/error_basic_boxing.txt
+
+LOGFILE_MINI_GRID=../../runs/logs/error_basic_mini_grid.txt
+LOGFILE_CART_POLE=../../runs/logs/error_basic_cart_pole.txt
+LOGFILE_PONG=../../runs/logs/error_basic_pong.txt
+LOGFILE_BOXING=../../runs/logs/error_basic_boxing.txt
 
 environment=food
-tmux new-session -d -s concepts
-tmux send-keys -t concepts ENTER 
-tmux send-keys -t concepts "source ~/.bashrc" ENTER
-tmux send-keys -t concepts "cd scripts/notebooks" ENTER
-tmux send-keys -t concepts "export PYTHONWARNINGS='ignore'" ENTER
-tmux send-keys -t concepts "export GYMNASIUM_DISABLE_WARNINGS=1" ENTER
 
-# tmux new-session -d -s concepts_glucose
-# tmux send-keys -t concepts_glucose ENTER 
-# tmux send-keys -t concepts_glucose "source ~/.bashrc" ENTER
-# tmux send-keys -t concepts_glucose "cd scripts/notebooks" ENTER
-# tmux send-keys -t concepts_glucose "export PYTHONWARNINGS='ignore'" ENTER
-# tmux send-keys -t concepts_glucose "export GYMNASIUM_DISABLE_WARNINGS=1" ENTER
-
-
-declare -A training_timesteps=(
-  [cyclic_4]=10000
-  [cyclic_16]=10000
-  [tree_7]=25000
-  [tree_31]=25000
-  [cart_pole]=1000000
-  [mini_grid]=250000
-  [glucose]=250000
-  [pong]=4000000
-  [boxing]=10000000
+# Define timesteps and concepts for each environment
+declare -A gold_timesteps=(
+  [mini_grid]=1000000
+  [cart_pole]=4000000
+  [pong]=15000000
+  [boxing]=15000000
 )
 
+# declare -A gold_timesteps=(
+#   [mini_grid]=10
+#   [cart_pole]=10
+#   [pong]=10
+#   [boxing]=10
+# )
+
+declare -A training_timesteps=(
+  [mini_grid]=1000000
+  [cart_pole]=4000000
+  [pong]=15000000
+  [boxing]=15000000
+)
+
+# declare -A training_timesteps=(
+#   [mini_grid]=10
+#   [cart_pole]=10
+#   [pong]=10
+#   [boxing]=10
+# )
+
+declare -A num_concepts=(
+  [mini_grid]=11
+  [cart_pole]=3
+  [pong]=57
+  [boxing]=48
+)
+
+# Function to create and setup tmux session
+setup_tmux_session() {
+  local session_name=$1
+  tmux new-session -d -s ${session_name}
+  tmux send-keys -t ${session_name} ENTER 
+  tmux send-keys -t ${session_name} "source ~/.bashrc" ENTER
+  tmux send-keys -t ${session_name} "cd scripts/notebooks" ENTER
+  tmux send-keys -t ${session_name} "export PYTHONWARNINGS='ignore'" ENTER
+  tmux send-keys -t ${session_name} "export GYMNASIUM_DISABLE_WARNINGS=1" ENTER
+}
+
+# Create tmux sessions for each environment
+setup_tmux_session "basic_mini_grid"
+setup_tmux_session "basic_cart_pole"
+setup_tmux_session "basic_pong"
+setup_tmux_session "basic_boxing"
+
+# Run experiments
 for seed in 42
 do 
-  # env=cyclic_4
-  # for num_concepts_selected in 1 2 3
-  # do 
-  #   training=${training_timesteps[$env]}
-  #   tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected_binary --run_basic >> ${LOGFILE} 2>&1"  ENTER 
-  # done 
+  # Mini Grid
+  env=mini_grid
+  tmux send-keys -t basic_mini_grid "conda activate ${environment}; python -u method_comparison.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts[$env]} --out_folder basic >> ${LOGFILE_MINI_GRID} 2>&1" ENTER
 
-  # env=cyclic_16
-  # for num_concepts_selected in 2 4 6 8
-  # do 
-  #   training=${training_timesteps[$env]}
-  #   tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected_binary --run_basic >> ${LOGFILE} 2>&1"  ENTER 
-  # done 
+  # Cart Pole
+  env=cart_pole
+  tmux send-keys -t basic_cart_pole "conda activate ${environment}; python -u method_comparison.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts[$env]} --out_folder basic >> ${LOGFILE_CART_POLE} 2>&1" ENTER
 
-  # env=tree_7
-  # for num_concepts_selected in 1 2 3 4
-  # do 
-  #   training=${training_timesteps[$env]}
-  #   tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected_binary --run_basic >> ${LOGFILE} 2>&1"  ENTER 
-  # done 
+  # Pong
+  env=pong
+  tmux send-keys -t basic_pong "conda activate ${environment}; python -u method_comparison.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts[$env]} --out_folder basic >> ${LOGFILE_PONG} 2>&1" ENTER
 
-  # env=tree_31
-  # for num_concepts_selected in 4 5 # 1 2 3 4 5
-  # do 
-  #   training=${training_timesteps[$env]}
-  #   tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected_binary --run_basic >> ${LOGFILE} 2>&1"  ENTER 
-  # done 
-
-  # env=cart_pole
-  # for num_concepts_selected in 5 10 15
-  # do 
-  #   training=${training_timesteps[$env]}
-  #   tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --gold_timesteps 4000000 --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected_binary --run_basic >> ${LOGFILE} 2>&1"  ENTER 
-  # done
-
-  # env=mini_grid
-  # for num_concepts_selected in 20 30 40
-  # do 
-  #   training=${training_timesteps[$env]}
-  #   tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --gold_timesteps 4000000 --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected_binary --run_basic >> ${LOGFILE} 2>&1"  ENTER 
-  # done 
-
-  # env=glucose
-  # training=${training_timesteps[$env]}
-  # for num_concepts_selected in 4 6 8 # 2 4 6 8
-  # do 
-  #   tmux send-keys -t concepts_glucose "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --gold_timesteps 250000 --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected_binary --run_basic >> ${LOGFILE_GLUCOSE} 2>&1"  ENTER 
-  # done 
-
-  # env=pong
-  # training=${training_timesteps[$env]}
-  # for num_concepts_selected in 80 120 # 40 80 120
-  # do 
-  #   tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --gold_timesteps 4000000 --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected_binary --run_basic >> ${LOGFILE} 2>&1"  ENTER 
-  # done 
-
+  # Boxing
   env=boxing
-  training=${training_timesteps[$env]}
-  for num_concepts_selected in 80 # 120 # 40 80 120
-  do 
-    tmux send-keys -t concepts "conda activate ${environment}; python main_experiments.py --seed ${seed} --environment_string ${env} --gold_timesteps 10000000 --training_timesteps ${training} --num_concepts_selected ${num_concepts_selected} --selection_function q_value --out_folder basic --concept_source human_selected_binary --run_basic >> ${LOGFILE} 2>&1"  ENTER 
-  done 
-done 
+  tmux send-keys -t basic_boxing "conda activate ${environment}; python -u method_comparison.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts[$env]} --out_folder basic >> ${LOGFILE_BOXING} 2>&1" ENTER
+done

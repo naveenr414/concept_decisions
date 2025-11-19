@@ -1,0 +1,32 @@
+Traceback (most recent call last):
+  File "/usr0/home/naveenr/projects/concept_decisions/scripts/notebooks/new_methods/method_comparison.py", line 193, in <module>
+    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_mutual".format(environment_string))
+  File "/usr0/home/naveenr/projects/concept_decisions/concept_abstraction/training.py", line 237, in train_ppo_model
+    model.learn(total_timesteps=total_timesteps, callback=WandbLoggingCallback())
+  File "/usr0/home/naveenr/miniconda3/envs/food/lib/python3.10/site-packages/stable_baselines3/ppo/ppo.py", line 311, in learn
+    return super().learn(
+  File "/usr0/home/naveenr/miniconda3/envs/food/lib/python3.10/site-packages/stable_baselines3/common/on_policy_algorithm.py", line 311, in learn
+    total_timesteps, callback = self._setup_learn(
+  File "/usr0/home/naveenr/miniconda3/envs/food/lib/python3.10/site-packages/stable_baselines3/common/base_class.py", line 423, in _setup_learn
+    self._last_obs = self.env.reset()  # type: ignore[assignment]
+  File "/usr0/home/naveenr/projects/concept_decisions/concept_abstraction/environment_wrappers.py", line 147, in reset
+    return self._process_batch(obs)
+  File "/usr0/home/naveenr/projects/concept_decisions/concept_abstraction/environment_wrappers.py", line 209, in _process_batch
+    logits = self.fast_predictor(self.obs_buffer)[:, self.concept_idx]
+ValueError: At least one stride in the given numpy array is negative, and tensors with negative strides are not currently supported. (You can probably work around this by making a copy of your array  with array.copy().)
+Traceback (most recent call last):
+  File "/usr0/home/naveenr/projects/concept_decisions/scripts/notebooks/new_methods/method_comparison.py", line 193, in <module>
+    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_mutual".format(environment_string))
+  File "/usr0/home/naveenr/projects/concept_decisions/concept_abstraction/training.py", line 237, in train_ppo_model
+    model.learn(total_timesteps=total_timesteps, callback=WandbLoggingCallback())
+  File "/usr0/home/naveenr/miniconda3/envs/food/lib/python3.10/site-packages/stable_baselines3/ppo/ppo.py", line 311, in learn
+    return super().learn(
+  File "/usr0/home/naveenr/miniconda3/envs/food/lib/python3.10/site-packages/stable_baselines3/common/on_policy_algorithm.py", line 311, in learn
+    total_timesteps, callback = self._setup_learn(
+  File "/usr0/home/naveenr/miniconda3/envs/food/lib/python3.10/site-packages/stable_baselines3/common/base_class.py", line 423, in _setup_learn
+    self._last_obs = self.env.reset()  # type: ignore[assignment]
+  File "/usr0/home/naveenr/projects/concept_decisions/concept_abstraction/environment_wrappers.py", line 147, in reset
+    return self._process_batch(obs)
+  File "/usr0/home/naveenr/projects/concept_decisions/concept_abstraction/environment_wrappers.py", line 209, in _process_batch
+    logits = self.fast_predictor(self.obs_buffer)[:, self.concept_idx]
+ValueError: At least one stride in the given numpy array is negative, and tensors with negative strides are not currently supported. (You can probably work around this by making a copy of your array  with array.copy().)

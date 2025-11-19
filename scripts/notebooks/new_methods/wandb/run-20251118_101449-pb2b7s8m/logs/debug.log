@@ -1,0 +1,21 @@
+2025-11-18 10:14:49,382 INFO    MainThread:4054620 [wandb_init.py:setup_run_log_directory():705] Logging user logs to /usr0/home/naveenr/projects/concept_decisions/scripts/notebooks/new_methods/wandb/run-20251118_101449-pb2b7s8m/logs/debug.log
+2025-11-18 10:14:49,382 INFO    MainThread:4054620 [wandb_init.py:setup_run_log_directory():706] Logging internal logs to /usr0/home/naveenr/projects/concept_decisions/scripts/notebooks/new_methods/wandb/run-20251118_101449-pb2b7s8m/logs/debug-internal.log
+2025-11-18 10:14:49,382 INFO    MainThread:4054620 [wandb_init.py:init():832] calling init triggers
+2025-11-18 10:14:49,382 INFO    MainThread:4054620 [wandb_init.py:init():837] wandb.init called with sweep_config: {}
+config: {'n_steps': 512, 'batch_size': 512, 'learning_rate': 0.00025, 'device': 'cpu', 'n_epochs': 10, 'policy_kwargs': {'net_arch': [128, 128]}, 'ent_coef': 0.01, 'env': 'cart_pole', '_wandb': {}}
+2025-11-18 10:14:49,382 INFO    MainThread:4054620 [wandb_init.py:init():880] starting backend
+2025-11-18 10:14:49,382 INFO    MainThread:4054620 [wandb_init.py:init():883] sending inform_init request
+2025-11-18 10:14:49,384 INFO    MainThread:4054620 [wandb_init.py:init():891] backend started and connected
+2025-11-18 10:14:49,387 INFO    MainThread:4054620 [wandb_init.py:init():961] updated telemetry
+2025-11-18 10:14:49,394 INFO    MainThread:4054620 [wandb_init.py:init():985] communicating run to backend with 90.0 second timeout
+2025-11-18 10:14:50,121 INFO    MainThread:4054620 [wandb_init.py:init():1036] starting run threads in backend
+2025-11-18 10:14:50,266 INFO    MainThread:4054620 [wandb_run.py:_console_start():2506] atexit reg
+2025-11-18 10:14:50,266 INFO    MainThread:4054620 [wandb_run.py:_redirect():2354] redirect: wrap_raw
+2025-11-18 10:14:50,266 INFO    MainThread:4054620 [wandb_run.py:_redirect():2423] Wrapping output streams.
+2025-11-18 10:14:50,267 INFO    MainThread:4054620 [wandb_run.py:_redirect():2446] Redirects installed.
+2025-11-18 10:14:50,268 INFO    MainThread:4054620 [wandb_init.py:init():1076] run started, returning control to user process
+2025-11-18 10:37:13,743 INFO    MainThread:4054620 [wandb_run.py:_finish():2272] finishing run naveenr-carnegie-mellon-university/Concept Decisions/pb2b7s8m
+2025-11-18 10:37:13,744 INFO    MainThread:4054620 [wandb_run.py:_atexit_cleanup():2471] got exitcode: 0
+2025-11-18 10:37:13,744 INFO    MainThread:4054620 [wandb_run.py:_restore():2453] restore
+2025-11-18 10:37:13,744 INFO    MainThread:4054620 [wandb_run.py:_restore():2459] restore done
+2025-11-18 10:37:14,719 INFO    MainThread:4054620 [wandb_run.py:_footer_sync_info():3869] logging synced files

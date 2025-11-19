@@ -7,24 +7,10 @@ import torch.optim as optim
 import random
 
 
-class QNetwork(nn.Module):
-    """Simple neural network for Q-function approximation"""
-    def __init__(self, state_dim, action_dim, hidden_dim=64):
-        super(QNetwork, self).__init__()
-        self.network = nn.Sequential(
-            nn.Linear(state_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, action_dim)
-        )
-    
-    def forward(self, state):
-        return self.network(state)
 
 class QNetwork(nn.Module):
-    """Simple but stable neural network for Q-function approximation"""
-    def __init__(self, state_dim, action_dim, hidden_dim=64):
+    """Q-Network with proper initialization"""
+    def __init__(self, state_dim, action_dim, hidden_dim=128):
         super(QNetwork, self).__init__()
         self.network = nn.Sequential(
             nn.Linear(state_dim, hidden_dim),
@@ -34,14 +20,15 @@ class QNetwork(nn.Module):
             nn.Linear(hidden_dim, action_dim)
         )
         
-        # Initialize weights properly for sparse rewards
+        # Proper initialization for stability
         for layer in self.network:
             if isinstance(layer, nn.Linear):
-                nn.init.xavier_uniform_(layer.weight)
-                nn.init.zeros_(layer.bias)
+                nn.init.orthogonal_(layer.weight, gain=np.sqrt(2))
+                nn.init.constant_(layer.bias, 0.0)
     
-    def forward(self, state):
-        return self.network(state)
+    def forward(self, x):
+        return self.network(x)
+
 
 class TDQLearning:
     """Stable TD Learning optimized for sparse reward environments"""
@@ -60,9 +47,8 @@ class TDQLearning:
         self.target_net.load_state_dict(self.q_net.state_dict())
         self.target_net.eval()  # Keep target network in eval mode
         
-        # Standard replay buffer (prioritized can cause instability)
-        self.replay_buffer = deque(maxlen=20000)
-        self.episode_buffer = []  # For episode-based updates
+        # Replay buffer - ALWAYS add experiences immediately
+        self.replay_buffer = deque(maxlen=50000)
         
         self.update_count = 0
         self.target_update_freq = 500  # Less frequent updates for stability
@@ -71,42 +57,9 @@ class TDQLearning:
         self.recent_losses = deque(maxlen=100)
         
     def add_experience(self, state, action, reward, next_state, done):
-        """Add experience to replay buffer"""
-        self.episode_buffer.append((state, action, reward, next_state, done))
-        
-        # When episode ends, add all experiences
-        if done:
-            self._process_episode()
-            self.episode_buffer = []
-    
-    def _process_episode(self):
-        """Process complete episode for sparse rewards"""
-        if not self.episode_buffer:
-            return
-        
-        # Calculate returns (discounted future rewards)
-        returns = []
-        G = 0
-        for i in reversed(range(len(self.episode_buffer))):
-            _, _, reward, _, _ = self.episode_buffer[i]
-            G = reward + self.gamma * G
-            returns.append(G)
-        returns.reverse()
-        
-        # Add experiences to replay buffer
-        for i, (state, action, reward, next_state, done) in enumerate(self.episode_buffer):
-            # Use actual reward (not return) to maintain TD structure
-            self.replay_buffer.append((state, action, reward, next_state, done))
-            
-            # For sparse rewards, also add some experiences with shaped rewards
-            # But only if the episode had non-zero reward
-            if abs(returns[-1]) > 0:  # Episode had reward
-                # Add experience with small shaped reward based on return
-                shaped_reward = reward + 0.01 * returns[i] / max(1, len(self.episode_buffer))
-                # Clip to prevent extreme values
-                shaped_reward = np.clip(shaped_reward, -10, 10)
-                if i < len(self.episode_buffer) - 1:  # Not the last experience
-                    self.replay_buffer.append((state, action, shaped_reward, next_state, False))
+        """Add experience to replay buffer IMMEDIATELY"""
+        # CRITICAL FIX: Add to replay buffer right away, not only when done
+        self.replay_buffer.append((state, action, reward, next_state, done))
     
     def get_q_value(self, state, action):
         """Get Q-value for a specific state-action pair"""
@@ -114,6 +67,13 @@ class TDQLearning:
             state_tensor = torch.FloatTensor(state).unsqueeze(0)
             q_values = self.q_net(state_tensor)
             return q_values[0][action].item()
+    
+    def get_all_q_values(self, state):
+        """Get all Q-values for a state"""
+        with torch.no_grad():
+            state_tensor = torch.FloatTensor(state).unsqueeze(0)
+            q_values = self.q_net(state_tensor)
+            return q_values[0].numpy()
     
     def get_action(self, state, deterministic=False):
         """Get action using epsilon-greedy policy"""
@@ -134,22 +94,27 @@ class TDQLearning:
         batch = random.sample(self.replay_buffer, batch_size)
         states, actions, rewards, next_states, dones = zip(*batch)
         
-        states = torch.FloatTensor(states)
+        states = torch.FloatTensor(np.array(states))
         actions = torch.LongTensor(actions)
         rewards = torch.FloatTensor(rewards)
-        next_states = torch.FloatTensor(next_states)
+        next_states = torch.FloatTensor(np.array(next_states))
         dones = torch.BoolTensor(dones)
         
         # Current Q-values
         current_q_values = self.q_net(states).gather(1, actions.unsqueeze(1))
         
-        # Next Q-values from target network
+        # Next Q-values from target network (Double DQN style)
         with torch.no_grad():
-            next_q_values = self.target_net(next_states).max(1)[0]
+            # Use online network to select actions
+            next_actions = self.q_net(next_states).argmax(1)
+            # Use target network to evaluate actions
+            next_q_values = self.target_net(next_states).gather(1, next_actions.unsqueeze(1)).squeeze()
+            
+            # TD target: r + gamma * max_a Q(s', a) for non-terminal states
             td_targets = rewards + (self.gamma * next_q_values * ~dones)
             
-            # Clip targets to prevent exploding values
-            td_targets = torch.clamp(td_targets, -200, 200)
+            # Less aggressive clipping - allow Q-values up to 500 for long episodes
+            td_targets = torch.clamp(td_targets, -500, 500)
         
         # Calculate loss
         loss = nn.MSELoss()(current_q_values.squeeze(), td_targets)
@@ -157,13 +122,12 @@ class TDQLearning:
         # Check for exploding loss
         if loss.item() > 1000:
             print(f"Warning: High loss detected: {loss.item():.2f}")
-            # Skip this update if loss is too high
-            return loss.item()
+            # Don't skip the update, but clip gradients more aggressively
         
         # Update network with gradient clipping
         self.optimizer.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), max_norm=0.5)
+        torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), max_norm=1.0)
         self.optimizer.step()
         
         self.update_count += 1
@@ -173,12 +137,12 @@ class TDQLearning:
         if self.update_count % self.target_update_freq == 0:
             self.target_net.load_state_dict(self.q_net.state_dict())
             avg_recent_loss = np.mean(self.recent_losses) if self.recent_losses else 0
-            print(f"Updated target network at step {self.update_count}, Avg recent loss: {avg_recent_loss:.2f}")
+            print(f"Updated target network at step {self.update_count}, Avg recent loss: {avg_recent_loss:.4f}")
         
         return loss.item()
     
-    def decay_epsilon(self, decay_rate=0.9995, min_epsilon=0.02):
-        """Gradual epsilon decay"""
+    def decay_epsilon(self, decay_rate=0.9995, min_epsilon=0.005):
+        """Gradual epsilon decay - lower minimum for better convergence"""
         self.epsilon = max(min_epsilon, self.epsilon * decay_rate)
     
     def get_loss_stats(self):
@@ -189,9 +153,9 @@ class TDQLearning:
         return np.mean(losses), np.std(losses), np.max(losses)
 
 def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99, 
-                                total_timesteps=100000, epsilon=0.1,
+                                total_timesteps=100_000, epsilon=0.1,
                                 learning_rate=1e-4, update_freq=20, initial_random=0.3,
-                                mimic=False,final_training=1_000,get_td_learner=False):
+                                mimic=False, final_training=1_000, get_td_learner=False):
     """
     Stable Q-value estimation for sparse reward environments
     """
@@ -211,7 +175,6 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
     episode_rewards = []
 
     episodes_completed = 0
-    episode_losses = [[] for _ in range(num_envs)]
     episode_reward_sums = [0 for _ in range(num_envs)]
     
     # Loss monitoring
@@ -221,55 +184,74 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
     obs, infos = env.reset()
     steps = 0
 
+    # Initial concept extraction - obs is already the observation array
     concepts = np.zeros((num_envs, state_dim))
     for i in range(num_envs):
         info_i = infos[i] if infos and len(infos) > i else {}
-        obs_i = obs[i]
-        concepts[i] = np.array([c(info_i.get("observation", obs_i)) for c in concept_list])
+        # For reset, the observation is in obs[i], not in infos
+        actual_obs = info_i.get("observation", obs[i])
+        concepts[i] = np.array([c(actual_obs) for c in concept_list])
 
     print("Starting stable training for sparse rewards...")
     
+    print("Total of {} steps".format(total_timesteps // num_envs))
+
     while steps < total_timesteps // num_envs:
-        if steps%5000 == 0:
-            print("Loss mean {}".format(td_learner.get_loss_stats()[0]))
+        if (steps+1)%100 == 0:
+            print("On step {}".format(steps))
+
+        if steps % 5000 == 0:
+            loss_mean, _, _ = td_learner.get_loss_stats()
+            print(f"Step {steps}, Loss mean: {loss_mean:.4f}")
 
         actions = []
         for i in range(num_envs):
-            # Initial exploration phase
-            if steps < total_timesteps // (10 * num_envs) and np.random.rand() < initial_random:
+            # Initial exploration phase - use OR to ensure exploration throughout
+            use_random = (steps < total_timesteps // (10 * num_envs)) or (np.random.rand() < initial_random)
+            
+            if use_random and np.random.rand() < 0.5:  # 50% random during exploration
                 action = env.action_space.sample()
             else:
                 with torch.no_grad():
                     obs_i = obs[i]
                     obs_tensor = torch.FloatTensor(obs_i)
                     if mimic:
-                        valid_action =  np.sum(env.envs[0].env.transitions[infos[i]['observation']],axis=1)
+                        valid_action = np.sum(env.envs[0].env.transitions[infos[i]['observation']], axis=1)
                         valid_action = torch.Tensor(valid_action).to(model.device)
-                        action = model.policy.get_distribution(torch.Tensor(obs_i).unsqueeze(0).to(model.device)).distribution.probs 
-                        action *= valid_action
-                        action = torch.argmax(action).item()
+                        action_probs = model.policy.get_distribution(
+                            torch.Tensor(obs_i).unsqueeze(0).to(model.device)
+                        ).distribution.probs 
+                        action_probs *= valid_action
+                        action = torch.argmax(action_probs).item()
                     else:
                         action = model.predict(obs_tensor.numpy())[0].item()
+            
             actions.append(int(action))
             all_state_actions.add((tuple(concepts[i]), actions[i]))
+        
+        # Step the environment
         next_obs, rewards, terms, truncs, infos = env.step(actions)
         dones = np.logical_or(terms, truncs)
 
+        # Compute next concepts for all environments
         next_concepts = np.zeros_like(concepts)
         for i in range(num_envs):
-            episode_reward_sums[i] += rewards[i]
-            if not dones[i]:
-                info_i = infos[i] if infos and len(infos) > i else {}
-                next_concepts[i] = np.array([c(info_i["observation"]) for c in concept_list])
+            info_i = infos[i] if infos and len(infos) > i else {}
+            # After step, observation might be in infos or in next_obs
+            actual_obs = info_i.get("observation", next_obs[i])
+            next_concepts[i] = np.array([c(actual_obs) for c in concept_list])
 
-        # Store experiences
+        # Store experiences and track rewards
         for i in range(num_envs):
             td_learner.add_experience(concepts[i], actions[i], rewards[i], next_concepts[i], dones[i])
+            episode_reward_sums[i] += rewards[i]
 
         # Update less frequently for stability
         if len(td_learner.replay_buffer) >= 128 and steps % update_freq == 0:
             loss = td_learner.update(batch_size=64)
             if loss is not None:
+                losses.append(loss)
+                
                 # Monitor for loss explosion
                 if loss > 500:
                     loss_explosion_count += 1
@@ -280,15 +262,13 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
                         for param_group in td_learner.optimizer.param_groups:
                             param_group['lr'] *= 0.5
                         loss_explosion_count = 0
-                
-                for i in range(num_envs):
-                    episode_losses[i].append(loss)
 
-        # Handle resets and logging
+        # Handle episode completion and logging
         for i in range(num_envs):
             if dones[i]:
                 episodes_completed += 1
                 episode_rewards.append(episode_reward_sums[i])
+                episode_reward_sums[i] = 0  # Reset for next episode
                 
                 if episodes_completed % 25 == 0:
                     recent_rewards = episode_rewards[-25:] if len(episode_rewards) >= 25 else episode_rewards
@@ -298,11 +278,10 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
                     print(f"Episode {episodes_completed}, Avg Reward: {avg_reward:.2f}, "
                           f"Loss (mean/std/max): {loss_mean:.2f}/{loss_std:.2f}/{loss_max:.2f}, "
                           f"Epsilon: {td_learner.epsilon:.3f}")
-                
-                episode_losses[i] = []
-                episode_reward_sums[i] = 0
 
-        obs, concepts = next_obs, next_concepts
+        # Update state
+        obs = next_obs
+        concepts = next_concepts
         steps += 1
 
         # Gradual epsilon decay
@@ -310,33 +289,44 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
             td_learner.decay_epsilon()
 
     # Conservative final training
+    print("\n" + "="*50)
     print("Final training phase...")
+    print("="*50)
     for i in range(final_training):
         if len(td_learner.replay_buffer) >= 64:
             loss = td_learner.update(batch_size=32)  # Smaller batch size
             if loss is not None and i % 100 == 0:
-                print(f"Final training step {i}, Loss: {loss:.4f}")
+                print(f"Final training step {i}/{final_training}, Loss: {loss:.4f}")
 
     # Collect Q-value estimates
+    print("\n" + "="*50)
+    print("Collecting Q-value estimates...")
+    print("="*50)
     q_estimate_list = []
     for state_tuple, action in all_state_actions:
         state_array = np.array(state_tuple)
         q_value = td_learner.get_q_value(state_array, action)
         q_estimate_list.append((state_array, action, q_value))
 
+    # Final statistics
     final_avg_reward = np.mean(episode_rewards[-25:]) if len(episode_rewards) >= 25 else np.mean(episode_rewards) if episode_rewards else 0
     loss_mean, loss_std, loss_max = td_learner.get_loss_stats()
     
-    print(f"Training completed. Final epsilon: {td_learner.epsilon:.3f}")
-    print(f"Final average reward: {final_avg_reward:.2f}")
+    print("\n" + "="*50)
+    print("Training Summary")
+    print("="*50)
+    print(f"Total episodes completed: {episodes_completed}")
+    print(f"Final epsilon: {td_learner.epsilon:.3f}")
+    print(f"Final average reward (last 25 episodes): {final_avg_reward:.2f}")
     print(f"Final loss stats - Mean: {loss_mean:.2f}, Std: {loss_std:.2f}, Max: {loss_max:.2f}")
-    print(f"Total state-action pairs: {len(q_estimate_list)}")
+    print(f"Total state-action pairs explored: {len(q_estimate_list)}")
+    print(f"Replay buffer size: {len(td_learner.replay_buffer)}")
+    print("="*50 + "\n")
 
     if get_td_learner:
         return td_learner 
     else:
         return q_estimate_list
-
 def rollout_pi_estimates(model, env, concept_list, num_rollouts=200, max_steps=2500,mimic=False):
     """
     Estimate the policy/action pairs for different states using a vectorized environment.
@@ -390,6 +380,7 @@ def rollout_pi_estimates(model, env, concept_list, num_rollouts=200, max_steps=2
         for d in dones:
             if d:
                 rollouts_done += 1
+                print(rollouts_done,num_rollouts)
 
         obs = next_obs
         steps += 1
@@ -496,3 +487,47 @@ def get_recordable(env):
 
     env = gym.wrappers.RecordVideo(env, video_folder="../../runs/videos/", episode_trigger=lambda e: True)
     return env 
+
+def save_fqe(fqe,path):
+    save_dict = {
+        "state_dim": fqe.state_dim,
+        "action_dim": fqe.action_dim,
+        "gamma": fqe.gamma,
+        "n_ensemble": fqe.n_ensemble,
+        "hidden_dims": fqe.hidden_dims,  # or store manually
+        "ensemble_state_dicts": [q.state_dict() for q in fqe.ensemble],
+        "state_mean": fqe.state_mean,
+        "state_std": fqe.state_std
+    }
+    torch.save(save_dict, path)
+
+def load_fqe(path, eval_env, optimal_model, device='cuda'):
+    checkpoint = torch.load(path, map_location=device)
+
+    fqe = FittedQEvaluation(
+        state_dim=checkpoint["state_dim"],
+        action_dim=checkpoint["action_dim"],
+        policy_model=optimal_model,
+        gamma=checkpoint["gamma"],
+        hidden_dims=checkpoint["hidden_dims"],
+        n_ensemble=checkpoint["n_ensemble"],
+        device=device,
+        state_mean=checkpoint['state_mean'],
+        state_std=checkpoint['state_std']
+    )
+
+    state_mean = checkpoint['state_mean']
+    state_std = checkpoint['state_std']
+
+    for q_net, state_dict in zip(fqe.ensemble, checkpoint["ensemble_state_dicts"]):
+        q_net.load_state_dict(state_dict)
+
+    collector = TransitionCollector(eval_env, optimal_model)
+    transitions = collector.collect_diverse_states(n_transitions=10000)
+    data = collector.transitions_to_arrays(transitions)
+    states = (data['states'] - state_mean) / state_std
+
+    q_values, _ = fqe.get_q_values(states)
+
+
+    return fqe, states, state_mean, state_std, q_values 
