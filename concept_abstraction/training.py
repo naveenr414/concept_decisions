@@ -30,64 +30,45 @@ stderr_buffer = StringIO()
 with redirect_stderr(stderr_buffer):
     from stable_baselines3 import PPO
     from stable_baselines3.common.callbacks import BaseCallback
-
 class WandbLoggingCallback(BaseCallback):
-    """
-    Optimized WandB logging - batches metrics and logs less frequently.
-    
-    Key changes:
-    1. Only ONE wandb.log() call per step (not two)
-    2. Only logs when there's meaningful data (episodes completed or PPO update)
-    3. Batches episode metrics instead of logging each one immediately
-    """
-    
     def __init__(self, smooth_alpha=0.9, log_freq=10):
         super().__init__()
         self.smoothed_avg_norm_reward = 0
         self.alpha = smooth_alpha
-        self.log_freq = log_freq  # Log every N steps
+        self.log_freq = log_freq
         
-        # Buffer episode data
         self.episode_rewards = []
         self.episode_lengths = []
-        
+        self.total_episodes_completed = 0  # <- accumulate over whole run
+
     def _on_step(self) -> bool:
-        # Collect episode info (don't log yet)
         infos = self.locals.get("infos", [])
         for info in infos:
-            if "episode" in info.keys():
+            if "episode" in info:
                 raw_reward = info["episode"]["r"]
-                norm_reward = raw_reward
-                
-                # EMA smoothing
                 self.smoothed_avg_norm_reward = (
                     self.alpha * self.smoothed_avg_norm_reward
-                    + (1 - self.alpha) * norm_reward
+                    + (1 - self.alpha) * raw_reward
                 )
-                
-                # Buffer instead of immediate logging
                 self.episode_rewards.append(raw_reward)
                 self.episode_lengths.append(info["episode"]["l"])
-        
-        # Only log every N steps OR when PPO updates happen
+                self.total_episodes_completed += 1  # <- increment global counter
+
         if self.n_calls % self.log_freq == 0:
             metrics = {}
-            
-            # Add episode metrics if any completed
             if self.episode_rewards:
                 metrics.update({
                     "episode_reward_mean": np.mean(self.episode_rewards),
                     "episode_reward_max": np.max(self.episode_rewards),
                     "episode_reward_min": np.min(self.episode_rewards),
                     "episode_length_mean": np.mean(self.episode_lengths),
-                    "episodes_completed": len(self.episode_rewards),
+                    "episodes_completed": self.total_episodes_completed,  # <- use global counter
                     "ema_norm_reward": self.smoothed_avg_norm_reward
                 })
-                # Clear buffers
                 self.episode_rewards.clear()
                 self.episode_lengths.clear()
-            
-            # Add PPO diagnostics (only if available - these update during training)
+
+            # PPO metrics logging (unchanged)
             logger_data = getattr(self.model.logger, "name_to_value", {})
             ppo_metrics = {
                 "explained_variance": logger_data.get("train/explained_variance"),
@@ -97,13 +78,11 @@ class WandbLoggingCallback(BaseCallback):
                 "entropy_loss": logger_data.get("train/entropy_loss"),
                 "grad_norm": logger_data.get("diagnostics/grad_norm"),
             }
-            # Only add non-None values
             metrics.update({k: v for k, v in ppo_metrics.items() if v is not None})
-            
-            # Single batched log call (instead of 2 separate calls)
+
             if metrics:
                 wandb.log(metrics, step=self.num_timesteps)
-        
+
         return True
 
 def get_model(environment_string,policy,override={}):
@@ -130,10 +109,13 @@ def get_model(environment_string,policy,override={}):
             default_model_dict['learning_rate'] = 1e-3
             default_model_dict['ent_coef'] = 0.02
         elif environment_string == "glucose":
-            default_model_dict['policy_kwargs'] = {'net_arch': [64,64]}
-            default_model_dict['batch_size'] = 256
-            default_model_dict['n_epochs'] = 5
-            default_model_dict['learning_rate'] = 1e-5
+            default_model_dict['n_steps'] = 256
+            default_model_dict['batch_size'] = 64
+            default_model_dict['n_epochs'] = 10
+            default_model_dict['gae_lambda'] = 0.95
+            default_model_dict['clip_range'] = 0.2
+            default_model_dict['ent_coef'] = 0.02
+            default_model_dict['max_grad_norm'] = 0.5
         elif environment_string == "cart_pole":
             default_model_dict['policy_kwargs'] = {'net_arch': [128,128]}
             default_model_dict['batch_size'] = 512

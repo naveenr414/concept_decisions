@@ -47,16 +47,16 @@ setup_tmux_session() {
 
 # Create tmux sessions for each environment
 setup_tmux_session "imperfect_mini_grid"
-# setup_tmux_session "imperfect_cart_pole"
-# setup_tmux_session "imperfect_pong"
-# setup_tmux_session "imperfect_boxing"
+setup_tmux_session "imperfect_cart_pole"
+setup_tmux_session "imperfect_pong"
+setup_tmux_session "imperfect_boxing"
 
 # Run experiments
 for seed in 42
 do 
-  # Mini Grid - vary concept_accuracy and num_concepts_selected
+  # # Mini Grid - vary concept_accuracy and num_concepts_selected
   env=mini_grid
-  for concept_accuracy in 0.75 0.85 0.975
+  for concept_accuracy in 0.75 0.85 0.95
   do
     for concept_fraction in 0.25 0.5 1
     do
@@ -65,8 +65,8 @@ do
     done
   done
 
-  # Mini Grid - vary concept_accuracy and training_timesteps (fix num_concepts_selected)
-  for concept_accuracy in 0.75 0.85 0.975
+  # # Mini Grid - vary concept_accuracy and training_timesteps (fix num_concepts_selected)
+  for concept_accuracy in 0.75 0.85 0.95
   do
     for training_ts in 250000 500000 750000 1000000
     do
@@ -74,7 +74,7 @@ do
     done
   done
 
-  # Mini Grid - vary num_concepts_selected and training_timesteps (fix concept_accuracy=0.95)
+  # # Mini Grid - vary num_concepts_selected and training_timesteps (fix concept_accuracy=0.95)
   for concept_fraction in 0.25 0.5 1
   do
     num_concepts_selected=$(printf "%.0f" $(echo "${num_concepts[$env]} * ${concept_fraction}" | bc))
@@ -85,35 +85,35 @@ do
   done
 
   # # Cart Pole - vary concept_accuracy and num_concepts_selected
-  # env=cart_pole
-  # for concept_accuracy in 0.75 0.85 0.975
-  # do
-  #   for concept_fraction in 0.25 0.5 1
-  #   do
-  #     num_concepts_selected=$(printf "%.0f" $(echo "${num_concepts[$env]} * ${concept_fraction}" | bc))
-  #     tmux send-keys -t imperfect_cart_pole "conda activate ${environment}; python -u only_lp.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts_selected} --concept_accuracy ${concept_accuracy} --out_folder imperfect >> ${LOGFILE_CART_POLE} 2>&1" ENTER
-  #   done
-  # done
+  env=cart_pole
+  for concept_accuracy in 0.75 0.85 0.95
+  do
+    for concept_fraction in 0.25 0.5 1
+    do
+      num_concepts_selected=$(printf "%.0f" $(echo "${num_concepts[$env]} * ${concept_fraction}" | bc))
+      tmux send-keys -t imperfect_cart_pole "conda activate ${environment}; python -u only_lp.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts_selected} --concept_accuracy ${concept_accuracy} --out_folder imperfect >> ${LOGFILE_CART_POLE} 2>&1" ENTER
+    done
+  done
 
-  # # Pong - vary concept_accuracy and num_concepts_selected
-  # env=pong
-  # for concept_accuracy in 0.75 0.85 0.975
-  # do
-  #   for concept_fraction in 0.25 0.5 1
-  #   do
-  #     num_concepts_selected=$(printf "%.0f" $(echo "${num_concepts[$env]} * ${concept_fraction}" | bc))
-  #     tmux send-keys -t imperfect_pong "conda activate ${environment}; python -u only_lp.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts_selected} --concept_accuracy ${concept_accuracy} --out_folder imperfect >> ${LOGFILE_PONG} 2>&1" ENTER
-  #   done
-  # done
+  # Pong - vary concept_accuracy and num_concepts_selected
+  env=pong
+  for concept_accuracy in 0.75 0.85 0.95
+  do
+    for concept_fraction in 0.25 0.5 1
+    do
+      num_concepts_selected=$(printf "%.0f" $(echo "${num_concepts[$env]} * ${concept_fraction}" | bc))
+      tmux send-keys -t imperfect_pong "conda activate ${environment}; python -u only_lp.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts_selected} --concept_accuracy ${concept_accuracy} --out_folder imperfect >> ${LOGFILE_PONG} 2>&1" ENTER
+    done
+  done
 
-  # # Boxing - vary concept_accuracy and num_concepts_selected
-  # env=boxing
-  # for concept_accuracy in 0.75 0.85 0.975
-  # do
-  #   for concept_fraction in 0.25 0.5 1
-  #   do
-  #     num_concepts_selected=$(printf "%.0f" $(echo "${num_concepts[$env]} * ${concept_fraction}" | bc))
-  #     tmux send-keys -t imperfect_boxing "conda activate ${environment}; python -u only_lp.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts_selected} --concept_accuracy ${concept_accuracy} --out_folder imperfect >> ${LOGFILE_BOXING} 2>&1" ENTER
-  #   done
-  # done
+  # Boxing - vary concept_accuracy and num_concepts_selected
+  env=boxing
+  for concept_accuracy in 0.75 0.85 0.95
+  do
+    for concept_fraction in 0.25 0.5 1
+    do
+      num_concepts_selected=$(printf "%.0f" $(echo "${num_concepts[$env]} * ${concept_fraction}" | bc))
+      tmux send-keys -t imperfect_boxing "conda activate ${environment}; python -u only_lp.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts_selected} --concept_accuracy ${concept_accuracy} --out_folder imperfect >> ${LOGFILE_BOXING} 2>&1" ENTER
+    done
+  done
 done

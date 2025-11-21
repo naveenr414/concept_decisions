@@ -7,7 +7,6 @@ from gymnasium.wrappers import FrameStackObservation as FrameStack
 import random
 import torch
 from gymnasium.envs.registration import register
-from simglucose.envs import T1DSimGymnaisumEnv
 
 from io import StringIO
 from contextlib import redirect_stderr
@@ -17,6 +16,7 @@ with redirect_stderr(stderr_buffer):
     from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 import minigrid
 from minigrid.core.constants import DIR_TO_VEC
+from concept_abstraction.glucose_env import GlucoseEnvironment
 from concept_abstraction.environment_wrappers import *
 
 cv2.setNumThreads(1)
@@ -131,6 +131,17 @@ def get_raw_state_cartpole(env,obs):
 
     return obs 
 
+def get_raw_state_glucose(env,obs):
+    """Get the raw underlying state in a CartPole environment
+    Arguments:
+        env: CartPole environment
+        obs: Current observation, 4-vector
+    
+    Returns: The same 4-vector observation"""
+
+    return obs 
+
+
 def get_raw_pixels_mini_grid(env, obs=None):
     pixels = env.render()[:160, :160]
     gray = np.dot(pixels[..., :3], [0.2989, 0.5870, 0.1140]).astype(np.uint8)
@@ -185,69 +196,6 @@ def get_raw_state_mini_grid(env,obs,info):
     vec = [agent_pos[0],agent_pos[1],agent_dir,key_pos[0],key_pos[1],door_pos[0],door_pos[1],int(door_open)]+[int(direction_movable[i]) for i in ['right','down','left','up']]
 
     return vec 
-
-
-
-class GlucoseEnvironment(T1DSimGymnaisumEnv):
-    def __init__(self, patient_name="adolescent#002", **kwargs):
-        super().__init__(patient_name=patient_name, **kwargs)
-        self.bg_history = []
-        self.action_to_dose = {
-            0: 0,
-            1: 6,
-            2: 12,
-            3: 18,
-            4: 24,
-            5: 30,
-        }
-        self.action_space = spaces.Discrete(len(self.action_to_dose))
-
-    def reset(self, *, seed=None, options=None):
-        # Call the parent reset
-        obs, info = super().reset(seed=seed, options=options)
-        obs = np.random.random()*45+150
-        
-        # Initialize BG history
-        self.bg_history = []
-        if hasattr(obs, "__getitem__"):
-            self.bg_history.append(obs[0])  # adjust if needed
-
-        return obs/150, info
-    def step(self, action,options={}):
-        obs, reward, terminated, truncated, info = super().step(self.action_to_dose[action])
-        info['observation'] = obs/150
-        # Current BG (blood glucose)
-        bg = obs[0]  # depends on observation structure
-        self.bg_history.append(bg)
-        if len(self.bg_history) > 2:
-            self.bg_history.pop(0)
-        
-        # Compute delta
-        if len(self.bg_history) < 2:
-            delta = 0
-        else:
-            delta = self.bg_history[-1] - self.bg_history[-2]
-
-        # ----- State reward -----
-        if bg < 70 or bg > 200:
-            r_state = 0  # extreme hypo/hyper, episode ends
-        elif bg < 100 and delta < 0.5:
-            r_state = 0.1  # mild hypoglycemia
-        elif bg > 150 and delta > 0.5:
-            r_state = 0.1  # mild hyperglycemia
-        elif 100 <= bg <= 150:
-            r_state = 1  # target zone
-        else:
-            r_state = 0.1
-
-        # ----- Action penalty -----
-        r_action = 0.1 * (action ** 2)/(30**2)  # penalize insulin dose magnitude
-
-        # Total reward
-        custom_reward = r_state - r_action
-
-        return obs/150, custom_reward, terminated, truncated, info
-
 
 
 def get_raw_state_atari(env,obs):
@@ -383,18 +331,22 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
 
         gymnasium_env = GymnasiumWrapper(vec_env)
     elif environment_string == "glucose":
-        register(
-            id="simglucose/adolescent2-custom-v0",
-            entry_point="concept_abstraction.environments:GlucoseEnvironment",  # adjust if using a module
-            max_episode_steps=288,
-            kwargs={"patient_name": "adolescent#002"},
-        )
-
         def make_env():
+            register(
+                id="simglucose/adolescent2-custom-v0",
+                entry_point=GlucoseEnvironment,  # adjust if using a module
+                max_episode_steps=288,
+                kwargs={"patient_name": "adolescent#002"},
+            )
+
             env = gym.make("simglucose/adolescent2-custom-v0", render_mode=None)
-            env = Monitor(env)  # required for wandb callback to track rewards/lengths
-            return env
-        vec_env = DummyVecEnv([make_env])
+            env = Monitor(env)
+            if concept_list is not None:
+                env = ConceptWrapper(env,concept_list,spaces.MultiBinary(len(concept_list)),get_raw_state_glucose)
+
+            return env 
+        vec_env = SubprocVecEnv([make_env for i in range(num_envs)])
+
         gymnasium_env = GymnasiumWrapper(vec_env)
 
     elif environment_string  == "mini_grid":

@@ -188,7 +188,7 @@ if is_main:
 if is_main:
     # Select a subset of the all_pairs
     all_combos = list(itertools.combinations(range(len(concept_list)), num_concepts_selected))
-    sampled = random.sample(all_combos, 20)
+    sampled = random.sample(all_combos, num_samples)
     sampled.append(lp_based_selection(ground_truth_env,concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary")[1])
 
     results['lp'] = {'combos': sampled, 'scores': []}

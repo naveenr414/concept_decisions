@@ -30,14 +30,12 @@ if is_main:
     parser.add_argument('--seed', help='Random Seed', type=int, default=42)
     parser.add_argument('--environment_string', help='Which environment to create', type=str, default="tree")
     parser.add_argument('--gold_timesteps', help='Number of training timesteps without concepts', type=int, default=10000)
-    parser.add_argument('--learning_rate', help='Number of training timesteps without concepts', type=float, default=0)
 
     args = parser.parse_args()
 
     seed = args.seed
     environment_string = args.environment_string
     gold_timesteps = args.gold_timesteps
-    learning_rate = args.learning_rate 
 
 if is_main:
     results = {}
@@ -65,8 +63,6 @@ if is_main:
         policy = "CnnPolicy"
 
     custom_params = {}
-    if learning_rate > 0:
-        custom_params['learning_rate'] = learning_rate
     
     groundtruth_model = train_ppo_model(ground_truth_env,environment_string,total_timesteps=gold_timesteps,policy=policy,override=custom_params)
     groundtruth_model.save(model_name)

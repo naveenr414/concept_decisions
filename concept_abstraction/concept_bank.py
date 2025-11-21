@@ -41,6 +41,19 @@ def get_cart_pole_concept(i):
         return obs[i]
     return get_concept
 
+def get_glucose_concept(i):
+    """Get the ith index of a concept
+    
+    Arguments:
+        i: Integer, idx
+    
+    Returns: Function that returns the ith index into a vector"""
+
+    def get_concept(obs):
+        return obs[i]
+    return get_concept
+
+
 
 ### Minigrid Concepts
 
@@ -240,14 +253,25 @@ def get_concepts(environment_string,concept_source,seed):
             full_lst.append(less_function(get_cart_pole_concept(i),t))   
     human_selected_binary['cart_pole'] = full_lst
 
+    full_lst = []
+    thresholds = [
+        [0.25, 0.35, 0.50, 0.65, 0.90, 1.00],
+        [-0.20, -0.10, -0.05, 0.05, 0.10, 0.20],
+        [0.00, 0.10, 0.25, 0.50, 0.75, 1.00],
+        [0.0, 0.5, 1.0, 1.5, 2.0, 3.0],
+        [-0.90, -0.50, -0.10, 0.10, 0.50, 0.90],
+        [-0.90, -0.50, -0.10, 0.10, 0.50, 0.90],
+    ]
+
+    for i in range(6):
+        for t in thresholds[i]:
+            full_lst.append(less_function(get_glucose_concept(i),t))   
+    human_selected_binary['glucose'] = full_lst
+
+
     human_selected['mini_grid'] = get_all_mini_grid_concepts()
     human_selected_binary['mini_grid'] = get_all_mini_grid_binary_concepts()    
     
-    human_selected['glucose'] = [lambda obs,i=i: obs[i] for i in range(1)]
-    human_selected_binary['glucose'] = [] 
-    for func in human_selected['glucose'] :
-        for threshold in [0,0.25,0.5,0.75,1,1.25,1.5,1.75,2,2.25,2.5,2.75,3]:
-            human_selected_binary['glucose'].append(less_function(func,threshold))
 
     human_selected['pong'] = [pong_paddle_y,pong_ball_x,pong_ball_y,pong_ball_v_x,pong_ball_v_y,pong_enemy_y,pong_enemy_v_y,pong_paddle_x_diff,pong_paddle_y_diff,pong_enemy_y_diff,pong_enemy_ball_x_diff,pong_enemy_ball_y_diff]
     full_lst = []

@@ -59,6 +59,7 @@ if is_main:
                 'training_timesteps': training_timesteps, 
                 'gold_timesteps': gold_timesteps,
                 'num_concepts_selected': num_concepts_selected,
+                'concept_accuracy': concept_accuracy,
         }
         print("Parameters {}".format(results['parameters']))
 
