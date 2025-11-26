@@ -7,6 +7,7 @@ from gymnasium.wrappers import FrameStackObservation as FrameStack
 import random
 import torch
 from gymnasium.envs.registration import register
+from stable_baselines3.common.vec_env import VecNormalize
 
 from io import StringIO
 from contextlib import redirect_stderr
@@ -328,7 +329,12 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
         vec_env = SubprocVecEnv([make_env for _ in range(num_envs)])
         if use_processed:
             vec_env = VecConceptWrapper(vec_env, fast_predictor, concept_idx,height=160,width=240,intervention_prob=intervention_prob,concept_list=concept_list)
-
+            vec_env = VecNormalize(
+                vec_env,
+                norm_obs=True,
+                norm_reward=False,   # or True if you want reward normalization too
+                clip_obs=10.0
+            )
         gymnasium_env = GymnasiumWrapper(vec_env)
     elif environment_string == "glucose":
         def make_env():

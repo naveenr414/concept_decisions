@@ -64,7 +64,10 @@ if is_main:
 
     custom_params = {}
     
-    groundtruth_model = train_ppo_model(ground_truth_env,environment_string,total_timesteps=gold_timesteps,policy=policy,override=custom_params)
+    if policy == "MlpPolicy":
+        groundtruth_model = train_ppo_model(ground_truth_env,environment_string+"_raw",total_timesteps=gold_timesteps,policy=policy,override=custom_params)
+    else:
+        groundtruth_model = train_ppo_model(ground_truth_env,environment_string,total_timesteps=gold_timesteps,policy=policy,override=custom_params)
     groundtruth_model.save(model_name)
     groundtruth_reward = evaluate_model(environment_string,ground_truth_gym_env,additional_info,groundtruth_model,seed)
     results['ground_truth'] = {'reward':groundtruth_reward}

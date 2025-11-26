@@ -15,6 +15,8 @@ import torch
 from itertools import combinations
 from collections import defaultdict, Counter 
 from sklearn.feature_selection import mutual_info_regression
+import math 
+import time 
 
 def random_selection(concept_list,num_concepts):
     """Randomly select {num_concepts} from env.concepts
@@ -238,7 +240,7 @@ def greedy_iterative_selection(concept_list,num_concepts_selected,selection_func
 
     return concepts, idx
 
-def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True,as_float=False,weighted=False):
+def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True,as_float=False,weighted=False,acc_list=None,min_accuracy=0):
     """Arguments:
         final_vals: list of tuples (value, elements_covering_value)
                     assumed sorted in decreasing priority (top first)
@@ -247,14 +249,9 @@ def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True,as_float=F
         List of concepet indexes
 
     """
-    U = set()
-    for _, elems in final_vals:
-        U.update(elems)
-    U = list(U)  # universe of elements
-    elem_to_idx = {e:i for i,e in enumerate(U)}
     
     n = len(final_vals)
-    m = len(U)
+    m = max([max(i[1]) for i in final_vals])+1
     
     model = gp.Model("max_prefix_hitting")
     model.Params.OutputFlag = 0  # silence solver
@@ -279,7 +276,7 @@ def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True,as_float=F
     for i, (_, elems) in enumerate(final_vals):
         if elems:  # make sure not empty
             model.addConstr(
-                y[i] <= gp.quicksum(x[elem_to_idx[e]] for e in elems),
+                y[i] <= gp.quicksum(x[e] for e in elems),
                 name=f"cover_{i}"
             )
         else:
@@ -292,13 +289,17 @@ def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True,as_float=F
             model.addConstr(y[i] <= y[i-1], name=f"prefix_{i}")
     model.addConstr(gp.quicksum(x[i] for i in range(m)) <= num_concepts_selected, name="budget")
     
+    if acc_list is not None:
+        model.addConstr(gp.quicksum(x[i]*acc_list[i] for i in range(m)) >= min_accuracy*num_concepts_selected)
+
+
     if weighted: 
         model.setObjective(gp.quicksum(y[i]*final_vals[i][0] for i in range(n)), GRB.MAXIMIZE)    
     else:
         model.setObjective(gp.quicksum(y[i] for i in range(n)), GRB.MAXIMIZE)    
     model.optimize()
 
-    selected_elements = [U[i] for i in range(m) if x[i].X > 0.5]
+    selected_elements = [i for i in range(m) if x[i].X > 0.5]
     max_prefix_len = sum(1 for i in range(n) if y[i].X > 0.5)
     return selected_elements, max_prefix_len
 
@@ -349,6 +350,9 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
                     if diffs not in seen and diffs != ():
                         seen.add(diffs)
                         final_vals.append(tup)
+        if len(final_vals) > 50_000:
+            final_vals = random.sample(final_vals,50_000)
+
         final_vals = sorted(final_vals,reverse=True)
         idx, _ = max_prefix_gurobi(final_vals,num_concepts_selected)
         concepts = [concept_list[i] for i in idx]
@@ -361,7 +365,7 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
         weights = [len(lst) for lst in sample_by_action]
 
         pairs = []
-        for i in range(100):
+        for _ in range(10_000):
             i, j = random.choices(range(len(sample_by_action)), weights=weights, k=2)
             while i == j: 
                 weights_non_action = [weights[j] for j in range(len(weights)) if j!=i]
@@ -369,12 +373,11 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
                 if len(num_non_action) == 0:
                     break 
                 j = random.choices(num_non_action, weights=weights_non_action, k=1)[0]
-            if len(num_non_action) == 0:
-                break 
             a = random.choice(sample_by_action[i])
             b = random.choice(sample_by_action[j])
             pairs.append([i for i in range(len(a)) if a[i] != b[i]])
         pairs = [(0,i) for i in pairs]
+        pairs = [i for i in pairs if len(i[1])>0]
         idx, _ = max_prefix_gurobi(pairs,num_concepts_selected,in_order=False)
         idx = [int(i) for i in idx]
         idx = np.array(idx).tolist()
@@ -385,6 +388,45 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
 
     return concepts, idx
 
+def concept_completeness_selection(env,concept_list,num_concepts_selected,selection_function,q_estimates,concept_source):
+    
+    X = []
+    y = []
+    w = []  # kernel weights
+
+    for concepts, action, q in q_estimates:
+        S = np.concatenate([concepts, np.array([action])])
+
+        X.append(S)
+        y.append(q)
+
+        # kernel weight = 1 / (|S| * (n - |S|))
+        k = S.sum()
+        n = len(S)
+        # avoid division by zero for all-zero or all-one coalitions:
+        if k == 0 or k == n:
+            weight = 1.0
+        else:
+            weight = 1.0 / (k * (n - k))
+
+        w.append(weight)
+
+    X = np.array(X)
+    y = np.array(y)
+    w = np.array(w)
+
+    # -------------------------------------
+    # Weighted linear regression
+    # Solve:  (X^T W X) φ = X^T W y
+    # -------------------------------------
+    W = np.diag(w)
+    XtW = X.T @ W
+    beta = np.linalg.pinv(XtW @ X) @ (XtW @ y)
+    beta = beta[:-1]
+    sorted_vals = np.argsort(np.abs(beta))[::-1].copy()[:num_concepts_selected]
+    sorted_vals = list(sorted_vals)
+
+    return [concept_list[i] for i in sorted_vals], sorted_vals
 
 def select_concepts_by_mi(states, q_values,num_concepts_selected,concept_list):
     """
@@ -413,7 +455,263 @@ def select_concepts_by_mi(states, q_values,num_concepts_selected,concept_list):
 
     return [concept_list[i] for i in idx], idx
 
-def multiple_lp_selection(env,concept_list,num_concepts_selected,selection_function,q_estimates,concept_source):
+last_print = 0   # global or closure variable
+
+def gap_callback(model, where):
+    global last_print
+
+    if where == GRB.Callback.MIP:
+        t = time.time()
+        if t - last_print >= 10:     # print every 10 seconds
+            objb = model.cbGet(GRB.Callback.MIP_OBJBND)
+            obj  = model.cbGet(GRB.Callback.MIP_OBJBST)
+
+            if obj == GRB.INFINITY:
+                gap = float('inf')
+            else:
+                gap = abs(obj - objb) / (1e-10 + abs(obj))
+
+            print(f"[{t:.0f}]  Best={obj:.4f}, Bound={objb:.4f}, Gap={gap:.4f}")
+
+            last_print = t
+def solve_exp_relaxation_constant(final_vals, acc_list, num_concepts_selected, 
+                                  time_limit=10*60):
+    """
+    Faster surrogate for the constant-accuracy case.
+    Version optimized for speed + with PWL in direct form.
+    """
+    # Validate
+    if len(set(acc_list)) != 1:
+        raise ValueError("acc_list must be constant")
+    
+    acc = acc_list[0]
+    w = -math.log(max(1e-12, 1.0 - acc))
+    n = len(final_vals)
+    m = len(acc_list)
+    
+    # Precompute global max_t for all i
+    max_D = max(len(D) for _, D in final_vals)
+    global_max_t = w * max_D
+    
+    # Reduce PWL points for faster solve (3 points often sufficient)
+    t_points = [0, 0.5 * global_max_t, global_max_t]
+    u_points = [math.exp(-tp) for tp in t_points]
+    
+    model = gp.Model("exp_relax_constant_fast")
+    model.Params.OutputFlag = 0
+    model.Params.TimeLimit = time_limit
+    model.Params.PreCrush = 1
+    model.Params.MIPFocus = 1  # Focus on finding good feasible solutions quickly
+    model.Params.Threads = 0   # Use all available threads (default, but explicit)
+    
+    # Variables - create all at once for efficiency
+    x = model.addVars(m, vtype=GRB.BINARY, name="x")
+    
+    # Only create t, u, y for indices with non-empty D
+    active_indices = [i for i, (_, D) in enumerate(final_vals) if len(D) > 0]
+    
+    t = model.addVars(active_indices, vtype=GRB.CONTINUOUS, 
+                      lb=0.0, ub=global_max_t, name="t")
+    u = model.addVars(active_indices, vtype=GRB.CONTINUOUS, 
+                      lb=0.0, ub=1.0, name="u")
+    y = model.addVars(active_indices, vtype=GRB.CONTINUOUS, 
+                      lb=0.0, ub=1.0, name="y")
+    
+    # Build constraint expressions more efficiently
+    # Batch constraints together where possible
+    for i in active_indices:
+        _, D = final_vals[i]
+        
+        # t[i] = w * Σ_{j in D} x_j
+        model.addConstr(t[i] == w * gp.quicksum(x[j] for j in D), 
+                        name=f"tdef_{i}")
+        
+        # PWL approximation
+        model.addGenConstrPWL(t[i], u[i], t_points, u_points, 
+                              name=f"exp_pwl_{i}")
+        
+        # y[i] = 1 - u[i]
+        model.addConstr(y[i] == 1 - u[i], name=f"ydef_{i}")
+    
+    # Budget constraint
+    model.addConstr(gp.quicksum(x) <= num_concepts_selected)
+    
+    # Objective - only sum over active indices
+    obj_expr = gp.quicksum(y[i] * final_vals[i][0] for i in active_indices)
+    
+    # Add contribution from empty D cases (they contribute final_vals[i][0] * 0)
+    # Actually, skip them entirely - they don't contribute to objective
+    
+    model.setObjective(obj_expr, GRB.MAXIMIZE)
+    
+    model.optimize()
+    
+    # Extract solution
+    selected = [j for j in range(m) if x[j].X > 0.5]
+    
+    if len(selected) < num_concepts_selected:
+        fracs = sorted(
+            [(j, x[j].X) for j in range(m) if j not in selected],
+            key=lambda a: a[1],
+            reverse=True
+        )
+        needed = num_concepts_selected - len(selected)
+        selected.extend([j for j, _ in fracs[:needed]])
+    
+    return selected[:num_concepts_selected]
+def solve_exp_relaxation(final_vals, acc_list, num_concepts_selected, time_limit=10*60):
+    """
+    Correct exponential surrogate:
+      y_i = 1 - exp(- sum_j w_j x_j )
+    using Gurobi PWL approximation - optimized for speed.
+    """
+    n = len(final_vals)
+    m = len(acc_list)
+    
+    # Precompute weights once
+    w = [-math.log(max(1e-12, 1.0 - acc_list[j])) for j in range(m)]
+    
+    # Precompute which concepts appear in which pairs (for sparsity)
+    concept_usage = [False] * m
+    active_indices = []
+    for i, (_, D) in enumerate(final_vals):
+        if len(D) > 0:
+            active_indices.append(i)
+            for j in D:
+                concept_usage[j] = True
+    
+    # Compute reasonable bounds for z based on actual data
+    max_t = max(sum(w[j] for j in D) for _, D in final_vals if len(D) > 0) if active_indices else 0
+    min_z = -max_t
+    
+    # Adaptive PWL breakpoints based on actual range
+    if min_z < -10:
+        breakpoints = [min_z, -8, -6, -4, -2, 0]
+    else:
+        breakpoints = [min_z, min_z/2, -2, -1, 0]
+    exp_vals = [math.exp(z) for z in breakpoints]
+    
+    model = gp.Model("exp_relax_fixed")
+    model.Params.OutputFlag = 0
+    model.Params.TimeLimit = time_limit
+    model.Params.MIPFocus = 1  # Focus on finding good solutions
+    model.Params.Presolve = 2  # Aggressive presolve
+    model.Params.Cuts = 2      # Aggressive cuts
+    
+    # Only create x variables for concepts that are actually used
+    used_concepts = [j for j in range(m) if concept_usage[j]]
+    x = model.addVars(used_concepts, vtype=GRB.BINARY, name="x")
+    
+    # Add unused concepts with fixed value 0 (for budget constraint)
+    unused_concepts = [j for j in range(m) if not concept_usage[j]]
+    if unused_concepts:
+        x.update(model.addVars(unused_concepts, vtype=GRB.BINARY, 
+                               ub=0, name="x_unused"))
+    
+    # Only create variables for active pairs
+    z = model.addVars(active_indices, lb=min_z, ub=0, 
+                      vtype=GRB.CONTINUOUS, name="z")
+    u = model.addVars(active_indices, lb=math.exp(min_z), ub=1.0, 
+                      vtype=GRB.CONTINUOUS, name="u")
+    y = model.addVars(active_indices, lb=0.0, ub=1.0, 
+                      vtype=GRB.CONTINUOUS, name="y")
+    
+    # Build constraints more efficiently
+    model.update()  # Process variable additions before constraints
+    
+    for i in active_indices:
+        _, D = final_vals[i]
+        
+        # z_i = -sum_{j in D} w_j x_j
+        # Combined constraint (skip intermediate t variable)
+        if len(D) > 0:
+            model.addConstr(
+                z[i] == -gp.quicksum(w[j] * x[j] for j in D),
+                name=f"zdef_{i}"
+            )
+        else:
+            model.addConstr(z[i] == 0.0, name=f"zdef_empty_{i}")
+        
+        # PWL approximation: u_i ≈ exp(z_i)
+        model.addGenConstrPWL(z[i], u[i], breakpoints, exp_vals, 
+                              name=f"exp_{i}")
+        
+        # y_i = 1 - u_i
+        model.addConstr(y[i] == 1 - u[i], name=f"ydef_{i}")
+    
+    # Budget constraint
+    model.addConstr(gp.quicksum(x.values()) <= num_concepts_selected, 
+                    name="budget")
+    
+    # Objective: maximize sum_i d_i * y_i (only over active indices)
+    obj_expr = gp.quicksum(y[i] * final_vals[i][0] for i in active_indices)
+    model.setObjective(obj_expr, GRB.MAXIMIZE)
+    
+    print("Optimizing")
+    model.optimize()
+    
+    # Check if solution was found
+    if model.SolCount == 0:
+        print(f"No solution found within time limit. Status: {model.Status}")
+        # Return greedy fallback or empty list
+        return []
+    
+    # Extract selection
+    selected = [j for j in range(m) if j in x and x[j].X > 0.5]
+    
+    # Enforce exactly num_concepts_selected
+    if len(selected) < num_concepts_selected:
+        fracs = sorted(
+            [(j, x[j].X) for j in range(m) if j in x and j not in selected],
+            key=lambda a: a[1],
+            reverse=True
+        )
+        needed = num_concepts_selected - len(selected)
+        selected.extend([j for j, _ in fracs[:needed]])
+    
+    return selected[:num_concepts_selected]
+def solve_relaxed_union_bound(final_vals, acc_list, num_concepts_selected):
+    """
+    final_vals: list of (d_i, tuple_of_concepts_that_differ)
+    acc_list: list of p_j for each concept j
+    num_concepts_selected: budget
+    
+    Returns: list of selected concept indices
+    """
+    n = len(final_vals)
+    m = len(acc_list)
+
+    model = gp.Model("union_relaxed")
+    model.Params.OutputFlag = 0
+
+    x = model.addVars(m, vtype=GRB.BINARY, name="x")
+    y = model.addVars(n, lb=0, ub=1, vtype=GRB.CONTINUOUS, name="y")
+
+    # Coverage constraints:
+    # y_i <= sum(p_j * x_j for j in D_i)
+    for i, (_, D) in enumerate(final_vals):
+        model.addConstr(
+            y[i] <= gp.quicksum(acc_list[j] * x[j] for j in D),
+            name=f"sep_relaxed_{i}"
+        )
+
+    # Budget
+    model.addConstr(gp.quicksum(x[j] for j in range(m)) <= num_concepts_selected)
+
+    # Objective: maximize expected separation weighted by d_i
+    model.setObjective(
+        gp.quicksum(y[i] * final_vals[i][0] for i in range(n)),
+        GRB.MAXIMIZE
+    )
+
+    model.optimize()
+
+    print(sum([x[j].X for j in range(m)]),num_concepts_selected)
+
+    return [j for j in range(m) if x[j].X > 0.5]
+
+
+def multiple_lp_selection(env,concept_list,num_concepts_selected,selection_function,q_estimates,concept_source,acc_list):
     """Select {num_concepts} greedily
         by first learning the Q(s,a) values from a rollout
         Then selecting the concepts that reduce the standard deviation 
@@ -441,7 +739,7 @@ def multiple_lp_selection(env,concept_list,num_concepts_selected,selection_funct
     
     if selection_function == "q_value":
         q_values = np.array([i[2] for i in q_estimates])
-        
+
         final_vals = []
         seen = set()
         for a in unique_actions:
@@ -457,12 +755,18 @@ def multiple_lp_selection(env,concept_list,num_concepts_selected,selection_funct
                     # tuple of differing concept indices
                     diffs = tuple(i for i, (l, h) in enumerate(zip(discretized_X[low_idx], discretized_X[high_idx])) if l != h)
                     tup = (diff, diffs)
-                    if tup not in seen and diffs != ():
-                        seen.add(tup)
+                    if diffs not in seen and diffs != ():
+                        seen.add(diffs)
                         final_vals.append(tup)
+        if len(final_vals) > 50_000:
+            final_vals = random.sample(final_vals,50_000)
+
         final_vals = sorted(final_vals,reverse=True)
-        final_vals = final_vals[:10000]
-        idx, _ = max_prefix_gurobi(final_vals,num_concepts_selected,weighted=True,in_order=False)
+        print("Final vals {}".format(len(final_vals)))
+        if len(set(acc_list)) == 1:
+            idx = solve_exp_relaxation_constant(final_vals, acc_list, num_concepts_selected)
+        else:
+            idx = solve_exp_relaxation(final_vals, acc_list, num_concepts_selected)
         concepts = [concept_list[i] for i in idx]
     elif selection_function == "policy":
         sample_by_action = []
@@ -651,6 +955,21 @@ def greedy_max_coverage(final_vals, budget):
         covered.update(element_to_sets[best_e])
         # optional: lazy update for speed
     return selected, len(covered)
+
+def greedy_selection_supervised(train_X,train_Y,num_concepts_selected):
+    entropy_by_concept = []
+
+    for i in range(len(train_X[0])):
+        is_zero = len(train_X[train_X[:,i] == 0])/len(train_X)
+        is_one = 1-is_zero 
+        entropy = is_zero*is_one 
+        entropy_by_concept.append(entropy)
+    entropy_by_concept = np.array(entropy_by_concept)
+    topk_idx = np.argpartition(-entropy_by_concept, num_concepts_selected)[:num_concepts_selected]
+    topk_idx = topk_idx[np.argsort(-entropy_by_concept[topk_idx])]
+    print(entropy_by_concept[topk_idx],np.mean(entropy_by_concept))
+    return topk_idx.tolist()
+
 
 def lp_selection_supervised(train_matrix,labels,num_concepts):
     """Select {num_concepts} greedily

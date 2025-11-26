@@ -155,7 +155,7 @@ class TDQLearning:
 def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99, 
                                 total_timesteps=100_000, epsilon=0.1,
                                 learning_rate=1e-4, update_freq=20, initial_random=0.3,
-                                mimic=False, final_training=1_000, get_td_learner=False):
+                                mimic=False, final_training=1_000, get_td_learner=False,use_initial_random=True):
     """
     Stable Q-value estimation for sparse reward environments
     """
@@ -194,57 +194,39 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
 
     print("Starting stable training for sparse rewards...")
     
-    print("Total of {} steps".format(total_timesteps // num_envs))
+    print("Total of {} steps".format(total_timesteps))
 
-    while steps < total_timesteps // num_envs:
+    while steps < total_timesteps:
         if (steps+1)%100 == 0:
             print("On step {}".format(steps))
 
         if steps % 5000 == 0:
             loss_mean, _, _ = td_learner.get_loss_stats()
-            print(f"Step {steps}, Loss mean: {loss_mean:.4f}")
+            print(f"Step {steps}/{total_timesteps}, Loss mean: {loss_mean:.4f}")
 
-        actions = []
+        actions = model.predict(obs)[0]
+        use_random = use_initial_random and ((steps < total_timesteps // 5) and (np.random.rand() < initial_random))
+        if use_random:
+            actions = [env.action_space.sample() for i in range(num_envs)]
         for i in range(num_envs):
-            # Initial exploration phase - use OR to ensure exploration throughout
-            use_random = (steps < total_timesteps // (10 * num_envs)) or (np.random.rand() < initial_random)
-            
-            if use_random and np.random.rand() < 0.5:  # 50% random during exploration
-                action = env.action_space.sample()
-            else:
-                with torch.no_grad():
-                    obs_i = obs[i]
-                    obs_tensor = torch.FloatTensor(obs_i)
-                    if mimic:
-                        valid_action = np.sum(env.envs[0].env.transitions[infos[i]['observation']], axis=1)
-                        valid_action = torch.Tensor(valid_action).to(model.device)
-                        action_probs = model.policy.get_distribution(
-                            torch.Tensor(obs_i).unsqueeze(0).to(model.device)
-                        ).distribution.probs 
-                        action_probs *= valid_action
-                        action = torch.argmax(action_probs).item()
-                    else:
-                        action = model.predict(obs_tensor.numpy())[0].item()
-            
-            actions.append(int(action))
             all_state_actions.add((tuple(concepts[i]), actions[i]))
         
         # Step the environment
         next_obs, rewards, terms, truncs, infos = env.step(actions)
         dones = np.logical_or(terms, truncs)
 
-        # Compute next concepts for all environments
+        # # Compute next concepts for all environments
         next_concepts = np.zeros_like(concepts)
         for i in range(num_envs):
             info_i = infos[i] if infos and len(infos) > i else {}
             # After step, observation might be in infos or in next_obs
             actual_obs = info_i.get("observation", next_obs[i])
             next_concepts[i] = np.array([c(actual_obs) for c in concept_list])
+        episode_reward_sums += rewards
 
         # Store experiences and track rewards
         for i in range(num_envs):
             td_learner.add_experience(concepts[i], actions[i], rewards[i], next_concepts[i], dones[i])
-            episode_reward_sums[i] += rewards[i]
 
         # Update less frequently for stability
         if len(td_learner.replay_buffer) >= 128 and steps % update_freq == 0:
@@ -269,7 +251,7 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
                 episodes_completed += 1
                 episode_rewards.append(episode_reward_sums[i])
                 episode_reward_sums[i] = 0  # Reset for next episode
-                
+                print(episode_rewards)
                 if episodes_completed % 25 == 0:
                     recent_rewards = episode_rewards[-25:] if len(episode_rewards) >= 25 else episode_rewards
                     avg_reward = np.mean(recent_rewards)
@@ -282,10 +264,10 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
         # Update state
         obs = next_obs
         concepts = next_concepts
-        steps += 1
+        steps += num_envs 
 
         # Gradual epsilon decay
-        if steps % 20 == 0:
+        if steps % 20*num_envs == 0:
             td_learner.decay_epsilon()
 
     # Conservative final training
@@ -388,7 +370,7 @@ def rollout_pi_estimates(model, env, concept_list, num_rollouts=200, max_steps=2
     return pair_list
 
 
-def get_average_reward(vec_env, model, max_steps=50000,max_steps_per=5000):
+def get_average_reward(vec_env, model, max_steps=50_000,max_steps_per=5000):
     """
     Evaluate a model on a SubprocVecEnv (or any VecEnv) and return the average reward.
 
@@ -403,7 +385,7 @@ def get_average_reward(vec_env, model, max_steps=50000,max_steps_per=5000):
         Float: average reward
     """
     num_envs = vec_env.num_envs
-    episode_rewards = [0]
+    episode_rewards = []
     rewards_accum = np.zeros(num_envs)
     obs, _ = vec_env.reset()
     total_steps = 0

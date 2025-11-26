@@ -133,7 +133,9 @@ class VecConceptWrapper(VecEnvWrapper):
         self.concept_idx = concept_idx
         
         # Update observation space to concept space
-        self.observation_space = gym.spaces.MultiBinary(len(concept_idx))
+        self.observation_space = gym.spaces.Box(
+            low=0.0, high=1.0, shape=(len(concept_idx),), dtype=np.float32
+        )
         
         # Pre-allocate GPU buffer
         self.obs_buffer = None
@@ -143,27 +145,18 @@ class VecConceptWrapper(VecEnvWrapper):
         self.height = height 
         self.intervention_prob = intervention_prob
         self.concept_list = concept_list 
+        self.intervene_concepts = [int(np.random.random()<self.intervention_prob) for i in concept_list]
+
         
     def reset(self):
         obs = self.venv.reset()
-        return self._process_batch(obs)
+        infos = self.venv.reset_infos
+        return self._process_batch(obs,infos)
     
     def step_wait(self):
         obs, rewards, dones, infos = self.venv.step_wait()
-        processed_obs = self._process_batch(obs)
-        if self.intervention_prob > 0.0:
-            gt_concepts = np.zeros_like(processed_obs)  # (num_envs, num_concepts)
-            for env_idx in range(obs.shape[0]):
-                gt_concepts[env_idx] = [c(infos[env_idx]['observation']) for c in self.concept_list]
-            
-            # For each environment and each concept, replace with ground truth based on probability
-            for env_idx in range(processed_obs.shape[0]):
-                for concept_idx in range(processed_obs.shape[1]):
-                    if np.random.random() < self.intervention_prob:
-                        # Convert binary concept (0 or 1) to logit scale
-                        # Use large positive/negative values to represent confident predictions
-                        processed_obs[env_idx, concept_idx] = 10.0 if gt_concepts[env_idx, concept_idx] > 0.5 else -10.0
-        
+        processed_obs = self._process_batch(obs,infos)
+    
         # Store original observations in info
         for i, info in enumerate(infos):
             # obs[i] is (4, 84, 84), transpose to (84, 84, 4) for consistency
@@ -192,22 +185,21 @@ class VecConceptWrapper(VecEnvWrapper):
                     logits = self.fast_predictor(self.terminal_buffer)[:, self.concept_idx]
                     processed_terminal = logits.float().cpu().numpy()[0] # torch.sigmoid(logits).float().cpu().numpy()[0]
 
-                if self.intervention_prob > 0.0:
-                    gt_concepts = [c(original_observation) for c in self.concept_list]
-                    
-                    # For each environment and each concept, replace with ground truth based on probability
-                    for concept_idx in range(len(self.concept_list)):
-                        if np.random.random() < self.intervention_prob:
-                            # Convert binary concept (0 or 1) to logit scale
-                            # Use large positive/negative values to represent confident predictions
-                            processed_terminal[concept_idx] = 10.0 if gt_concepts[concept_idx] > 0.5 else -10.0
+                gt_concepts = [c(original_observation) for c in self.concept_list]
+                
+                # For each environment and each concept, replace with ground truth based on probability
+                for concept_idx in range(len(self.concept_list)):
+                    if self.intervene_concepts[concept_idx] == 1:
+                        # Convert binary concept (0 or 1) to logit scale
+                        # Use large positive/negative values to represent confident predictions
+                        processed_terminal[concept_idx] = 4.0 if gt_concepts[concept_idx] > 0.5 else -4.0
 
 
                 info['terminal_observation'] = processed_terminal
                 info['terminal_observation_pixels'] = np.transpose(terminal_obs, (1, 2, 0))
         
         return processed_obs, rewards, dones, infos    
-    def _process_batch(self, obs_batch):
+    def _process_batch(self, obs_batch,infos):
         """Process entire batch in one GPU call"""
         if self.fast_predictor is None:
             return obs_batch
@@ -233,10 +225,21 @@ class VecConceptWrapper(VecEnvWrapper):
         
         # SINGLE batched inference for all environments
         with torch.no_grad():
-            logits = self.fast_predictor(self.obs_buffer)[:, self.concept_idx]
+            logits = self.fast_predictor(self.obs_buffer)
+            logits = logits[:, self.concept_idx]
             # Apply sigmoid and threshold to binary predictions
             predictions =logits.float() # TODO: Add Sigmoid back in
         
+        gt_concepts = np.zeros((len(obs_batch),len(self.concept_list))) # (num_envs, num_concepts)
+        for env_idx in range(obs_batch.shape[0]):
+            gt_concepts[env_idx] = [c(infos[env_idx]['observation']) for c in self.concept_list]
+        for i in range(len(predictions)):
+            for concept_idx in range(len(self.concept_list)):
+                if self.intervene_concepts[concept_idx] == 1:
+                    # Convert binary concept (0 or 1) to logit scale
+                    # Use large positive/negative values to represent confident predictions
+                    predictions[i][concept_idx] = 4.0 if gt_concepts[i][concept_idx] > 0.5 else -4.0
+
         # Return as numpy array (num_envs, len(concept_idx))
         return predictions.cpu().numpy()
 

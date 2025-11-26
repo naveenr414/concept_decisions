@@ -109,13 +109,21 @@ def get_model(environment_string,policy,override={}):
             default_model_dict['learning_rate'] = 1e-3
             default_model_dict['ent_coef'] = 0.02
         elif environment_string == "glucose":
-            default_model_dict['n_steps'] = 256
-            default_model_dict['batch_size'] = 64
-            default_model_dict['n_epochs'] = 10
-            default_model_dict['gae_lambda'] = 0.95
-            default_model_dict['clip_range'] = 0.2
-            default_model_dict['ent_coef'] = 0.02
-            default_model_dict['max_grad_norm'] = 0.5
+            print("Loading regular glucose")
+            default_model_dict['learning_rate'] = 3e-4     # or even 1e-4 (important)
+            default_model_dict['ent_coef'] = 0.01          # not 0.1
+            default_model_dict['n_steps'] = 1024           # from 256 --> 1024 or 2048
+            default_model_dict['batch_size'] = 256         # if n_steps increased
+            default_model_dict['n_epochs'] = 5             # more steps = fewer epochs
+        elif environment_string == "glucose_raw":
+            print("Loading glucose raw")
+            # TODO: Try this out, see if it works
+            default_model_dict['learning_rate'] = 3e-4     # or even 1e-4 (important)
+            default_model_dict['ent_coef'] = 0.01          # not 0.1
+            default_model_dict['n_steps'] = 1024           # from 256 --> 1024 or 2048
+            default_model_dict['batch_size'] = 256         # if n_steps increased
+            default_model_dict['n_epochs'] = 5             # more steps = fewer epochs
+            print(default_model_dict)
         elif environment_string == "cart_pole":
             default_model_dict['policy_kwargs'] = {'net_arch': [128,128]}
             default_model_dict['batch_size'] = 512
@@ -158,9 +166,9 @@ def get_model(environment_string,policy,override={}):
             default_model_dict['n_epochs'] = 10
             default_model_dict['device'] = 'cuda'
         elif environment_string == "boxing":
-            default_model_dict['n_steps'] = 128
-            default_model_dict['batch_size'] = 256
-            default_model_dict['n_epochs'] = 3
+            default_model_dict['n_steps'] = 1024
+            default_model_dict['batch_size'] = 1024
+            default_model_dict['n_epochs'] = 4
             default_model_dict['device'] = 'cuda'
         else:
             default_model_dict['n_steps'] = 128
@@ -251,7 +259,7 @@ class RandomAgent:
         actions = np.array([self.action_space.sample() for _ in range(self.num_envs)])
         return actions, None
 
-def evaluate_model(environment_string,env,additional_info,model,seed):
+def evaluate_model(environment_string,env,additional_info,model,seed,max_steps=50_000):
     """Evaluation Function that tailors the evaluation
         based on the environment
         
@@ -270,7 +278,7 @@ def evaluate_model(environment_string,env,additional_info,model,seed):
     if environment_string == "glucose":
         return get_average_reward(env,model,max_steps=5000,max_steps_per=500)
     else:
-        return get_average_reward(env,model)
+        return get_average_reward(env,model,max_steps=max_steps)
 #----------------------------
 # Lightweight CNN for 1-channel input
 # ----------------------------

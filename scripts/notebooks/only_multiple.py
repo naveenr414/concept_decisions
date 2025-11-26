@@ -24,7 +24,6 @@ import random
 import os
 import pickle
 import secrets 
-import itertools
 
 import torch 
 torch.set_num_threads(2)
@@ -39,7 +38,7 @@ if is_main:
     parser.add_argument('--training_timesteps', help='Number of training timesteps without concepts', type=int, default=10000)
     parser.add_argument('--gold_timesteps', help='Number of training timesteps without concepts', type=int, default=10000)
     parser.add_argument('--num_concepts_selected', help='Number of concepts selected by greedy or random',type=int, default=0)
-    parser.add_argument('--intervention_prob', help='Probability of intervention',type=float, default=0.5)
+    parser.add_argument('--concept_accuracy',help='Accuracy of the Concept Predictor',type=float,default=1.0)
     parser.add_argument('--out_folder', help='Which folder to write results to',type=str, default="basic")
 
     args = parser.parse_args()
@@ -49,7 +48,7 @@ if is_main:
     gold_timesteps = args.gold_timesteps
     training_timesteps = args.training_timesteps 
     num_concepts_selected = args.num_concepts_selected
-    intervention_prob = args.intervention_prob
+    concept_accuracy = args.concept_accuracy
     out_folder = args.out_folder
 
 
@@ -59,9 +58,8 @@ if is_main:
                 'environment_string'    : environment_string, 
                 'training_timesteps': training_timesteps, 
                 'gold_timesteps': gold_timesteps,
-                'intervention_prob': intervention_prob,
                 'num_concepts_selected': num_concepts_selected,
-                'experiment': 'pareto'
+                'concept_accuracy': concept_accuracy,
         }
         print("Parameters {}".format(results['parameters']))
 
@@ -81,43 +79,6 @@ if is_main:
         groundtruth_model = train_ppo_model(ground_truth_env,environment_string,total_timesteps=gold_timesteps,policy=policy)
         groundtruth_model.save(model_name)
 
-if is_main:
-    model_name = "../../results/models/concept_predictor_env={}_training={}_seed={}.pth".format(environment_string,100,seed)
-
-    height = width = 84
-
-    if environment_string == "mini_grid":
-        num_frames = 1
-    else:
-        num_frames = 4
-
-    if environment_string == "cart_pole":
-        height = 160
-        width = 240
-
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    if os.path.exists(model_name):
-        concept_predictor = ConceptPredictorCNN(len(concept_list), num_frames=num_frames,height=height,width=width).to(device)
-        concept_predictor.load_state_dict(torch.load(model_name, weights_only=True))
-        concept_predictor.eval()
-    else:
-        concept_predictor, acc_list = train_concept_predictor(ground_truth_gym_env,groundtruth_model,concept_list,list(range(len(concept_list))),environment_string,epochs=25,max_episode_length=10_000)
-        torch.save(concept_predictor.state_dict(), model_name)
-        concept_predictor.eval()
-
-    acc_list = evaluate_concept_predictor(concept_predictor,ground_truth_gym_env,groundtruth_model,concept_list)
-    results["concept_accuracy"] = acc_list.tolist()
-
-if is_main and torch.cuda.is_available():
-    concept_predictor = concept_predictor.cuda()
-    concept_predictor.eval()
-    
-    # Warmup to allocate memory
-    dummy_input = torch.zeros(8, num_frames, height, width, device='cuda')
-    with torch.no_grad():
-        _ = concept_predictor(dummy_input)
-
-
 if is_main:    
     model_name = "../../results/q_estimates/env={}_training={}_seed={}_selection={}_source={}.pkl".format(environment_string,gold_timesteps,seed,"q_value","human_selected_binary")
     if os.path.exists(model_name):
@@ -126,61 +87,14 @@ if is_main:
         q_estimates = rollout_q_estimates_td(groundtruth_model,ground_truth_gym_env,concept_list)
         pickle.dump(q_estimates,open(model_name,"wb"))
 
+# # Multiple
 if is_main:
-    unique_actions = list(set([int(i[1]) for i in q_estimates]))
-    actions = np.array([i[1] for i in q_estimates])
-
-    # Continuous
-    discretized_X = np.array([i[0] for i in q_estimates])
-
-    q_values = np.array([i[2] for i in q_estimates])
-
-    final_vals = []
-    seen = set()
-    for a in unique_actions:
-        relevant_idx = np.where(actions == a)[0]
-        if len(relevant_idx) <= 500:
-            relevant_low = relevant_high = relevant_idx
-        else:
-            relevant_low = np.argsort(np.abs(q_values))[:500]
-            relevant_high = np.argsort(np.abs(q_values))[-500:]
-        for low_idx in relevant_low:
-            for high_idx in relevant_high:
-                diff = abs(q_values[low_idx] - q_values[high_idx])
-                # tuple of differing concept indices
-                diffs = tuple(i for i, (l, h) in enumerate(zip(discretized_X[low_idx], discretized_X[high_idx])) if l != h)
-                tup = (diff, diffs)
-                if diffs not in seen and diffs != ():
-                    seen.add(diffs)
-                    final_vals.append(tup)
-    final_vals = sorted(final_vals,reverse=True)
-
-if is_main:
-    def get_score(final_vals,idx):
-        for j in final_vals:
-            if set(j[1]).intersection(set(idx)) == set([]):
-                break 
-        else:
-            return 0
-        return j[0]
-
-    # Compute pairs of accuracy x score
-    all_pairs = []
-
-    for combo in itertools.combinations(range(len(concept_list)), num_concepts_selected):
-        average_accuracy = float(np.mean([acc_list[i] for i in combo]))
-        score = float(get_score(final_vals,combo))
-        all_pairs.append((average_accuracy,score))
-    results['no_intervention'] = all_pairs 
-
-
-    all_pairs_intervention = []
-
-    for combo in itertools.combinations(range(len(concept_list)), num_concepts_selected):
-        average_accuracy = float(np.mean([acc_list[i] for i in combo]))*(1-intervention_prob) + intervention_prob
-        score = float(get_score(final_vals,combo))
-        all_pairs_intervention.append((average_accuracy,score))
-    results['intervention'] = all_pairs_intervention
+    modified_concept_predictors = [inaccurate_concepts_binary(func,concept_accuracy,seed) for func in concept_list]
+    subset_concept, idx = multiple_lp_selection(ground_truth_env,modified_concept_predictors,num_concepts_selected,"q_value",q_estimates,"human_selected_binary",[concept_accuracy for func in concept_list])
+    env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
+    model = train_ppo_model(env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_lp".format(environment_string))    
+    lp_two_stage_reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
+    results['multiple'] = {'reward': lp_two_stage_reward, 'concepts': idx}
 
 if is_main:
     save_name = secrets.token_hex(4)  
@@ -191,3 +105,5 @@ if is_main:
 if is_main:
     ground_truth_env.close()
     ground_truth_gym_env.close()
+    env.close()
+    eval_env.close()

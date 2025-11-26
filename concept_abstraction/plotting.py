@@ -126,15 +126,19 @@ def plot_bar(ax,x_groups,y_values,y_errors,labels,formatting):
 
     x = np.arange(max_bars_per_group)
 
+    hatch = ''
+    if 'hatch' in formatting:
+        hatch = formatting['hatch']
+
     for i, group_num in enumerate(ordered_groups):
         if 'horizontal' in formatting and formatting['horizontal']:
-            bars = ax.barh(x + i * bar_width, values_by_group[group_num],
+            bars = ax.barh(x + group_num * bar_width, values_by_group[group_num],
                         height=bar_width, label=labels[group_num],
-                        edgecolor=get_or_none(formatting,'edgecolor'),color=colors[i],yerr=errors_by_group[group_num])
+                        edgecolor=get_or_none(formatting,'edgecolor'),color=colors[i],yerr=errors_by_group[group_num],hatch=hatch)
         else:
-            bars = ax.bar(x + i * bar_width, values_by_group[group_num],
+            bars = ax.bar(x + group_num * bar_width, values_by_group[group_num],
                         width=bar_width, label=labels[group_num],
-                        edgecolor=get_or_none(formatting,'edgecolor'),color=colors[i],yerr=errors_by_group[group_num])
+                        edgecolor=get_or_none(formatting,'edgecolor'),color=colors[i],yerr=errors_by_group[group_num],hatch=hatch)
 
         if 'extra_labels' in formatting and group_num in formatting['extra_labels']:  # Check if it's the 3rd model
             if 'extra_x_shift' not in formatting: 
@@ -275,8 +279,13 @@ def plot_scatter(ax,x_values,y_values,formatting):
     if 'size' not in formatting:
         formatting['size'] = 5
 
+    if 'marker' not in formatting:
+        marker = [None for i in range(len(x_values))]
+    else:
+        marker = formatting['marker']
+
     for i in range(len(x_values)):
-        ax.scatter(x_values[i],y_values[i],color=colors[i],s=formatting['size'])
+        ax.scatter(x_values[i],y_values[i],color=colors[i],s=formatting['size'],marker=marker[i])
 
 def plot_box_whisker(ax,data,labels,formatting):
     """Create a line plot, based on the following:

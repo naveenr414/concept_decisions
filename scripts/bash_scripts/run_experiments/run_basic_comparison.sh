@@ -1,15 +1,32 @@
 #!/bin/bash
 
-# Create log files for each environment
-: > runs/logs/error_basic_mini_grid.txt
-: > runs/logs/error_basic_cart_pole.txt
-: > runs/logs/error_basic_pong.txt
-: > runs/logs/error_basic_boxing.txt
+sessions=(
+  # perfect_perfect_concepts
+  # perfect_random
+  # perfect_entropy
+  # perfect_greedy
+  # perfect_lp
 
-LOGFILE_MINI_GRID=../../runs/logs/error_basic_mini_grid.txt
-LOGFILE_CART_POLE=../../runs/logs/error_basic_cart_pole.txt
-LOGFILE_PONG=../../runs/logs/error_basic_pong.txt
-LOGFILE_BOXING=../../runs/logs/error_basic_boxing.txt
+  # imperfect_cart_pole_pong_imperfect_concepts
+  # imperfect_cart_pole_pong_random
+  # imperfect_cart_pole_pong_entropy
+  # imperfect_cart_pole_pong_greedy
+  # imperfect_cart_pole_pong_lp
+  # imperfect_cart_pole_pong_multiple
+
+  imperfect_mini_grid_boxing_imperfect_concepts
+  imperfect_mini_grid_boxing_random
+  imperfect_mini_grid_boxing_entropy
+  imperfect_mini_grid_boxing_greedy
+  imperfect_mini_grid_boxing_lp
+  imperfect_mini_grid_boxing_multiple
+)
+
+
+# Create log files for each environment
+for s in "${sessions[@]}"; do
+    : > "runs/logs/error_${s}.txt"
+done
 
 environment=food
 
@@ -18,7 +35,8 @@ declare -A gold_timesteps=(
   [mini_grid]=1000000
   [cart_pole]=4000000
   [pong]=15000000
-  [boxing]=15000000
+  [boxing]=30000000
+  [glucose]=4000000
 )
 
 # declare -A gold_timesteps=(
@@ -29,10 +47,11 @@ declare -A gold_timesteps=(
 # )
 
 declare -A training_timesteps=(
-  [mini_grid]=1000000
-  [cart_pole]=4000000
+  [mini_grid]=250000
+  [cart_pole]=250000 #4000000
   [pong]=15000000
   [boxing]=15000000
+  [glucose]=4000000
 )
 
 # declare -A training_timesteps=(
@@ -47,6 +66,7 @@ declare -A num_concepts=(
   [cart_pole]=3
   [pong]=57
   [boxing]=48
+  [glucose]=10
 )
 
 # Function to create and setup tmux session
@@ -61,27 +81,34 @@ setup_tmux_session() {
 }
 
 # Create tmux sessions for each environment
-setup_tmux_session "basic_mini_grid"
-setup_tmux_session "basic_cart_pole"
-setup_tmux_session "basic_pong"
-setup_tmux_session "basic_boxing"
+for s in "${sessions[@]}"; do
+    setup_tmux_session "$s"
+done
 
 # Run experiments
-for seed in 42
+for seed in 42 43 44
 do 
-  # Mini Grid
-  env=mini_grid
-  tmux send-keys -t basic_mini_grid "conda activate ${environment}; python -u method_comparison.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts[$env]} --out_folder basic >> ${LOGFILE_MINI_GRID} 2>&1" ENTER
+  # for method in lp # perfect_concepts random entropy greedy lp 
+  # do 
+  #   for env in pong # mini_grid cart_pole pong boxing glucose 
+  #   do 
+  #     tmux send-keys -t perfect_${method} "conda activate ${environment}; python -u method_comparison_perfect.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts[$env]} --method ${method} --out_folder basic >> ../../runs/logs/error_perfect_${method}.txt 2>&1" ENTER
+  #   done 
+  # done 
 
-  # Cart Pole
-  env=cart_pole
-  tmux send-keys -t basic_cart_pole "conda activate ${environment}; python -u method_comparison.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts[$env]} --out_folder basic >> ${LOGFILE_CART_POLE} 2>&1" ENTER
+  # for method in imperfect_concepts random entropy greedy lp multiple
+  # do 
+  #   for env in cart_pole #pong 
+  #   do 
+  #     tmux send-keys -t imperfect_cart_pole_pong_${method} "conda activate ${environment}; python -u method_comparison_imperfect.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts[$env]} --method ${method} --out_folder basic >> ../../runs/logs/error_imperfect_cart_pole_pong_${method}.txt 2>&1" ENTER
+  #   done 
+  # done 
 
-  # Pong
-  env=pong
-  tmux send-keys -t basic_pong "conda activate ${environment}; python -u method_comparison.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts[$env]} --out_folder basic >> ${LOGFILE_PONG} 2>&1" ENTER
-
-  # Boxing
-  env=boxing
-  tmux send-keys -t basic_boxing "conda activate ${environment}; python -u method_comparison.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts[$env]} --out_folder basic >> ${LOGFILE_BOXING} 2>&1" ENTER
+  for method in imperfect_concepts random entropy greedy lp multiple 
+  do 
+    for env in mini_grid #boxing 
+    do 
+      tmux send-keys -t imperfect_mini_grid_boxing_${method} "conda activate ${environment}; python -u method_comparison_imperfect.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts[$env]} --method ${method} --out_folder basic >> ../../runs/logs/error_imperfect_mini_grid_boxing_${method}.txt 2>&1" ENTER
+    done 
+  done 
 done
