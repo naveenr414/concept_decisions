@@ -1,8 +1,5 @@
 #!/bin/bash
 
-##############################
-# CONFIG
-##############################
 
 SEEDS=(42 43 44)          # Add as many seeds as you want
 GPU_MAP=(0 2 3)           # GPU assignment for each seed index
@@ -20,7 +17,7 @@ declare -A gold_timesteps=(
 )
 
 declare -A training_timesteps=(
-  [mini_grid]=250000
+  [mini_grid]=500000
   [cart_pole]=4000000
   [pong]=15000000
   [boxing]=15000000
@@ -35,9 +32,6 @@ declare -A num_concepts=(
   [glucose]=10
 )
 
-##############################
-# TMUX SESSION SETUP FUNCTION
-##############################
 
 setup_tmux_session() {
   local session_name=$1
@@ -51,10 +45,6 @@ setup_tmux_session() {
   tmux send-keys -t ${session_name} "export GYMNASIUM_DISABLE_WARNINGS=1" ENTER
   tmux send-keys -t ${session_name} "export CUDA_VISIBLE_DEVICES=${gpu}" ENTER
 }
-
-##############################
-# CREATE SESSIONS (SEED × METHOD × GROUP)
-##############################
 
 for i in "${!SEEDS[@]}"; do
   seed=${SEEDS[$i]}
@@ -81,15 +71,8 @@ for i in "${!SEEDS[@]}"; do
 done
 
 
-##############################
-# RUN EXPERIMENTS
-##############################
-
 for seed in "${SEEDS[@]}"; do
 
-  ##########
-  # CART_POLE + PONG
-  ##########
   for method in "${METHODS[@]}"; do
     for env in cart_pole pong; do
 
@@ -108,12 +91,9 @@ for seed in "${SEEDS[@]}"; do
     done
   done
 
-
-  ##########
-  # MINI_GRID + BOXING
-  ##########
   for method in "${METHODS[@]}"; do
-    for env in mini_grid boxing; do
+    for env in mini_grid boxing 
+    do 
 
       tmux_target="imperfect_mini_grid_boxing_${method}_${seed}"
 
@@ -131,9 +111,6 @@ for seed in "${SEEDS[@]}"; do
   done
 
 
-  ##########
-  # CART_POLE – vary intervention_prob
-  ##########
   env=cart_pole
   for intervention_prob in 0.25 0.75; do
     for method in "${METHODS[@]}"; do
@@ -154,9 +131,6 @@ for seed in "${SEEDS[@]}"; do
   done
 
 
-  ##########
-  # CART_POLE – PARETO CURVE (LP only)
-  ##########
   env=cart_pole
   tmux_target="imperfect_cart_pole_pong_lp_pareto_${seed}"
 
@@ -169,5 +143,4 @@ for seed in "${SEEDS[@]}"; do
     --num_concepts_selected ${num_concepts[$env]} \
     --intervention_prob 0.5 \
     --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
-
 done

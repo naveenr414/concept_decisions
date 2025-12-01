@@ -10,8 +10,7 @@ os.environ["CUDA_LAUNCH_BLOCKING"] = "0"
 os.environ["GRB_LICENSE_FILE"] = "/usr0/home/naveenr/gurobi.lic" 
 os.environ['MKL_THREADING_LAYER'] = "GNU"
 
-import torch 
-
+import torch
 from concept_abstraction.training import *
 from concept_abstraction.selection import *
 from concept_abstraction.concept_bank import *
@@ -26,9 +25,6 @@ import os
 import pickle
 import secrets 
 
-import torch 
-torch.set_num_threads(2)
-torch.set_num_interop_threads(1)
 is_jupyter = 'ipykernel' in sys.modules
 is_main = __name__ == "__main__"
 

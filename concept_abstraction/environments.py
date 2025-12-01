@@ -327,7 +327,7 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
                 clip_obs=10.0
             )
     elif concept_list is not None:
-        vec_env = VecConceptWrapper(vec_env, None, concept_idx,intervention_prob=0.5,processed_concepts=processed_concepts,concept_accuracy=concept_accuracy)
+        vec_env = VecConceptWrapper(vec_env, None, concept_idx,intervention_prob=intervention_prob,processed_concepts=processed_concepts,concept_accuracy=concept_accuracy)
         vec_env.observation_space = spaces.MultiBinary(len(concept_idx))
 
     gymnasium_env = GymnasiumWrapper(vec_env)

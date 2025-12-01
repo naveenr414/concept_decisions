@@ -233,7 +233,7 @@ class VecConceptWrapper(VecEnvWrapper):
         self.predictions_cpu = None
         self.obs_batch_gpu = None
 
-    def _init_buffers(self, infos):
+    def _init_buffers(self,obs,infos):
         """Initialize buffers on first call"""
         if self._buffers_ready:
             return
@@ -242,7 +242,6 @@ class VecConceptWrapper(VecEnvWrapper):
         sample_obs = infos[0]['observation']
         obs_shape = np.array(sample_obs).shape
         
-        # Pre-allocate observation buffer on GPU
         if len(obs_shape) == 1:
             self.observations_gpu = torch.empty(
                 (self.num_envs, obs_shape[0]), 
@@ -253,6 +252,8 @@ class VecConceptWrapper(VecEnvWrapper):
                 (self.num_envs, *obs_shape), 
                 device='cuda', dtype=torch.float32
             )
+
+        
         
         # Pre-allocate predictions buffer
         self.predictions_gpu = torch.empty(
@@ -264,7 +265,6 @@ class VecConceptWrapper(VecEnvWrapper):
         self.predictions_cpu = torch.empty(
             (self.num_envs, len(self.concept_idx)), 
             dtype=torch.float32,
-            pin_memory=True
         )
         
         self._buffers_ready = True
@@ -272,32 +272,25 @@ class VecConceptWrapper(VecEnvWrapper):
     def reset(self):
         obs = self.venv.reset()
         infos = self.venv.reset_infos
-        self._init_buffers(infos)
-        obs = self._process_batch(obs, infos)
+        self._init_buffers(obs,infos)
+        obs = self._process_batch(obs,infos)
         return obs 
     
     def step_wait(self):
         processed_obs, rewards, dones, infos = self.venv.step_wait()
-        processed_obs = self._process_batch(processed_obs, infos)
-
+        processed_obs = self._process_batch(processed_obs,infos)
+        
         for idx, i in enumerate(infos):
             if "terminal_observation" in i:
                 i['terminal_observation'] = processed_obs[idx]
 
         return processed_obs, rewards, dones, infos    
         
-    def _process_batch(self, obs_batch, infos):
+    def _process_batch(self, obs_batch,infos):
         """Process entire batch with pre-allocated buffers"""
-        
-        # OPTIMIZATION 1: Stack numpy arrays first, then convert to tensor once
-        # This fixes the warning about slow tensor creation
-        obs_list = [i['observation'] for i in infos]
-        obs_np = np.stack(obs_list, axis=0)  # Fast numpy stack
-        
-        # Copy to GPU in one operation
-        self.observations_gpu.copy_(torch.from_numpy(obs_np), non_blocking=True)
-        observations = self.observations_gpu
-        
+
+        self.observations_gpu.copy_(torch.from_numpy(np.stack([i['observation'] for i in infos],axis=0)), non_blocking=True)
+        observations = self.observations_gpu        
         # Check if observations are 2D or 3D
         is_2d = (observations.ndim == 2)
         if is_2d:
@@ -356,26 +349,20 @@ class VecConceptWrapper(VecEnvWrapper):
         # OPTIMIZATION 2: Reuse predictions buffer
         if self.fast_predictor is not None:
             with torch.no_grad():
-                # Convert obs_batch to tensor once if needed
                 if not isinstance(obs_batch, torch.Tensor):
                     obs_tensor = torch.from_numpy(obs_batch).to('cuda', dtype=torch.float32, non_blocking=True) / 255.0
                 else:
                     obs_tensor = obs_batch.to('cuda', dtype=torch.float32, non_blocking=True) / 255.0
                 
-                # Write directly to pre-allocated buffer
                 self.predictions_gpu[:] = self.fast_predictor(obs_tensor)[:, self.concept_idx].float()
             
-            # Override with ground truth where masked
             override_logits = torch.where(concept_vals > 0.5, 4.0, -4.0)
             self.predictions_gpu[:, self.mask] = override_logits[:, self.mask]
         else:
             self.predictions_gpu[:] = concept_vals
         
-        # OPTIMIZATION 3: Use non-blocking copy to pinned CPU memory
-        self.predictions_cpu.copy_(self.predictions_gpu, non_blocking=True)
-        
-        # Return numpy view (no copy needed - shares memory with pinned tensor)
-        return self.predictions_cpu.numpy()
+        # Just allocate fresh CPU array - this is actually very cheap
+        return self.predictions_gpu.cpu().numpy()
     
 class ConceptWrapper(gym.ObservationWrapper):
     def __init__(self, env,observation_space,get_raw_state,use_info_obs=False,obs_function=lambda env, obs, info: obs):
