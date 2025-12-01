@@ -116,14 +116,11 @@ def get_model(environment_string,policy,override={}):
             default_model_dict['batch_size'] = 256         # if n_steps increased
             default_model_dict['n_epochs'] = 5             # more steps = fewer epochs
         elif environment_string == "glucose_raw":
-            print("Loading glucose raw")
-            # TODO: Try this out, see if it works
             default_model_dict['learning_rate'] = 3e-4     # or even 1e-4 (important)
             default_model_dict['ent_coef'] = 0.01          # not 0.1
             default_model_dict['n_steps'] = 1024           # from 256 --> 1024 or 2048
             default_model_dict['batch_size'] = 256         # if n_steps increased
             default_model_dict['n_epochs'] = 5             # more steps = fewer epochs
-            print(default_model_dict)
         elif environment_string == "cart_pole":
             default_model_dict['policy_kwargs'] = {'net_arch': [128,128]}
             default_model_dict['batch_size'] = 512
@@ -259,7 +256,7 @@ class RandomAgent:
         actions = np.array([self.action_space.sample() for _ in range(self.num_envs)])
         return actions, None
 
-def evaluate_model(environment_string,env,additional_info,model,seed,max_steps=50_000):
+def evaluate_model(environment_string,env,model,seed,max_steps=50_000):
     """Evaluation Function that tailors the evaluation
         based on the environment
         
@@ -282,144 +279,6 @@ def evaluate_model(environment_string,env,additional_info,model,seed,max_steps=5
 #----------------------------
 # Lightweight CNN for 1-channel input
 # ----------------------------
-class CartPoleConceptCNN(nn.Module):
-    def __init__(self, num_outputs):
-        super().__init__()
-        self.features = nn.Sequential(
-            nn.Conv2d(4, 16, 3, stride=2, padding=1),
-            nn.BatchNorm2d(16),
-            nn.ReLU(),
-            nn.Conv2d(16, 32, 3, stride=2, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 64, 3, stride=2, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            nn.AdaptiveAvgPool2d((1, 1)),
-            nn.Flatten()
-        )
-        self.fc = nn.Sequential(
-            nn.Linear(64, 64),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(64, num_outputs)
-        )
-
-    def forward(self, x):
-        return self.fc(self.features(x))
-
-class TemporalCartPoleCNN(nn.Module):
-    """
-    CNN that explicitly models temporal information for stacked frames.
-    Uses both spatial convolutions and temporal processing.
-    """
-    def __init__(self, num_outputs, num_frames=8, input_size=84):
-        super().__init__()
-        self.num_frames = num_frames
-        
-        # Process each frame independently with shared weights
-        self.spatial_encoder = nn.Sequential(
-            nn.Conv2d(1, 16, kernel_size=8, stride=4, padding=2),  # 84x84 -> 21x21
-            nn.ReLU(),
-            nn.Conv2d(16, 32, kernel_size=4, stride=2, padding=1),  # 21x21 -> 11x11
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),  # 11x11 -> 6x6
-            nn.ReLU(),
-        )
-        
-        # Calculate spatial feature size
-        # Run a dummy forward pass to get the dimensions
-        with torch.no_grad():
-            dummy = torch.zeros(1, 1, input_size, input_size)
-            spatial_out = self.spatial_encoder(dummy)
-            spatial_feature_size = spatial_out.view(1, -1).shape[1]
-        
-        # Temporal convolution over the frame dimension
-        self.temporal_conv = nn.Sequential(
-            nn.Conv1d(spatial_feature_size, 256, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv1d(256, 128, kernel_size=num_frames),  # Reduces temporal dim to 1
-            nn.ReLU(),
-        )
-        
-        # Final decision layers
-        self.fc = nn.Sequential(
-            nn.Linear(128, 128),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(128, num_outputs)
-        )
-    
-    def forward(self, x):
-        # x shape: (batch, num_frames, H, W)
-        batch_size = x.shape[0]
-        
-        # Process each frame through spatial encoder
-        # Reshape to process all frames at once
-        x = x.view(batch_size * self.num_frames, 1, x.shape[2], x.shape[3])
-        spatial_features = self.spatial_encoder(x)  # (batch*frames, C, H', W')
-        
-        # Reshape for temporal processing
-        spatial_features = spatial_features.view(batch_size, self.num_frames, -1)  # (batch, frames, C*H'*W')
-        spatial_features = spatial_features.transpose(1, 2)  # (batch, C*H'*W', frames)
-        
-        # Apply temporal convolution
-        temporal_features = self.temporal_conv(spatial_features)  # (batch, 128, 1)
-        temporal_features = temporal_features.squeeze(-1)  # (batch, 128)
-        
-        # Final output
-        return self.fc(temporal_features)
-
-
-
-
-class FocalLoss(nn.Module):
-    def __init__(self, alpha=1.0, gamma=2.0, smoothing=0.05):
-        super().__init__()
-        self.alpha = alpha
-        self.gamma = gamma
-        self.smoothing = smoothing
-
-    def forward(self, logits, targets):
-        if self.smoothing > 0:
-            targets = targets * (1 - self.smoothing) + 0.5 * self.smoothing
-        bce = F.binary_cross_entropy_with_logits(logits, targets, reduction='none')
-        pt = torch.exp(-bce)
-        focal = self.alpha * (1 - pt) ** self.gamma * bce
-        return focal.mean()
-    
-def get_concept_labels_avg(env, model, concept_list, num_steps=5000, batch_size=100):
-    obs, infos = env.reset()
-    steps = 0
-
-    while steps < num_steps:
-        X_batch, Y_batch = [], []
-        batch_steps = 0
-        while batch_steps < batch_size and steps < num_steps:
-            # Average 4 frames
-            X_avg = obs  # (batch, 1, 84,84)
-            X_batch.append(X_avg)
-            Yb = np.array([[c(inf['observation']) for c in concept_list] for inf in infos])
-            Y_batch.append(Yb)
-
-            # Take action
-            if np.random.random() < 1.0:
-                action = [env.action_space.sample() for _ in range(len(obs))]
-            else:
-                concepts = [[c(inf['observation']) for c in concept_list] for inf in infos]
-                action = model.predict(concepts)[0]
-
-            obs, _, terminated, truncated, infos = env.step(action)
-            steps += 1
-            batch_steps += 1
-
-            if np.random.random() < 0.05:
-                obs, infos = env.reset()
-
-        X_batch = np.concatenate(X_batch, axis=0)
-        Y_batch = np.concatenate(Y_batch, axis=0)
-        yield X_batch, Y_batch
-        del X_batch, Y_batch
 def collect_cartpole_data(ground_truth_gym_env, groundtruth_model, concept_list, num_episodes=100, max_episode_length=500,use_gold=False):
     """
     Collect data from CartPole environment - Memory efficient version
@@ -431,7 +290,8 @@ def collect_cartpole_data(ground_truth_gym_env, groundtruth_model, concept_list,
     Y_data = []
     
     print(f"Collecting data from {num_episodes} episodes...")
-    
+    wrapped_concepts = [wrap_concept_fn(c) for c in concept_list]
+
     for episode in range(num_episodes):
         # Use gold model every 20th episode for better data
         use_gold_this_episode = (episode % 2 == 0)
@@ -441,7 +301,7 @@ def collect_cartpole_data(ground_truth_gym_env, groundtruth_model, concept_list,
         step_count = 0
 
         for i in range(max_episode_length):        
-            concepts = [[c(info[i]['observation']) for c in concept_list] for i in range(len(info)) if not done[i]]
+            concepts = [[c(info[i]['observation']) for c in wrapped_concepts] for i in range(len(info)) if not done[i]]
             actions = [ground_truth_gym_env.action_space.sample() for _ in range(len(concepts))]
             if use_gold_this_episode:
                 actions = groundtruth_model.predict(obs)[0] 
@@ -533,7 +393,9 @@ def train_concept_predictor(ground_truth_gym_env, groundtruth_model, concept_lis
                                            use_gold=True,max_episode_length=max_episode_length)
     
     # Process concepts
-    Y_data = [[c(i) for c in concept_list] for i in Y_data] 
+    wrapped_concepts = [wrap_concept_fn(c) for c in concept_list]
+
+    Y_data = [[c(i) for c in wrapped_concepts] for i in Y_data] 
     Y_data = np.array(Y_data, dtype=np.float32)[:, idx]  # Use float32 explicitly
     
     print(f"X_data shape: {X_data.shape}, dtype: {X_data.dtype}")
@@ -681,6 +543,24 @@ def train_concept_predictor(ground_truth_gym_env, groundtruth_model, concept_lis
     
     return model, acc_list
 
+def wrap_concept_fn(fn):
+    def wrapped(raw_obs):
+        # Convert raw obs to tensor
+        x = torch.as_tensor(raw_obs)
+
+        # Ensure shape (1, 1, obs_dim)
+        if x.ndim == 1:
+            x = x.unsqueeze(0).unsqueeze(0)
+        elif x.ndim == 2:
+            x = x.unsqueeze(0)
+
+        out = fn(x)
+
+        # Remove the extra batch dims so you get a scalar again
+        return out.squeeze()
+    return wrapped
+
+
 def evaluate_concept_predictor(
     concept_predictor,
     ground_truth_gym_env,
@@ -720,7 +600,8 @@ def evaluate_concept_predictor(
     )
     
     # Process concepts
-    Y_data = [[c(i) for c in concept_list] for i in Y_data]
+    wrapped_concepts = [wrap_concept_fn(c) for c in concept_list]
+    Y_data = [[c(i) for c in wrapped_concepts] for i in Y_data]
     Y_data = np.array(Y_data, dtype=np.float32)
     
     print(f"Evaluation data - X shape: {X_data.shape}, Y shape: {Y_data.shape}")

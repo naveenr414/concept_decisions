@@ -1,15 +1,16 @@
 import os
 
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-os.environ["GRB_LICENSE_FILE"] = "/usr0/home/naveenr/gurobi.lic"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["TORCH_NUM_THREADS"] = "1"
+os.environ["CUDA_LAUNCH_BLOCKING"] = "0" 
+os.environ["GRB_LICENSE_FILE"] = "/usr0/home/naveenr/gurobi.lic" 
 os.environ['MKL_THREADING_LAYER'] = "GNU"
-os.environ["OMP_NUM_THREADS"] = "2"
-os.environ["MKL_NUM_THREADS"] = "2"  
-os.environ["NUMEXPR_NUM_THREADS"] = "2"
-os.environ["OPENBLAS_NUM_THREADS"] = "2"
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-os.environ["GRB_LICENSE_FILE"] = "/usr0/home/naveenr/gurobi.lic"
-os.environ['MKL_THREADING_LAYER'] = "GNU"
+
+import torch 
 
 from concept_abstraction.training import *
 from concept_abstraction.selection import *
@@ -25,9 +26,6 @@ import os
 import pickle
 import secrets 
 
-import torch 
-torch.set_num_threads(2)
-torch.set_num_interop_threads(1)
 is_jupyter = 'ipykernel' in sys.modules
 is_main = __name__ == "__main__"
 
@@ -68,9 +66,9 @@ if is_main:
     random.seed(seed)
 
 if is_main:
-    concept_list = get_concepts(environment_string,"human_selected_binary",seed)
+    concept_list, processed_concepts = get_concepts(environment_string,"human_selected_binary",seed)
     num_concepts_selected = min(num_concepts_selected,len(concept_list))
-    ground_truth_env, ground_truth_gym_env, additional_info = get_environment(environment_string, None, seed)   
+    ground_truth_env, ground_truth_gym_env = get_environment(environment_string, None, seed)   
     model_name = "../../results/models/env={}_training={}_seed={}.zip".format(environment_string,gold_timesteps,seed)
     if os.path.exists(model_name):
         groundtruth_model = PPO.load(model_name)
@@ -89,11 +87,10 @@ if is_main:
 
 # # Multiple
 if is_main:
-    modified_concept_predictors = [inaccurate_concepts_binary(func,concept_accuracy,seed) for func in concept_list]
-    subset_concept, idx = multiple_lp_selection(ground_truth_env,modified_concept_predictors,num_concepts_selected,"q_value",q_estimates,"human_selected_binary",[concept_accuracy for func in concept_list])
-    env, eval_env, additional_info = get_environment(environment_string,subset_concept,seed)
+    subset_concept, idx = multiple_lp_selection(ground_truth_env,concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary",[concept_accuracy for func in concept_list])
+    env, eval_env = get_environment(environment_string,subset_concept,seed,processed_concepts=processed_concepts,concept_idx=idx,concept_accuracy=concept_accuracy)
     model = train_ppo_model(env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_lp".format(environment_string))    
-    lp_two_stage_reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
+    lp_two_stage_reward = evaluate_model(environment_string,eval_env,model,seed)
     results['multiple'] = {'reward': lp_two_stage_reward, 'concepts': idx}
 
 if is_main:

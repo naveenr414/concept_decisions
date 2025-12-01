@@ -187,10 +187,27 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
     # Initial concept extraction - obs is already the observation array
     concepts = np.zeros((num_envs, state_dim))
     for i in range(num_envs):
+        # correct selection of observation
         info_i = infos[i] if infos and len(infos) > i else {}
-        # For reset, the observation is in obs[i], not in infos
-        actual_obs = info_i.get("observation", obs[i])
-        concepts[i] = np.array([c(actual_obs) for c in concept_list])
+
+        # use obs[i] by default; override if info has 'observation'
+        raw_obs = info_i.get("observation", obs[i])
+
+        # ensure torch tensor with correct shape (always at least 1 batch dim)
+        actual_obs = torch.as_tensor(raw_obs)
+        if actual_obs.ndim == 1:
+            actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
+            actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
+        elif actual_obs.ndim == 2:
+            actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
+
+        # compute concepts
+        concept_values = []
+        for c in concept_list:
+            concept_values.append(c(actual_obs).squeeze(0))  # each concept returns a scalar/tensor
+
+        # convert once to numpy
+        concepts[i] = torch.stack(concept_values).cpu().numpy()
 
     print("Starting stable training for sparse rewards...")
     
@@ -203,7 +220,6 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
         if steps % 5000 == 0:
             loss_mean, _, _ = td_learner.get_loss_stats()
             print(f"Step {steps}/{total_timesteps}, Loss mean: {loss_mean:.4f}")
-
         actions = model.predict(obs)[0]
         use_random = use_initial_random and ((steps < total_timesteps // 5) and (np.random.rand() < initial_random))
         if use_random:
@@ -218,10 +234,28 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
         # # Compute next concepts for all environments
         next_concepts = np.zeros_like(concepts)
         for i in range(num_envs):
+            # correct selection of observation
             info_i = infos[i] if infos and len(infos) > i else {}
-            # After step, observation might be in infos or in next_obs
-            actual_obs = info_i.get("observation", next_obs[i])
-            next_concepts[i] = np.array([c(actual_obs) for c in concept_list])
+
+            # use obs[i] by default; override if info has 'observation'
+            raw_obs = info_i.get("observation", next_obs[i])
+
+            # ensure torch tensor with correct shape (always at least 1 batch dim)
+            actual_obs = torch.as_tensor(raw_obs)
+            if actual_obs.ndim == 1:
+                actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
+                actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
+            elif actual_obs.ndim == 2:
+                actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
+
+
+            # compute concepts
+            concept_values = []
+            for c in concept_list:
+                concept_values.append(c(actual_obs).squeeze(0))  # each concept returns a scalar/tensor
+
+            # convert once to numpy
+            next_concepts[i] = torch.stack(concept_values).cpu().numpy()
         episode_reward_sums += rewards
 
         # Store experiences and track rewards
@@ -251,7 +285,6 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
                 episodes_completed += 1
                 episode_rewards.append(episode_reward_sums[i])
                 episode_reward_sums[i] = 0  # Reset for next episode
-                print(episode_rewards)
                 if episodes_completed % 25 == 0:
                     recent_rewards = episode_rewards[-25:] if len(episode_rewards) >= 25 else episode_rewards
                     avg_reward = np.mean(recent_rewards)

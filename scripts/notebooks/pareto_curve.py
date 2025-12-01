@@ -70,9 +70,9 @@ if is_main:
     random.seed(seed)
 
 if is_main:
-    concept_list = get_concepts(environment_string,"human_selected_binary",seed)
+    concept_list, processed_concepts = get_concepts(environment_string,"human_selected_binary",seed)
     num_concepts_selected = min(num_concepts_selected,len(concept_list))
-    ground_truth_env, ground_truth_gym_env, additional_info = get_environment(environment_string, None, seed)   
+    ground_truth_env, ground_truth_gym_env = get_environment(environment_string, None, seed)   
     model_name = "../../results/models/env={}_training={}_seed={}.zip".format(environment_string,gold_timesteps,seed)
     if os.path.exists(model_name):
         groundtruth_model = PPO.load(model_name)

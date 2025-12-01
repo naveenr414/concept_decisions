@@ -425,6 +425,7 @@ def concept_completeness_selection(env,concept_list,num_concepts_selected,select
     beta = beta[:-1]
     sorted_vals = np.argsort(np.abs(beta))[::-1].copy()[:num_concepts_selected]
     sorted_vals = list(sorted_vals)
+    sorted_vals = [int(i) for i in sorted_vals]
 
     return [concept_list[i] for i in sorted_vals], sorted_vals
 

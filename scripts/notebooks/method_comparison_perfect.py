@@ -1,16 +1,16 @@
 import os
 
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-os.environ["GRB_LICENSE_FILE"] = "/usr0/home/naveenr/gurobi.lic"
-os.environ['MKL_THREADING_LAYER'] = "GNU"
-os.environ["OMP_NUM_THREADS"] = "2"
-os.environ["MKL_NUM_THREADS"] = "2"  
-os.environ["NUMEXPR_NUM_THREADS"] = "2"
-os.environ["OPENBLAS_NUM_THREADS"] = "2"
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-os.environ["GRB_LICENSE_FILE"] = "/usr0/home/naveenr/gurobi.lic"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["TORCH_NUM_THREADS"] = "1"
+os.environ["CUDA_LAUNCH_BLOCKING"] = "0" 
+os.environ["GRB_LICENSE_FILE"] = "/usr0/home/naveenr/gurobi.lic" 
 os.environ['MKL_THREADING_LAYER'] = "GNU"
 
+import torch
 from concept_abstraction.training import *
 from concept_abstraction.selection import *
 from concept_abstraction.concept_bank import *
@@ -25,9 +25,6 @@ import os
 import pickle
 import secrets 
 
-import torch 
-torch.set_num_threads(2)
-torch.set_num_interop_threads(1)
 is_jupyter = 'ipykernel' in sys.modules
 is_main = __name__ == "__main__"
 
@@ -69,9 +66,9 @@ if is_main:
     random.seed(seed)
 
 if is_main:
-    concept_list = get_concepts(environment_string,"human_selected_binary",seed)
+    concept_list, processed_concepts = get_concepts(environment_string,"human_selected_binary",seed)
     num_concepts_selected = min(num_concepts_selected,len(concept_list))
-    ground_truth_env, ground_truth_gym_env, additional_info = get_environment(environment_string, None, seed)   
+    ground_truth_env, ground_truth_gym_env = get_environment(environment_string, None, seed)   
     model_name = "../../results/models/env={}_training={}_seed={}.zip".format(environment_string,gold_timesteps,seed)
     if os.path.exists(model_name):
         groundtruth_model = PPO.load(model_name)
@@ -86,10 +83,11 @@ if is_main:
         else:
             groundtruth_model = train_ppo_model(ground_truth_env,environment_string,total_timesteps=gold_timesteps,policy=policy)
         
-        groundtruth_model = train_ppo_model(ground_truth_env,environment_string,total_timesteps=gold_timesteps,policy=policy)
         groundtruth_model.save(model_name)
-    groundtruth_reward = evaluate_model(environment_string,ground_truth_gym_env,additional_info,groundtruth_model,seed)
-    results['ground_truth'] = {'reward': groundtruth_reward}
+    
+    if method == 'perfect_concepts':
+        groundtruth_reward = evaluate_model(environment_string,ground_truth_gym_env,groundtruth_model,seed)
+        results['ground_truth'] = {'reward': groundtruth_reward}
 
 
 if is_main:    
@@ -102,42 +100,42 @@ if is_main:
 
 # Perfect Concepts 
 if is_main and method == 'perfect_concepts':    
-    two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string,concept_list,seed)
+    two_stage_env, two_stage_gym_env = get_environment(environment_string,concept_list,seed,processed_concepts=processed_concepts,concept_idx=list(range(len(concept_list))))
     model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_perfect_concepts".format(environment_string))    
-    all_concept_model_reward = evaluate_model(environment_string,two_stage_gym_env,additional_info,model,seed)
+    all_concept_model_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
     results['perfect_concepts'] = {'reward': all_concept_model_reward, 'concepts': list(range(len(concept_list)))}
 
 # Random
 if is_main and method == 'random': 
     subset_concept, idx = random_selection(concept_list,num_concepts_selected)
-    two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string,subset_concept,seed)
+    two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,processed_concepts=processed_concepts,concept_idx=idx)
     model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_perfect_random".format(environment_string))    
-    all_concept_model_reward = evaluate_model(environment_string,two_stage_gym_env,additional_info,model,seed)
+    all_concept_model_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
     results['random'] = {'reward': all_concept_model_reward, 'concepts': idx}
 
 # # Basic Greedy
 if is_main and method == 'entropy':
     subset_concept, idx = basic_greedy_selection(concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary")
     idx = idx.tolist()
-    two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string,subset_concept,seed)
+    two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,processed_concepts=processed_concepts,concept_idx=idx)
     model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_perfect_entropy".format(environment_string))    
-    all_concept_model_reward = evaluate_model(environment_string,two_stage_gym_env,additional_info,model,seed)
+    all_concept_model_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
     results['entropy'] = {'reward': all_concept_model_reward, 'concepts': idx}
 
 # # Greedy
 if is_main and method == 'greedy':
     subset_concept, idx = greedy_selection(concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary")
-    two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string,subset_concept,seed)
+    two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,processed_concepts=processed_concepts,concept_idx=idx)
     model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_perfect_greedy".format(environment_string))    
-    greedy_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,additional_info,model,seed)
+    greedy_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
     results['greedy'] = {'reward': greedy_two_stage_reward, 'concepts': idx}
 
 # # LP
 if is_main and method == 'lp':
     subset_concept, idx = lp_based_selection(ground_truth_env,concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary")
-    two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string,subset_concept,seed)
+    two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,processed_concepts=processed_concepts,concept_idx=idx)
     model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_perfect_lp".format(environment_string))    
-    lp_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,additional_info,model,seed)
+    lp_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
     results['lp'] = {'reward': lp_two_stage_reward, 'concepts': idx}
 
 if is_main:

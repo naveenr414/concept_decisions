@@ -1,11 +1,7 @@
 #!/bin/bash
 
 sessions=(
-  # perfect_random
-  # perfect_greedy
-  # perfect_lp
-  imperfect_completeness
-  # imperfect_lp_policy
+  ablations
 )
 
 
@@ -74,25 +70,24 @@ done
 # Run experiments
 for seed in 42
 do 
-  # env=mini_grid 
-  # for g in 100000 250000 500000
-  # do 
-  #   for method in lp # greedy lp   
-  #   do 
-  #     tmux send-keys -t perfect_${method} "conda activate ${environment}; python -u method_comparison_imperfect.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${g} --num_concepts_selected ${num_concepts[$env]} --method ${method} --out_folder ablations >> ../../runs/logs/error_perfect_${method}.txt 2>&1" ENTER
-  #   done 
-  #   # tmux send-keys -t perfect_random "conda activate ${environment}; python -u method_comparison_imperfect.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${g} --num_concepts_selected ${num_concepts[$env]} --method multiple --out_folder ablations >> ../../runs/logs/error_perfect_random.txt 2>&1" ENTER
-  # done 
+  env=mini_grid 
+  for g in 100000 250000 500000
+  do 
+    for method in greedy lp multiple 
+    do 
+      tmux send-keys -t ablations "conda activate ${environment}; python -u method_comparison_imperfect.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${g} --num_concepts_selected ${num_concepts[$env]} --method ${method} --out_folder ablations >> ../../runs/logs/error_ablations.txt 2>&1" ENTER
+    done 
+  done 
 
   method=completeness
   for env in cart_pole mini_grid
   do 
-    tmux send-keys -t imperfect_completeness "conda activate ${environment}; python -u method_comparison_imperfect.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts[$env]} --method ${method} --out_folder basic >> ../../runs/logs/error_imperfect_completeness.txt 2>&1" ENTER
+    tmux send-keys -t ablations "conda activate ${environment}; python -u method_comparison_imperfect.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts[$env]} --method ${method} --out_folder basic >> ../../runs/logs/error_ablations.txt 2>&1" ENTER
   done 
 
-  # method=lp_policy
-  # for env in cart_pole mini_grid
-  # do 
-  #   tmux send-keys -t imperfect_lp_policy "conda activate ${environment}; python -u method_comparison_imperfect.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts[$env]} --method ${method} --out_folder basic >> ../../runs/logs/error_imperfect_lp_policy.txt 2>&1" ENTER
-  # done 
+  method=lp_policy
+  for env in cart_pole mini_grid
+  do 
+    tmux send-keys -t ablations "conda activate ${environment}; python -u method_comparison_imperfect.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_timesteps[$env]} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts[$env]} --method ${method} --out_folder basic >> ../../runs/logs/error_ablations.txt 2>&1" ENTER
+  done 
 done

@@ -1,33 +1,28 @@
 #!/bin/bash
-# Create log files for each environment
-sessions=(
-  perfect_perfect_concepts
-  perfect_random
-  perfect_entropy
-  perfect_greedy
-  perfect_lp
-)
 
+# Seeds to run
+SEEDS=(42 43 44)
 
-# Create log files for each environment
-for s in "${sessions[@]}"; do
-    : > "runs/logs/error_${s}.txt"
-done
+# Assign GPUs to sessions
+GPU_MAP=(0 2 3)  # 3 GPUs
+
+# Define tmux groups (session “types”)
+SESSION_GROUPS_PONG_BOXING=(perfect_pong_boxing)
+SESSION_GROUPS_MINI_CART_GLUC=(perfect_mini_grid_cart_pole_glucose)
 
 environment=food
 
-# Define timesteps and concepts for each environment
 declare -A gold_timesteps=(
   [mini_grid]=1000000
   [cart_pole]=4000000
   [pong]=15000000
-  [boxing]=15000000
+  [boxing]=30000000
   [glucose]=4000000
 )
 
 declare -A training_timesteps=(
   [mini_grid]=250000
-  [cart_pole]=250000 #4000000
+  [cart_pole]=4000000
   [pong]=15000000
   [boxing]=15000000
   [glucose]=4000000
@@ -41,41 +36,80 @@ declare -A num_concepts=(
   [glucose]=10
 )
 
-# Function to create and setup tmux session
+# Function to create and setup tmux session with GPU
 setup_tmux_session() {
   local session_name=$1
+  local gpu=$2
   tmux new-session -d -s ${session_name}
-  tmux send-keys -t ${session_name} ENTER 
+  tmux send-keys -t ${session_name} ENTER
   tmux send-keys -t ${session_name} "source ~/.bashrc" ENTER
   tmux send-keys -t ${session_name} "cd scripts/notebooks" ENTER
   tmux send-keys -t ${session_name} "export PYTHONWARNINGS='ignore'" ENTER
   tmux send-keys -t ${session_name} "export GYMNASIUM_DISABLE_WARNINGS=1" ENTER
+  tmux send-keys -t ${session_name} "export CUDA_VISIBLE_DEVICES=${gpu}" ENTER
 }
 
-# Create tmux sessions for each environment
-for s in "${sessions[@]}"; do
-    setup_tmux_session "$s"
+# # Create tmux sessions and log files for each seed × session group
+for idx in "${!SEEDS[@]}"; do
+  seed=${SEEDS[$idx]}
+  gpu=${GPU_MAP[$idx]}  # assign GPU for this seed
+
+  # Pong/Boxing sessions
+  for i in {1..3}; do
+    session_name="${SESSION_GROUPS_PONG_BOXING[0]}_${i}_seed${seed}"
+    setup_tmux_session "$session_name" "$gpu"
+    : > "runs/logs/error_${session_name}.txt"
+  done
+
+  # MiniGrid/CartPole/Glucose sessions
+  # for i in {1..3}; do
+  #   session_name="${SESSION_GROUPS_MINI_CART_GLUC[0]}_${i}_seed${seed}"
+  #   setup_tmux_session "$session_name" "$gpu"
+  #   : > "runs/logs/error_${session_name}.txt"
+  # done
 done
 
-# Run experiments
-for seed in 42
-do 
+# Run experiments for each seed
+for seed in "${SEEDS[@]}"; do
+  # MiniGrid / CartPole / Glucose
+  # for env in mini_grid cart_pole glucose; do
+  #   for concept_accuracy in 0.75 0.85 0.95; do
+  #     for concept_fraction in 0.25 0.5 1; do
+  #       case "$concept_accuracy" in
+  #         0.75) idx=1 ;;
+  #         0.85) idx=2 ;;
+  #         0.95) idx=3 ;;
+  #       esac
+  #       tmux_target="perfect_mini_grid_cart_pole_glucose_${idx}_seed${seed}"
 
-  for env in mini_grid cart_pole pong boxing glucose 
+  #       num_concepts_selected=$(printf "%.0f" $(echo "${num_concepts[$env]} * ${concept_fraction}" | bc))
+
+  #       tmux send-keys -t "$tmux_target" \
+  #         "conda activate ${environment}; python -u only_multiple.py \
+  #         --seed ${seed} \
+  #         --environment_string ${env} \
+  #         --training_timesteps ${training_timesteps[$env]} \
+  #         --gold_timesteps ${gold_timesteps[$env]} \
+  #         --num_concepts_selected ${num_concepts_selected} \
+  #         --concept_accuracy ${concept_accuracy} \
+  #         --out_folder imperfect >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
+  #     done
+  #   done
+  # done
+
+  # Pong / Boxing
+  for env in boxing # pong boxing; do
   do 
-    for concept_accuracy in 0.75 0.85 0.95
-    do
-      for concept_fraction in 0.25 0.5 1
-      do
+    for concept_accuracy in 0.75 0.85 0.95; do
+      for concept_fraction in 0.25 0.5 1; do
         case "$concept_accuracy" in
-          0.75) tmux_target="perfect_perfect_concepts" ;;
-          0.85) tmux_target="perfect_random" ;;
-          0.95) tmux_target="perfect_entropy" ;;
-          *) echo "Unknown concept_accuracy $concept_accuracy"; exit 1 ;;
+          0.75) idx=1 ;;
+          0.85) idx=2 ;;
+          0.95) idx=3 ;;
         esac
+        tmux_target="perfect_pong_boxing_${idx}_seed${seed}"
 
-        num_concepts_selected=$(printf "%.0f" \
-          $(echo "${num_concepts[$env]} * ${concept_fraction}" | bc))
+        num_concepts_selected=$(printf "%.0f" $(echo "${num_concepts[$env]} * ${concept_fraction}" | bc))
 
         tmux send-keys -t "$tmux_target" \
           "conda activate ${environment}; python -u only_multiple.py \
@@ -88,24 +122,64 @@ do
           --out_folder imperfect >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
       done
     done
-  done 
+  done
+  env=mini_grid
+  for concept_accuracy in 0.75 0.85 0.95; do
+    for training_ts in 250000 500000 750000 1000000; do
 
+      case "$concept_accuracy" in
+        0.75) idx=1 ;;
+        0.85) idx=2 ;;
+        0.95) idx=3 ;;
+      esac
+
+      tmux_target="perfect_mini_grid_cart_pole_glucose_${idx}_seed${seed}"
+
+      tmux send-keys -t "$tmux_target" \
+        "conda activate ${environment}; python -u only_multiple.py \
+        --seed ${seed} \
+        --environment_string ${env} \
+        --training_timesteps ${training_ts} \
+        --gold_timesteps ${gold_timesteps[$env]} \
+        --num_concepts_selected ${num_concepts[$env]} \
+        --concept_accuracy ${concept_accuracy} \
+        --out_folder imperfect >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
+
+    done
+  done
+
+
+
+  ############################################################
+  #  NEW EXPERIMENT BLOCK 2:
+  #  MiniGrid — vary num_concepts_selected × training_timesteps, fix concept_accuracy=0.95
+  ############################################################
   # env=mini_grid
-  # for concept_accuracy in 0.75 0.85 0.95
-  # do
-  #   for training_ts in 250000 500000 750000 1000000
-  #   do
-  #     tmux send-keys -t perfect_greedy "conda activate ${environment}; python -u only_multiple.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_ts} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts[$env]} --concept_accuracy ${concept_accuracy} --out_folder imperfect >> ../../runs/logs/error_perfect_greedy.txt 2>&1" ENTER
-  #   done
-  # done
+  # for concept_fraction in 0.25 0.5 1; do
 
-  # # # Mini Grid - vary num_concepts_selected and training_timesteps (fix concept_accuracy=0.95)
-  # for concept_fraction in 0.25 0.5 1
-  # do
   #   num_concepts_selected=$(printf "%.0f" $(echo "${num_concepts[$env]} * ${concept_fraction}" | bc))
-  #   for training_ts in 250000 500000 750000 1000000
-  #   do
-  #     tmux send-keys -t perfect_lp "conda activate ${environment}; python -u only_multiple.py --seed ${seed} --environment_string ${env} --training_timesteps ${training_ts} --gold_timesteps ${gold_timesteps[$env]} --num_concepts_selected ${num_concepts_selected} --concept_accuracy 0.95 --out_folder imperfect >> ../../runs/logs/error_perfect_lp.txt 2>&1" ENTER
+
+  #   for training_ts in 250000 500000 750000 1000000; do
+
+  #     case "$concept_fraction" in
+  #       0.25) idx=1 ;;
+  #       0.5) idx=2 ;;
+  #       1) idx=3 ;;
+  #     esac
+
+  #     tmux_target="perfect_mini_grid_cart_pole_glucose_${idx}_seed${seed}"
+
+  #     tmux send-keys -t "$tmux_target" \
+  #       "conda activate ${environment}; python -u only_multiple.py \
+  #       --seed ${seed} \
+  #       --environment_string ${env} \
+  #       --training_timesteps ${training_ts} \
+  #       --gold_timesteps ${gold_timesteps[$env]} \
+  #       --num_concepts_selected ${num_concepts_selected} \
+  #       --concept_accuracy 0.95 \
+  #       --out_folder imperfect >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
+
   #   done
   # done
+  
 done
