@@ -194,20 +194,23 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
         raw_obs = info_i.get("observation", obs[i])
 
         # ensure torch tensor with correct shape (always at least 1 batch dim)
-        actual_obs = torch.as_tensor(raw_obs)
-        if actual_obs.ndim == 1:
-            actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
-            actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
-        elif actual_obs.ndim == 2:
-            actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
+        # actual_obs = torch.as_tensor(raw_obs)
+        # if actual_obs.ndim == 1:
+        #     actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
+        #     actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
+        # elif actual_obs.ndim == 2:
+        #     actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
 
+        
         # compute concepts
         concept_values = []
         for c in concept_list:
-            concept_values.append(c(actual_obs).squeeze(0))  # each concept returns a scalar/tensor
+                concept_values.append(c(raw_obs))
+        concepts[i] = concept_values 
 
-        # convert once to numpy
-        concepts[i] = torch.stack(concept_values).cpu().numpy()
+        # for c in concept_list:
+        #     concept_values.append(c(actual_obs).squeeze(0))  # each concept returns a scalar/tensor
+        # concepts[i] = torch.stack(concept_values).cpu().numpy()
 
     print("Starting stable training for sparse rewards...")
     
@@ -241,21 +244,19 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
             raw_obs = info_i.get("observation", next_obs[i])
 
             # ensure torch tensor with correct shape (always at least 1 batch dim)
-            actual_obs = torch.as_tensor(raw_obs)
-            if actual_obs.ndim == 1:
-                actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
-                actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
-            elif actual_obs.ndim == 2:
-                actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
+            # actual_obs = torch.as_tensor(raw_obs)
+            # if actual_obs.ndim == 1:
+            #     actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
+            #     actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
+            # elif actual_obs.ndim == 2:
+            #     actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
 
 
             # compute concepts
             concept_values = []
             for c in concept_list:
-                concept_values.append(c(actual_obs).squeeze(0))  # each concept returns a scalar/tensor
-
-            # convert once to numpy
-            next_concepts[i] = torch.stack(concept_values).cpu().numpy()
+                    concept_values.append(c(raw_obs))
+            next_concepts[i] = concept_values 
         episode_reward_sums += rewards
 
         # Store experiences and track rewards

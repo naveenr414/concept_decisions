@@ -290,7 +290,6 @@ def collect_cartpole_data(ground_truth_gym_env, groundtruth_model, concept_list,
     Y_data = []
     
     print(f"Collecting data from {num_episodes} episodes...")
-    wrapped_concepts = [wrap_concept_fn(c) for c in concept_list]
 
     for episode in range(num_episodes):
         # Use gold model every 20th episode for better data
@@ -301,7 +300,7 @@ def collect_cartpole_data(ground_truth_gym_env, groundtruth_model, concept_list,
         step_count = 0
 
         for i in range(max_episode_length):        
-            concepts = [[c(info[i]['observation']) for c in wrapped_concepts] for i in range(len(info)) if not done[i]]
+            concepts = [[c(info[i]['observation']) for c in concept_list] for i in range(len(info)) if not done[i]]
             actions = [ground_truth_gym_env.action_space.sample() for _ in range(len(concepts))]
             if use_gold_this_episode:
                 actions = groundtruth_model.predict(obs)[0] 
@@ -393,9 +392,8 @@ def train_concept_predictor(ground_truth_gym_env, groundtruth_model, concept_lis
                                            use_gold=True,max_episode_length=max_episode_length)
     
     # Process concepts
-    wrapped_concepts = [wrap_concept_fn(c) for c in concept_list]
 
-    Y_data = [[c(i) for c in wrapped_concepts] for i in Y_data] 
+    Y_data = [[c(i) for c in concept_list] for i in Y_data] 
     Y_data = np.array(Y_data, dtype=np.float32)[:, idx]  # Use float32 explicitly
     
     print(f"X_data shape: {X_data.shape}, dtype: {X_data.dtype}")
@@ -543,23 +541,6 @@ def train_concept_predictor(ground_truth_gym_env, groundtruth_model, concept_lis
     
     return model, acc_list
 
-def wrap_concept_fn(fn):
-    def wrapped(raw_obs):
-        # Convert raw obs to tensor
-        x = torch.as_tensor(raw_obs)
-
-        # Ensure shape (1, 1, obs_dim)
-        if x.ndim == 1:
-            x = x.unsqueeze(0).unsqueeze(0)
-        elif x.ndim == 2:
-            x = x.unsqueeze(0)
-
-        out = fn(x)
-
-        # Remove the extra batch dims so you get a scalar again
-        return out.squeeze()
-    return wrapped
-
 
 def evaluate_concept_predictor(
     concept_predictor,
@@ -600,8 +581,7 @@ def evaluate_concept_predictor(
     )
     
     # Process concepts
-    wrapped_concepts = [wrap_concept_fn(c) for c in concept_list]
-    Y_data = [[c(i) for c in wrapped_concepts] for i in Y_data]
+    Y_data = [[c(i) for c in concept_list] for i in Y_data]
     Y_data = np.array(Y_data, dtype=np.float32)
     
     print(f"Evaluation data - X shape: {X_data.shape}, Y shape: {Y_data.shape}")
