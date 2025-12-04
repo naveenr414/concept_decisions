@@ -101,7 +101,7 @@ if is_main:
 # Perfect Concepts 
 if is_main and method == 'perfect_concepts':    
     two_stage_env, two_stage_gym_env = get_environment(environment_string,concept_list,seed,processed_concepts=processed_concepts,concept_idx=list(range(len(concept_list))))
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_perfect_concepts".format(environment_string))    
+    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_perfect_concepts_{}".format(environment_string,seed))    
     all_concept_model_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
     results['perfect_concepts'] = {'reward': all_concept_model_reward, 'concepts': list(range(len(concept_list)))}
 
@@ -109,7 +109,7 @@ if is_main and method == 'perfect_concepts':
 if is_main and method == 'random': 
     subset_concept, idx = random_selection(concept_list,num_concepts_selected)
     two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,processed_concepts=processed_concepts,concept_idx=idx)
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_perfect_random".format(environment_string))    
+    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_perfect_random_{}".format(environment_string,seed))    
     all_concept_model_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
     results['random'] = {'reward': all_concept_model_reward, 'concepts': idx}
 
@@ -118,7 +118,7 @@ if is_main and method == 'entropy':
     subset_concept, idx = basic_greedy_selection(concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary")
     idx = idx.tolist()
     two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,processed_concepts=processed_concepts,concept_idx=idx)
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_perfect_entropy".format(environment_string))    
+    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_perfect_entropy_{}".format(environment_string,seed))    
     all_concept_model_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
     results['entropy'] = {'reward': all_concept_model_reward, 'concepts': idx}
 
@@ -126,7 +126,7 @@ if is_main and method == 'entropy':
 if is_main and method == 'greedy':
     subset_concept, idx = greedy_selection(concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary")
     two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,processed_concepts=processed_concepts,concept_idx=idx)
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_perfect_greedy".format(environment_string))    
+    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_perfect_greedy_{}".format(environment_string,seed))    
     greedy_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
     results['greedy'] = {'reward': greedy_two_stage_reward, 'concepts': idx}
 
@@ -134,7 +134,7 @@ if is_main and method == 'greedy':
 if is_main and method == 'lp':
     subset_concept, idx = lp_based_selection(ground_truth_env,concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary")
     two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,processed_concepts=processed_concepts,concept_idx=idx)
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_perfect_lp".format(environment_string))    
+    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_perfect_lp_{}".format(environment_string,seed))    
     lp_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
     results['lp'] = {'reward': lp_two_stage_reward, 'concepts': idx}
 

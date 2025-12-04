@@ -206,7 +206,7 @@ def get_n_atari_env(n_envs,atari_env_name,use_concepts,recordable=False,num_stac
     else:
         vec_env = SubprocVecEnv([
             lambda seed=i: safe_make_env(seed=seed)
-            for i in range(4)
+            for i in range(8)
         ], start_method='spawn')
     return vec_env
 
@@ -248,7 +248,7 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
                     ),get_raw_state_cartpole)
             return env 
         if concept_list is None or use_processed:
-            vec_env = SubprocVecEnv([make_env for _ in range(4)])
+            vec_env = SubprocVecEnv([make_env for _ in range(8)])
         else:
             vec_env = DummyVecEnv([make_env for _ in range(num_envs)])
     elif environment_string == "glucose":
@@ -270,7 +270,7 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
                     ),get_raw_state_glucose)
 
             return env 
-        vec_env = SubprocVecEnv([make_env for i in range(4)])
+        vec_env = SubprocVecEnv([make_env for i in range(8)])
     elif environment_string  == "mini_grid":
         num_stack = 1
         
@@ -302,7 +302,7 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
             return env
         
         if concept_list is None or use_processed:
-            vec_env = SubprocVecEnv([make_env for _ in range(4)])
+            vec_env = SubprocVecEnv([make_env for _ in range(8)])
         else:
             vec_env = DummyVecEnv([make_env for _ in range(num_envs)])
 

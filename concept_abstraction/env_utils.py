@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import random
+from collections import Counter
 
 
 
@@ -170,7 +171,7 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
     # Create stable TD learner
     td_learner = TDQLearning(state_dim, action_dim, lr=learning_rate, gamma=gamma, epsilon=epsilon)
 
-    all_state_actions = set()
+    all_state_actions = []
     losses = []
     episode_rewards = []
 
@@ -192,25 +193,12 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
 
         # use obs[i] by default; override if info has 'observation'
         raw_obs = info_i.get("observation", obs[i])
-
-        # ensure torch tensor with correct shape (always at least 1 batch dim)
-        # actual_obs = torch.as_tensor(raw_obs)
-        # if actual_obs.ndim == 1:
-        #     actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
-        #     actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
-        # elif actual_obs.ndim == 2:
-        #     actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
-
         
         # compute concepts
         concept_values = []
         for c in concept_list:
                 concept_values.append(c(raw_obs))
         concepts[i] = concept_values 
-
-        # for c in concept_list:
-        #     concept_values.append(c(actual_obs).squeeze(0))  # each concept returns a scalar/tensor
-        # concepts[i] = torch.stack(concept_values).cpu().numpy()
 
     print("Starting stable training for sparse rewards...")
     
@@ -228,7 +216,7 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
         if use_random:
             actions = [env.action_space.sample() for i in range(num_envs)]
         for i in range(num_envs):
-            all_state_actions.add((tuple(concepts[i]), actions[i]))
+            all_state_actions.append((tuple(concepts[i])))
         
         # Step the environment
         next_obs, rewards, terms, truncs, infos = env.step(actions)
@@ -242,15 +230,6 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
 
             # use obs[i] by default; override if info has 'observation'
             raw_obs = info_i.get("observation", next_obs[i])
-
-            # ensure torch tensor with correct shape (always at least 1 batch dim)
-            # actual_obs = torch.as_tensor(raw_obs)
-            # if actual_obs.ndim == 1:
-            #     actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
-            #     actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
-            # elif actual_obs.ndim == 2:
-            #     actual_obs = actual_obs.unsqueeze(0)   # (1, obs_dim)
-
 
             # compute concepts
             concept_values = []
@@ -303,7 +282,6 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
         # Gradual epsilon decay
         if steps % 20*num_envs == 0:
             td_learner.decay_epsilon()
-
     # Conservative final training
     print("\n" + "="*50)
     print("Final training phase...")
@@ -318,11 +296,14 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
     print("\n" + "="*50)
     print("Collecting Q-value estimates...")
     print("="*50)
+    all_actions = set([env.action_space.sample() for i in range(100)])
+
     q_estimate_list = []
-    for state_tuple, action in all_state_actions:
+    for state_tuple in all_state_actions:
         state_array = np.array(state_tuple)
-        q_value = td_learner.get_q_value(state_array, action)
-        q_estimate_list.append((state_array, action, q_value))
+        for action in all_actions:
+            q_value = td_learner.get_q_value(state_array, action)
+            q_estimate_list.append((state_array, action, q_value))
 
     # Final statistics
     final_avg_reward = np.mean(episode_rewards[-25:]) if len(episode_rewards) >= 25 else np.mean(episode_rewards) if episode_rewards else 0
@@ -340,7 +321,7 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
     print("="*50 + "\n")
 
     if get_td_learner:
-        return td_learner 
+        return td_learner, all_state_actions
     else:
         return q_estimate_list
 def rollout_pi_estimates(model, env, concept_list, num_rollouts=200, max_steps=2500,mimic=False):

@@ -5,3 +5,4 @@ data/
 runs/
 models/
 scripts/notebooks/wandb
+scripts/notebooks/sanity_checks/wandb/

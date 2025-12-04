@@ -7,7 +7,8 @@ SEEDS=(42 43 44)
 GPU_MAP=(0 2 3)  # 3 GPUs
 
 # Define tmux groups (session “types”)
-SESSION_GROUPS_PONG_BOXING=(perfect_pong_boxing)
+SESSION_GROUPS_PONG=(perfect_pong)
+SESSION_GROUPS_BOXING=(perfect_boxing)
 SESSION_GROUPS_MINI_CART_GLUC=(perfect_mini_grid_cart_pole_glucose)
 
 environment=food
@@ -56,10 +57,17 @@ for idx in "${!SEEDS[@]}"; do
 
   # Pong/Boxing sessions
   for i in {1..3}; do
-    session_name="${SESSION_GROUPS_PONG_BOXING[0]}_${i}_seed${seed}"
+    session_name="${SESSION_GROUPS_PONG[0]}_${i}_seed${seed}"
     setup_tmux_session "$session_name" "$gpu"
     : > "runs/logs/error_${session_name}.txt"
   done
+
+  for i in {1..3}; do
+    session_name="${SESSION_GROUPS_BOXING[0]}_${i}_seed${seed}"
+    setup_tmux_session "$session_name" "$gpu"
+    : > "runs/logs/error_${session_name}.txt"
+  done
+
 
   # MiniGrid/CartPole/Glucose sessions
   for i in {1..3}; do
@@ -72,7 +80,7 @@ done
 # Run experiments for each seed
 for seed in "${SEEDS[@]}"; do
   # MiniGrid / CartPole / Glucose
-  for env in mini_grid cart_pole glucose
+  for env in glucose # mini_grid cart_pole
   do
     for concept_accuracy in 0.75 0.85 0.95; do
       for concept_fraction in 0.25 0.5 1; do
@@ -99,7 +107,7 @@ for seed in "${SEEDS[@]}"; do
   done
 
   # Pong / Boxing
-  for env in pong boxing
+  for env in pong
   do 
     for concept_accuracy in 0.75 0.85 0.95; do
       for concept_fraction in 0.25 0.5 1; do
@@ -108,7 +116,7 @@ for seed in "${SEEDS[@]}"; do
           0.85) idx=2 ;;
           0.95) idx=3 ;;
         esac
-        tmux_target="perfect_pong_boxing_${idx}_seed${seed}"
+        tmux_target="perfect_pong_${idx}_seed${seed}"
 
         num_concepts_selected=$(printf "%.0f" $(echo "${num_concepts[$env]} * ${concept_fraction}" | bc))
 
@@ -125,59 +133,86 @@ for seed in "${SEEDS[@]}"; do
     done
   done
 
-  env=mini_grid
-  for concept_accuracy in 0.75 0.85 0.95; do
-    for training_ts in 250000 500000 750000 1000000; do
+  for env in boxing
+  do 
+    for concept_accuracy in 0.75 0.85 0.95; do
+      for concept_fraction in 0.25 0.5 1; do
+        case "$concept_accuracy" in
+          0.75) idx=1 ;;
+          0.85) idx=2 ;;
+          0.95) idx=3 ;;
+        esac
+        tmux_target="perfect_boxing_${idx}_seed${seed}"
 
-      case "$concept_accuracy" in
-        0.75) idx=1 ;;
-        0.85) idx=2 ;;
-        0.95) idx=3 ;;
-      esac
+        num_concepts_selected=$(printf "%.0f" $(echo "${num_concepts[$env]} * ${concept_fraction}" | bc))
 
-      tmux_target="perfect_mini_grid_cart_pole_glucose_${idx}_seed${seed}"
-
-      tmux send-keys -t "$tmux_target" \
-        "conda activate ${environment}; python -u only_multiple.py \
-        --seed ${seed} \
-        --environment_string ${env} \
-        --training_timesteps ${training_ts} \
-        --gold_timesteps ${gold_timesteps[$env]} \
-        --num_concepts_selected ${num_concepts[$env]} \
-        --concept_accuracy ${concept_accuracy} \
-        --out_folder imperfect >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
-
+        tmux send-keys -t "$tmux_target" \
+          "conda activate ${environment}; python -u only_multiple.py \
+          --seed ${seed} \
+          --environment_string ${env} \
+          --training_timesteps ${training_timesteps[$env]} \
+          --gold_timesteps ${gold_timesteps[$env]} \
+          --num_concepts_selected ${num_concepts_selected} \
+          --concept_accuracy ${concept_accuracy} \
+          --out_folder imperfect >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
+      done
     done
   done
 
 
+  # env=mini_grid
+  # for concept_accuracy in 0.75 0.85 0.95; do
+  #   for training_ts in 250000 500000 750000 1000000; do
 
-  env=mini_grid
-  for concept_fraction in 0.25 0.5 1; do
+  #     case "$concept_accuracy" in
+  #       0.75) idx=1 ;;
+  #       0.85) idx=2 ;;
+  #       0.95) idx=3 ;;
+  #     esac
 
-    num_concepts_selected=$(printf "%.0f" $(echo "${num_concepts[$env]} * ${concept_fraction}" | bc))
+  #     tmux_target="perfect_mini_grid_cart_pole_glucose_${idx}_seed${seed}"
 
-    for training_ts in 250000 500000 750000 1000000; do
+  #     tmux send-keys -t "$tmux_target" \
+  #       "conda activate ${environment}; python -u only_multiple.py \
+  #       --seed ${seed} \
+  #       --environment_string ${env} \
+  #       --training_timesteps ${training_ts} \
+  #       --gold_timesteps ${gold_timesteps[$env]} \
+  #       --num_concepts_selected ${num_concepts[$env]} \
+  #       --concept_accuracy ${concept_accuracy} \
+  #       --out_folder imperfect >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
 
-      case "$concept_fraction" in
-        0.25) idx=1 ;;
-        0.5) idx=2 ;;
-        1) idx=3 ;;
-      esac
+  #   done
+  # done
 
-      tmux_target="perfect_mini_grid_cart_pole_glucose_${idx}_seed${seed}"
 
-      tmux send-keys -t "$tmux_target" \
-        "conda activate ${environment}; python -u only_multiple.py \
-        --seed ${seed} \
-        --environment_string ${env} \
-        --training_timesteps ${training_ts} \
-        --gold_timesteps ${gold_timesteps[$env]} \
-        --num_concepts_selected ${num_concepts_selected} \
-        --concept_accuracy 0.95 \
-        --out_folder imperfect >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
 
-    done
-  done
+  # env=mini_grid
+  # for concept_fraction in 0.25 0.5 1; do
+
+  #   num_concepts_selected=$(printf "%.0f" $(echo "${num_concepts[$env]} * ${concept_fraction}" | bc))
+
+  #   for training_ts in 250000 500000 750000 1000000; do
+
+  #     case "$concept_fraction" in
+  #       0.25) idx=1 ;;
+  #       0.5) idx=2 ;;
+  #       1) idx=3 ;;
+  #     esac
+
+  #     tmux_target="perfect_mini_grid_cart_pole_glucose_${idx}_seed${seed}"
+
+  #     tmux send-keys -t "$tmux_target" \
+  #       "conda activate ${environment}; python -u only_multiple.py \
+  #       --seed ${seed} \
+  #       --environment_string ${env} \
+  #       --training_timesteps ${training_ts} \
+  #       --gold_timesteps ${gold_timesteps[$env]} \
+  #       --num_concepts_selected ${num_concepts_selected} \
+  #       --concept_accuracy 0.95 \
+  #       --out_folder imperfect >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
+
+  #   done
+  # done
   
 done

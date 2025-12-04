@@ -317,7 +317,9 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
             which we are trying to distill
         selection_function: String, whether we're selecting according to 
             Q value, etc."""
-    
+    q_estimates = [(tuple(q_estimates[i][0]),q_estimates[i][1],q_estimates[i][2]) for i in range(len(q_estimates))]
+    q_estimates = list(set(q_estimates))
+
     unique_actions = list(set([int(i[1]) for i in q_estimates]))
     actions = np.array([i[1] for i in q_estimates])
 
@@ -336,11 +338,15 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
         seen = set()
         for a in unique_actions:
             relevant_idx = np.where(actions == a)[0]
+            relevant_q = q_values[relevant_idx]
+            
             if len(relevant_idx) <= 500:
                 relevant_low = relevant_high = relevant_idx
             else:
-                relevant_low = np.argsort(np.abs(q_values))[:500]
-                relevant_high = np.argsort(np.abs(q_values))[-500:]
+                # Sort within this action only
+                sorted_within_action = np.argsort(relevant_q)
+                relevant_low = relevant_idx[sorted_within_action[:500]]
+                relevant_high = relevant_idx[sorted_within_action[-500:]]
             for low_idx in relevant_low:
                 for high_idx in relevant_high:
                     diff = abs(q_values[low_idx] - q_values[high_idx])
@@ -350,11 +356,11 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
                     if diffs not in seen and diffs != ():
                         seen.add(diffs)
                         final_vals.append(tup)
-        if len(final_vals) > 50_000:
-            final_vals = random.sample(final_vals,50_000)
-
+        if len(final_vals) > 100_000:
+            final_vals = random.sample(final_vals,100_000)
         final_vals = sorted(final_vals,reverse=True)
-        idx, _ = max_prefix_gurobi(final_vals,num_concepts_selected)
+        idx, num_covered = max_prefix_gurobi(final_vals,num_concepts_selected)
+        print("{} covered out of {}".format(num_covered,len(final_vals)))
         concepts = [concept_list[i] for i in idx]
     elif selection_function == "policy":
         sample_by_action = []

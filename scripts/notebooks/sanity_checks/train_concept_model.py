@@ -52,14 +52,14 @@ if is_main:
 # ### Basic Setup
 
 if is_main:
-    ground_truth_env, ground_truth_gym_env, additional_info = get_environment(environment_string, None, seed)   
-    concept_list = get_concepts(environment_string,"human_selected_binary",seed)
+    ground_truth_env, ground_truth_gym_env = get_environment(environment_string, None, seed)   
+    concept_list, processed_concepts = get_concepts(environment_string,"human_selected_binary",seed)
     num_concepts_selected = len(concept_list)
 
 if is_main:
-    env, eval_env, additional_info = get_environment(environment_string,concept_list,seed)    
+    env, eval_env = get_environment(environment_string,concept_list,seed,processed_concepts=processed_concepts,concept_idx=list(range(len(concept_list))))    
     custom_params = {}
 
     model = train_ppo_model(env,environment_string,total_timesteps=training_timesteps,policy="MlpPolicy",custom_name="{}_all_concepts".format(environment_string),override=custom_params)
-    random_selection_reward = evaluate_model(environment_string,eval_env,additional_info,model,seed)
+    random_selection_reward = evaluate_model(environment_string,eval_env,model,seed)
     print("Random Selection:",random_selection_reward)

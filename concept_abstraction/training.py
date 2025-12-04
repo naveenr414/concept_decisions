@@ -124,9 +124,10 @@ def get_model(environment_string,policy,override={}):
         elif environment_string == "cart_pole":
             default_model_dict['policy_kwargs'] = {'net_arch': [128,128]}
             default_model_dict['batch_size'] = 512
+            default_model_dict['n_steps'] = 512
             default_model_dict['n_epochs'] = 10
             default_model_dict['ent_coef'] = 0.01
-            default_model_dict['learning_rate'] = 2.5e-4
+            default_model_dict['learning_rate'] = 3e-4
         elif environment_string == "mini_grid":
             default_model_dict['learning_rate'] = 3e-4
             default_model_dict['n_steps'] = 1024
