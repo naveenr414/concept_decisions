@@ -17,6 +17,7 @@ from collections import defaultdict, Counter
 from sklearn.feature_selection import mutual_info_regression
 import math 
 import time 
+import copy 
 
 def random_selection(concept_list,num_concepts):
     """Randomly select {num_concepts} from env.concepts
@@ -303,6 +304,136 @@ def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True,as_float=F
     max_prefix_len = sum(1 for i in range(n) if y[i].X > 0.5)
     return selected_elements, max_prefix_len
 
+def policy_coverage_selection_exp_lp(
+    ground_truth_gym_env,
+    concept_list,
+    acc_list,
+    num_concepts_selected,
+    groundtruth_model,
+    num_pairs_lp=20_000,
+    rollout_steps=1000,
+    relax_x=False,
+):
+    rng = np.random.default_rng()
+
+    # --------------------------------------------------
+    # Rollout data collection
+    # --------------------------------------------------
+    all_obs = []
+    all_actions = []
+
+    obs, info = ground_truth_gym_env.reset()
+    for _ in range(rollout_steps):
+        actions = groundtruth_model.predict(obs)[0]
+        for j in range(len(actions)):
+            all_obs.append([c(info[j]['observation']) for c in concept_list])
+            all_actions.append(actions[j])
+        obs, _, _, _, info = ground_truth_gym_env.step(actions)
+
+    all_obs = np.asarray(all_obs, dtype=np.int8)
+    all_actions = np.asarray(all_actions)
+
+    N, K = all_obs.shape
+
+    # --------------------------------------------------
+    # Sample cross-action pairs
+    # --------------------------------------------------
+    idx_i = rng.integers(0, N, size=5 * num_pairs_lp)
+    idx_j = rng.integers(0, N, size=5 * num_pairs_lp)
+
+    valid = all_actions[idx_i] != all_actions[idx_j]
+    idx_i = idx_i[valid][:num_pairs_lp]
+    idx_j = idx_j[valid][:num_pairs_lp]
+
+    if len(idx_i) == 0:
+        raise ValueError("No cross-action pairs sampled")
+
+    disagreement = (all_obs[idx_i] != all_obs[idx_j]).astype(np.int8)
+    M = disagreement.shape[0]
+
+    # --------------------------------------------------
+    # Precompute weights
+    # --------------------------------------------------
+    w = np.array([-math.log(max(1e-12, 1.0 - acc_list[d])) for d in range(K)])
+
+    # Identify used concepts (sparsity)
+    used_concepts = np.where(disagreement.sum(axis=0) > 0)[0]
+
+    # --------------------------------------------------
+    # PWL range estimation
+    # --------------------------------------------------
+    max_t = max(
+        sum(w[d] for d in np.where(disagreement[p])[0])
+        for p in range(M)
+        if disagreement[p].any()
+    )
+    min_z = -max_t
+
+    if min_z < -10:
+        breakpoints = [min_z, -8, -6, -4, -2, 0]
+    else:
+        breakpoints = [min_z, min_z / 2, -2, -1, 0]
+
+    exp_vals = [math.exp(z) for z in breakpoints]
+
+    # --------------------------------------------------
+    # Build Gurobi model
+    # --------------------------------------------------
+    model = gp.Model("stochastic_max_coverage")
+    model.Params.OutputFlag = 0
+    model.Params.Presolve = 2
+    model.Params.MIPFocus = 1
+    model.Params.Cuts = 2
+
+    vtype = GRB.CONTINUOUS if relax_x else GRB.BINARY
+    x = model.addVars(used_concepts, lb=0, ub=1, vtype=vtype, name="x")
+
+    z = model.addVars(M, lb=min_z, ub=0, vtype=GRB.CONTINUOUS, name="z")
+    u = model.addVars(M, lb=math.exp(min_z), ub=1.0, vtype=GRB.CONTINUOUS, name="u")
+    y = model.addVars(M, lb=0.0, ub=1.0, vtype=GRB.CONTINUOUS, name="y")
+
+    model.update()
+
+    # z_p = -sum_d A[p,d] w_d x_d
+    for p in range(M):
+        D = np.where(disagreement[p])[0]
+        if len(D) > 0:
+            model.addConstr(
+                z[p] == -gp.quicksum(w[d] * x[d] for d in D if d in x),
+                name=f"zdef_{p}",
+            )
+        else:
+            model.addConstr(z[p] == 0.0)
+
+        model.addGenConstrPWL(z[p], u[p], breakpoints, exp_vals, name=f"exp_{p}")
+        model.addConstr(y[p] == 1 - u[p], name=f"ydef_{p}")
+
+    # Budget
+    model.addConstr(gp.quicksum(x[d] for d in x) == num_concepts_selected)
+
+    # Objective
+    model.setObjective(gp.quicksum(y[p] for p in range(M)), GRB.MAXIMIZE)
+
+    model.optimize()
+
+    # --------------------------------------------------
+    # Extract solution
+    # --------------------------------------------------
+    if model.SolCount == 0:
+        raise RuntimeError("No solution found")
+
+    x_vals = np.zeros(K)
+    for d in x:
+        x_vals[d] = x[d].X
+
+    # Enforce exactly k selections
+    selected = np.argsort(x_vals)[-num_concepts_selected:].tolist()
+    selected = list(sorted(selected))
+
+    subset_concepts = [concept_list[i] for i in selected]
+
+    return subset_concepts, selected
+
 def lp_based_selection(env,concept_list,num_concepts_selected,selection_function,q_estimates,concept_source):
     """Select {num_concepts} greedily
         by first learning the Q(s,a) values from a rollout
@@ -317,9 +448,6 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
             which we are trying to distill
         selection_function: String, whether we're selecting according to 
             Q value, etc."""
-    q_estimates = [(tuple(q_estimates[i][0]),q_estimates[i][1],q_estimates[i][2]) for i in range(len(q_estimates))]
-    q_estimates = list(set(q_estimates))
-
     unique_actions = list(set([int(i[1]) for i in q_estimates]))
     actions = np.array([i[1] for i in q_estimates])
 
@@ -356,10 +484,11 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
                     if diffs not in seen and diffs != ():
                         seen.add(diffs)
                         final_vals.append(tup)
-        if len(final_vals) > 100_000:
-            final_vals = random.sample(final_vals,100_000)
         final_vals = sorted(final_vals,reverse=True)
+        if len(final_vals) > 250_000:
+            final_vals = final_vals[:250_000]
         idx, num_covered = max_prefix_gurobi(final_vals,num_concepts_selected)
+        print("Idx {}".format(idx))
         print("{} covered out of {}".format(num_covered,len(final_vals)))
         concepts = [concept_list[i] for i in idx]
     elif selection_function == "policy":
@@ -393,6 +522,319 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
         return [concept_list[0]],[0]
 
     return concepts, idx
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import numpy as np
+
+class ValueNet(nn.Module):
+    def __init__(self, obs_dim, hidden_sizes=(64,64)):
+        super().__init__()
+        layers = []
+        last_dim = obs_dim
+        for h in hidden_sizes:
+            layers.append(nn.Linear(last_dim, h))
+            layers.append(nn.ReLU())
+            last_dim = h
+        layers.append(nn.Linear(last_dim, 1))
+        self.net = nn.Sequential(*layers)
+        
+        # Initialize final layer with small weights for stability
+        nn.init.orthogonal_(self.net[-1].weight, gain=0.01)
+        nn.init.constant_(self.net[-1].bias, 0.0)
+    
+    def forward(self, obs):
+        # obs: (batch, obs_dim)
+        return self.net(obs).squeeze(-1)
+
+
+class SimpleMCTrainer:
+    def __init__(self, value_net, env, policy, concept_list, gamma=0.995, lr=1e-4, device='cpu'):
+        self.value_net = value_net.to(device)
+        self.env = env
+        self.policy = policy
+        self.gamma = gamma
+        self.device = device
+        self.optimizer = optim.Adam(self.value_net.parameters(), lr=lr)
+        self.loss_fn = nn.MSELoss()
+        self.concept_list = concept_list
+
+    def run_rollouts(self, num_episodes=50):
+        """Collect data from multiple episodes."""
+        obs_list, returns_list = [], []
+        num_envs = 8
+
+        for ep in range(num_episodes):
+            print(f"Episode {ep+1}")
+            obs, infos = self.env.reset()
+            obs, _, _, _, infos = self.env.step([1 for i in range(8)])
+            done = [False] * num_envs
+            rewards = [[] for _ in range(num_envs)]
+            ep_obs = [[] for _ in range(num_envs)]
+
+            while not all(done):
+                for i in range(num_envs):
+                    if not done[i]:
+                        ep_obs[i].append([c(infos[i]['observation']) for c in self.concept_list])
+                action, _ = self.policy.predict(obs, deterministic=False)
+                next_obs, reward, terminated, truncated, infos = self.env.step(action)
+                obs = next_obs
+
+                for i in range(num_envs):
+                    if not done[i]:
+                        rewards[i].append(reward[i])
+                done = [done[i] or terminated[i] or truncated[i] for i in range(num_envs)]
+
+            # Compute discounted returns
+            for i in range(8):
+                G = 0
+                ep_returns = []
+                for r in reversed(rewards[i]):
+                    G = r + self.gamma * G
+                    ep_returns.insert(0, G)
+
+                obs_list.extend(ep_obs[i])
+                returns_list.extend(ep_returns)
+
+        obs_array = np.array(obs_list, dtype=np.float32)
+        returns_array = np.array(returns_list, dtype=np.float32)
+        return obs_array, returns_array
+
+    def train_value_net(self, obs_array, returns_array, batch_size=64, epochs=25):
+        t_obs = torch.as_tensor(obs_array, dtype=torch.float32).to(self.device)
+        t_returns = torch.as_tensor(returns_array, dtype=torch.float32).to(self.device)
+
+        dataset_size = len(t_obs)
+        indices = np.arange(dataset_size)
+
+        self.value_net.train()
+        for _ in range(epochs):
+            np.random.shuffle(indices)
+            for start in range(0, dataset_size, batch_size):
+                end = start + batch_size
+                idx = indices[start:end]
+                batch_x = t_obs[idx]
+                batch_y = t_returns[idx]
+
+                preds = self.value_net(batch_x)
+                loss = self.loss_fn(preds, batch_y)
+
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+    def evaluate(self, num_episodes=20):
+        """
+        Evaluate the value function using vectorized episodes.
+        Compares predicted values for initial states to actual Monte Carlo returns.
+        """
+        self.value_net.eval()
+        predicted, actual = [], []
+
+        num_envs = 8  # number of parallel environments
+        for ep in range(num_episodes):
+            print(f"Episode {ep+1}")
+            obs, infos = self.env.reset()
+            obs, _, _, _, infos = self.env.step([1 for i in range(8)])
+            done = [False] * num_envs
+            rewards = [[] for _ in range(num_envs)]
+            ep_obs = [[] for _ in range(num_envs)]
+
+            while not all(done):
+                for i in range(num_envs):
+                    if not done[i]:
+                        ep_obs[i].append([c(infos[i]['observation']) for c in self.concept_list])
+
+                action, _ = self.policy.predict(obs, deterministic=False)
+                next_obs, reward, terminated, truncated, infos = self.env.step(action)
+                obs = next_obs
+
+                for i in range(num_envs):
+                    if not done[i]:
+                        rewards[i].append(reward[i])
+                done = [done[i] or terminated[i] or truncated[i] for i in range(num_envs)]
+
+            # Compute total discounted return for each env
+            for i in range(num_envs):
+                G = 0
+                for idx,r in enumerate(reversed(rewards[i])):
+                    G = r + self.gamma * G
+                    # Predict value for initial observation
+                    obs_t = torch.as_tensor(np.array(ep_obs[i][-idx], dtype=np.float32)).unsqueeze(0).to(self.device)
+                    pred_val = self.value_net(obs_t).item()
+
+                    predicted.append(pred_val)
+                    actual.append(G)
+        print(np.mean([np.mean(i) for i in rewards]))
+        predicted = np.array(predicted)
+        actual = np.array(actual)
+        correlation = np.corrcoef(predicted, actual)[0, 1]
+
+        print(f"Predicted vs Actual Correlation: {correlation:.3f}")
+        return predicted, actual
+
+
+def policy_coverage_selection(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model):
+    all_observations = []
+    all_actions = []
+    obs, info = ground_truth_gym_env.reset()
+    for i in range(1000):
+        actions = groundtruth_model.predict(obs)[0]
+
+        for j in range(len(actions)):
+            all_observations.append([c(info[j]['observation']) for c in concept_list])
+            all_actions.append(actions[j])
+
+        obs, _, _, _, info = ground_truth_gym_env.step(actions)
+    all_observations = np.array(all_observations)
+    all_actions = np.array(all_actions)
+
+    num_pairs = 200_000
+
+    rng = np.random.default_rng()
+    N, K = all_observations.shape
+
+    idx_i = rng.integers(0, N, size=num_pairs)
+    idx_j = rng.integers(0, N, size=num_pairs)
+
+    valid = all_actions[idx_i] != all_actions[idx_j]
+    idx_i = idx_i[valid]
+    idx_j = idx_j[valid]
+
+    num_pairs = len(idx_i)
+    if num_pairs == 0:
+        raise ValueError("No cross-action pairs sampled.")
+
+    disagreement = all_observations[idx_i] != all_observations[idx_j]
+    disagreement = disagreement.astype(np.bool_)
+
+    selected_dims = []
+    covered = np.zeros(num_pairs, dtype=bool)
+    remaining_dims = set(range(K))
+
+    for step in range(num_concepts_selected):
+        best_dim = None
+        best_gain = -1
+
+        for d in remaining_dims:
+            # marginal gain = newly covered pairs
+            gain = np.sum(disagreement[:, d] & (~covered))
+            if gain > best_gain:
+                best_gain = gain
+                best_dim = d
+
+        if best_gain <= 0:
+            break  # no more improvement possible
+
+        # update state
+        selected_dims.append(best_dim)
+        covered |= disagreement[:, best_dim]
+        remaining_dims.remove(best_dim)
+
+    coverage_ratio = covered.mean()
+    print("Coverage {}".format(coverage_ratio))
+
+    idx = selected_dims
+    subset_concept = [concept_list[i] for i in idx]
+    return subset_concept, idx
+
+def policy_coverage_selection_lp(
+    ground_truth_gym_env,
+    concept_list,
+    num_concepts_selected,
+    groundtruth_model,
+    num_pairs_lp=20_000,
+    rollout_steps=1000,
+):
+    rng = np.random.default_rng()
+
+    # --------------------------------------------------
+    # Collect observations / actions (same as before)
+    # --------------------------------------------------
+    all_observations = []
+    all_actions = []
+
+    obs, info = ground_truth_gym_env.reset()
+    for _ in range(rollout_steps):
+        actions = groundtruth_model.predict(obs)[0]
+        for j in range(len(actions)):
+            all_observations.append([c(info[j]['observation']) for c in concept_list])
+            all_actions.append(actions[j])
+        obs, _, _, _, info = ground_truth_gym_env.step(actions)
+
+    all_observations = np.asarray(all_observations, dtype=np.int8)
+    all_actions = np.asarray(all_actions)
+
+    N, K = all_observations.shape
+
+    # --------------------------------------------------
+    # Sample cross-action pairs
+    # --------------------------------------------------
+    idx_i = rng.integers(0, N, size=5 * num_pairs_lp)
+    idx_j = rng.integers(0, N, size=5 * num_pairs_lp)
+
+    valid = all_actions[idx_i] != all_actions[idx_j]
+    idx_i = idx_i[valid][:num_pairs_lp]
+    idx_j = idx_j[valid][:num_pairs_lp]
+
+    if len(idx_i) == 0:
+        raise ValueError("No cross-action pairs sampled.")
+
+    M = len(idx_i)
+
+    disagreement = (all_observations[idx_i] != all_observations[idx_j]).astype(np.int8)
+
+    # --------------------------------------------------
+    # Build LP in Gurobi
+    # --------------------------------------------------
+    model = gp.Model("max_coverage_lp")
+    model.Params.OutputFlag = 0
+
+    # x_d variables (concept selection)
+    x = model.addVars(K, lb=0.0, ub=1.0, vtype=GRB.BINARY, name="x")
+
+    # y_p variables (pair covered)
+    y = model.addVars(M, lb=0.0, ub=1.0, vtype=GRB.CONTINUOUS, name="y")
+
+    # Coverage constraints: y_p <= sum_d A[p,d] * x_d
+    for p in range(M):
+        model.addConstr(
+            y[p] <= gp.quicksum(disagreement[p, d] * x[d] for d in range(K)),
+            name=f"cover_{p}",
+        )
+
+    # Cardinality constraint
+    model.addConstr(
+        gp.quicksum(x[d] for d in range(K)) <= num_concepts_selected,
+        name="budget",
+    )
+
+    # Objective: maximize covered pairs
+    model.setObjective(gp.quicksum(y[p] for p in range(M)), GRB.MAXIMIZE)
+
+    model.optimize()
+
+    if model.Status not in (GRB.OPTIMAL, GRB.TIME_LIMIT):
+        raise RuntimeError("LP did not solve successfully")
+
+    # --------------------------------------------------
+    # Rounding: take top-k x_d
+    # --------------------------------------------------
+    x_vals = np.array([x[d].X for d in range(K)])
+    print(x_vals)
+    idx = np.argsort(x_vals)[-num_concepts_selected:].tolist()
+    idx = list(sorted(idx))
+
+    subset_concept = [concept_list[i] for i in idx]
+
+    # Optional: compute achieved coverage on LP sample
+    covered = disagreement[:, idx].any(axis=1)
+    coverage_ratio = covered.mean()
+
+    print("Coverage {}".format(coverage_ratio))
+
+    return subset_concept, idx
+
 
 def concept_completeness_selection(env,concept_list,num_concepts_selected,selection_function,q_estimates,concept_source):
     
@@ -541,7 +983,7 @@ def solve_exp_relaxation_constant(final_vals, acc_list, num_concepts_selected,
         model.addConstr(y[i] == 1 - u[i], name=f"ydef_{i}")
     
     # Budget constraint
-    model.addConstr(gp.quicksum(x) <= num_concepts_selected)
+    model.addConstr(gp.quicksum(x) == num_concepts_selected)
     
     # Objective - only sum over active indices
     obj_expr = gp.quicksum(y[i] * final_vals[i][0] for i in active_indices)
@@ -566,6 +1008,113 @@ def solve_exp_relaxation_constant(final_vals, acc_list, num_concepts_selected,
         selected.extend([j for j, _ in fracs[:needed]])
     
     return selected[:num_concepts_selected]
+
+def policy_coverage_selection_lp_advantage(
+    ground_truth_gym_env,
+    concept_list,
+    num_concepts_selected,
+    groundtruth_model,
+    gamma=0.995,
+    num_pairs_lp=20_000,
+    rollout_steps=1000,
+    device="cpu"
+):
+
+    env = ground_truth_gym_env
+
+    policy = groundtruth_model
+    obs_dim = len(concept_list)
+    my_value_net = ValueNet(obs_dim=obs_dim)
+    trainer = SimpleMCTrainer(my_value_net, env, policy, concept_list, gamma=0.995)
+
+    obs_array, returns_array = trainer.run_rollouts()
+
+    trainer.train_value_net(obs_array,returns_array)
+
+    value_net =trainer.value_net  
+
+    rng = np.random.default_rng()
+
+    all_observations = []
+    all_actions = []
+    delta_list_per_state = []
+
+    obs, info = ground_truth_gym_env.reset()
+    print(info)
+    for t in range(rollout_steps):
+        print("On rollout {}".format(t))
+        actions = groundtruth_model.predict(obs)[0]
+        values = []
+        delta_vals = []
+        venv_backup = copy.deepcopy(ground_truth_gym_env.venv)
+        
+        for j in range(len(actions)):
+            a_i = actions[j]
+            all_observations.append(obs[j]) 
+            all_actions.append(a_i)
+        
+        
+        for a_j in range(ground_truth_gym_env.action_space.n):
+            ground_truth_gym_env.venv = deepcopy(venv_backup) 
+            obs_j, reward_j, done_j, _, info_j = ground_truth_gym_env.step([a_j for i in range(8)])
+            V_j = value_net(torch.as_tensor(obs_j, dtype=torch.float32, device=device)).detach().cpu().numpy()
+            r_j = reward_j
+
+            delta_vals.append((r_j + gamma*V_j))
+        # Environments x Actions
+        delta_vals = [sorted(j) for j in np.array(delta_vals).T]
+        ground_truth_gym_env.venv = deepcopy(venv_backup)
+        for j in range(8):
+            delta_list_per_state.append(delta_vals[j][-1]-delta_vals[j][-2])
+        # Step the main env
+        obs, _, _, _, info = ground_truth_gym_env.step(actions)
+
+    all_observations = np.asarray(all_observations, dtype=np.int8)
+    all_actions = np.asarray(all_actions)
+    N, K = all_observations.shape
+
+    # --------------------------------------------------
+    # Sample pairs for LP
+    # --------------------------------------------------
+    idx_i = rng.integers(0, N, size=5 * num_pairs_lp)
+    idx_j = rng.integers(0, N, size=5 * num_pairs_lp)
+    valid = all_actions[idx_i] != all_actions[idx_j]
+    idx_i = idx_i[valid][:num_pairs_lp]
+    idx_j = idx_j[valid][:num_pairs_lp]
+    M = len(idx_i)
+    disagreement = (all_observations[idx_i] != all_observations[idx_j]).astype(np.int8)
+
+    # --------------------------------------------------
+    # Average Δ for each LP pair
+    # --------------------------------------------------
+    delta_array = 0.5 * (np.array([delta_list_per_state[i] for i in idx_i])
+                         + np.array([delta_list_per_state[j] for j in idx_j]))
+
+    # --------------------------------------------------
+    # LP in Gurobi
+    # --------------------------------------------------
+    model = gp.Model("max_coverage_lp_advantage")
+    model.Params.OutputFlag = 0
+    x = model.addVars(K, lb=0.0, ub=1.0, vtype=GRB.BINARY, name="x")
+    y = model.addVars(M, lb=0.0, ub=1.0, vtype=GRB.CONTINUOUS, name="y")
+
+    for p in range(M):
+        model.addConstr(y[p] <= gp.quicksum(disagreement[p, d]*x[d] for d in range(K)), name=f"cover_{p}")
+
+    model.addConstr(gp.quicksum(x[d] for d in range(K)) <= num_concepts_selected, name="budget")
+    model.setObjective(gp.quicksum(delta_array[p]*y[p] for p in range(M)), GRB.MAXIMIZE)
+    model.optimize()
+
+    x_vals = np.array([x[d].X for d in range(K)])
+    idx = np.argsort(x_vals)[-num_concepts_selected:].tolist()
+    subset_concept = [concept_list[i] for i in sorted(idx)]
+
+    covered = disagreement[:, idx].any(axis=1)
+    coverage_ratio = covered.mean()
+    print(f"Coverage: {coverage_ratio}")
+
+    return subset_concept, list(sorted(idx))
+
 def solve_exp_relaxation(final_vals, acc_list, num_concepts_selected, time_limit=10*60):
     """
     Correct exponential surrogate:
@@ -647,7 +1196,7 @@ def solve_exp_relaxation(final_vals, acc_list, num_concepts_selected, time_limit
         model.addConstr(y[i] == 1 - u[i], name=f"ydef_{i}")
     
     # Budget constraint
-    model.addConstr(gp.quicksum(x.values()) <= num_concepts_selected, 
+    model.addConstr(gp.quicksum(x.values()) == num_concepts_selected, 
                     name="budget")
     
     # Objective: maximize sum_i d_i * y_i (only over active indices)
@@ -703,7 +1252,7 @@ def solve_relaxed_union_bound(final_vals, acc_list, num_concepts_selected):
         )
 
     # Budget
-    model.addConstr(gp.quicksum(x[j] for j in range(m)) <= num_concepts_selected)
+    model.addConstr(gp.quicksum(x[j] for j in range(m)) == num_concepts_selected)
 
     # Objective: maximize expected separation weighted by d_i
     model.setObjective(
@@ -1169,7 +1718,7 @@ def lp_selection_supervised_imperfect(train_matrix,labels,num_concepts,accuracie
     
     # Prefix constraints: enforce consecutive coverage
     # y[i] <= y[i-1] for i>0
-    model.addConstr(gp.quicksum(x[i] for i in range(m)) <= num_concepts, name="budget")
+    model.addConstr(gp.quicksum(x[i] for i in range(m)) == num_concepts, name="budget")
     model.addConstr(gp.quicksum(y[i] for i in range(n)) >= fraction_y*n)    
     model.setObjective(gp.quicksum(x[i]*accuracies[i] for i in range(m)), GRB.MAXIMIZE)    
 

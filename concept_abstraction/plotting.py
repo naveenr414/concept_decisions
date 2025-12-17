@@ -488,6 +488,11 @@ def create_legend(fig,ax,plot_dimensions,formatting):
 
     if formatting['type'] == 'is_global':
         handles, labels = ax[0][0].get_legend_handles_labels()
+        if 'extra_handles' in formatting:
+            for h, lbl in formatting['extra_handles']:
+                handles.append(h)
+                labels.append(lbl)
+
         if get_or_none(formatting,'show_point'):
             handles, labels = ax[0][0].get_legend_handles_labels()
             custom_lines = [Line2D([0], [0], color=handles[i].get_color(), linestyle=handles[i].get_linestyle(), marker=markers[i]) for i in range(len(handles))]

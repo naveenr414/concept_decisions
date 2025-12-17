@@ -122,25 +122,27 @@ def get_model(environment_string,policy,override={}):
             default_model_dict['batch_size'] = 256         # if n_steps increased
             default_model_dict['n_epochs'] = 5             # more steps = fewer epochs
         elif environment_string == "cart_pole":
-            default_model_dict['policy_kwargs'] = {'net_arch': [128,128]}
-            default_model_dict['batch_size'] = 512
-            default_model_dict['n_steps'] = 512
+            default_model_dict['policy_kwargs'] = {'net_arch': [64,64]}
+            default_model_dict['batch_size'] = 128
+            default_model_dict['n_steps'] = 256
             default_model_dict['n_epochs'] = 10
-            default_model_dict['ent_coef'] = 0.01
+            default_model_dict['ent_coef'] = 0
             default_model_dict['learning_rate'] = 3e-4
+            default_model_dict['clip_range'] = 0.1
+            default_model_dict['target_kl'] = 0.01
         elif environment_string == "mini_grid":
             default_model_dict['learning_rate'] = 3e-4
             default_model_dict['n_steps'] = 1024
             default_model_dict['batch_size'] = 1024
             default_model_dict['n_epochs'] = 4
         elif environment_string == "pong":
-            default_model_dict['policy_kwargs'] = {'net_arch': [256,256]} # TODO: Cahnge this back to 128x128
+            default_model_dict['policy_kwargs'] = {'net_arch': [128,128]}
             default_model_dict['n_steps'] = 1024
             default_model_dict['batch_size'] = 512
             default_model_dict['n_epochs'] = 10
         elif environment_string == "boxing":
-            default_model_dict['policy_kwargs'] = {'net_arch': [256,256]} # TODO: Cahnge this back to 128x128
-            default_model_dict['n_steps'] = 1024
+            default_model_dict['policy_kwargs'] = {'net_arch': [128,128]}
+            default_model_dict['n_steps'] = 128
             default_model_dict['batch_size'] = 256
             default_model_dict['n_epochs'] = 4
             default_model_dict['ent_coef'] = 0.01

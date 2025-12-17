@@ -10,9 +10,9 @@ GPU_MAP=(0 2 3)
 sessions=(
   # base_mini_grid
   # base_cart_pole
-  # base_pong
+  base_pong
   # base_boxing
-  base_glucose
+  # base_glucose
 )
 
 environment=food
@@ -55,7 +55,7 @@ do
     seed=${SEEDS[$idx]}
     gpu=${GPU_MAP[$idx]}
 
-    for env in glucose # cart_pole mini_grid boxing pong glucose 
+    for env in boxing # cart_pole mini_grid boxing pong glucose 
     do 
     session="base_${env}_${seed}"
     tmux send-keys -t "$session" \

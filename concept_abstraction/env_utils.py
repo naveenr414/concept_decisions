@@ -154,7 +154,7 @@ class TDQLearning:
         return np.mean(losses), np.std(losses), np.max(losses)
 
 def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99, 
-                                total_timesteps=100_000, epsilon=0.1,
+                                total_timesteps=200_000, epsilon=0.1,
                                 learning_rate=1e-4, update_freq=20, initial_random=0.3,
                                 mimic=False, final_training=1_000, get_td_learner=False,use_initial_random=True):
     """
@@ -171,7 +171,7 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
     # Create stable TD learner
     td_learner = TDQLearning(state_dim, action_dim, lr=learning_rate, gamma=gamma, epsilon=epsilon)
 
-    all_state_actions = []
+    all_state_actions = {}
     losses = []
     episode_rewards = []
 
@@ -203,7 +203,7 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
     print("Starting stable training for sparse rewards...")
     
     print("Total of {} steps".format(total_timesteps))
-
+    all_actions = set()
     while steps < total_timesteps:
         if (steps+1)%100 == 0:
             print("On step {}".format(steps))
@@ -215,9 +215,20 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
         use_random = use_initial_random and ((steps < total_timesteps // 5) and (np.random.rand() < initial_random))
         if use_random:
             actions = [env.action_space.sample() for i in range(num_envs)]
-        for i in range(num_envs):
-            all_state_actions.append((tuple(concepts[i])))
-        
+        if steps > total_timesteps//2:
+            for i in range(num_envs):
+                if tuple(concepts[i]) not in all_state_actions:
+                    all_state_actions[tuple(concepts[i])] = set()   
+                
+                # TODO: Remove this
+                # all_state_actions[tuple(concepts[i])].add(actions[i])
+                for j in range(env.action_space.n):
+                    all_state_actions[tuple(concepts[i])].add(j)
+
+
+        for i in actions:
+            all_actions.add(i)
+
         # Step the environment
         next_obs, rewards, terms, truncs, infos = env.step(actions)
         dones = np.logical_or(terms, truncs)
@@ -296,12 +307,11 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
     print("\n" + "="*50)
     print("Collecting Q-value estimates...")
     print("="*50)
-    all_actions = set([env.action_space.sample() for i in range(100)])
 
     q_estimate_list = []
     for state_tuple in all_state_actions:
         state_array = np.array(state_tuple)
-        for action in all_actions:
+        for action in all_state_actions[state_tuple]:
             q_value = td_learner.get_q_value(state_array, action)
             q_estimate_list.append((state_array, action, q_value))
 
@@ -385,7 +395,7 @@ def rollout_pi_estimates(model, env, concept_list, num_rollouts=200, max_steps=2
     return pair_list
 
 
-def get_average_reward(vec_env, model, max_steps=50_000,max_steps_per=5000):
+def get_average_reward(vec_env, model, max_steps=100_000,max_steps_per=10000):
     """
     Evaluate a model on a SubprocVecEnv (or any VecEnv) and return the average reward.
 

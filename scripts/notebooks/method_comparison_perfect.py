@@ -138,6 +138,30 @@ if is_main and method == 'lp':
     lp_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
     results['lp'] = {'reward': lp_two_stage_reward, 'concepts': idx}
 
+if is_main and method == 'policy_selection':
+    subset_concept, idx = policy_coverage_selection(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model)
+    two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,processed_concepts=processed_concepts,concept_idx=idx)
+    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_perfect_policy_{}".format(environment_string,seed))    
+    lp_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
+    results['policy_selection'] = {'reward': lp_two_stage_reward, 'concepts': idx}
+
+if is_main and method == 'policy_selection_lp':
+    subset_concept, idx = policy_coverage_selection_lp(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model)
+    two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,processed_concepts=processed_concepts,concept_idx=idx)
+    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_perfect_policy_lp_{}".format(environment_string,seed))    
+    lp_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
+    results['policy_selection_lp'] = {'reward': lp_two_stage_reward, 'concepts': idx}
+
+if is_main and method == 'policy_selection_td':
+    full_two_stage_env, full_two_stage_gym_env = get_environment(environment_string,concept_list,seed,processed_concepts=processed_concepts,concept_idx=list(range(len(concept_list))))
+    all_concept_model = train_ppo_model(full_two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=250_000,custom_name="{}_perfect_greedy_{}".format(environment_string,seed)) 
+    subset_concept, idx = policy_coverage_selection_lp_advantage(full_two_stage_gym_env,concept_list,num_concepts_selected,all_concept_model)
+    two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,processed_concepts=processed_concepts,concept_idx=idx)
+    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_perfect_policy_td_{}".format(environment_string,seed))    
+    lp_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
+    results['policy_selection_td'] = {'reward': lp_two_stage_reward, 'concepts': idx}
+
+
 if is_main:
     save_name = secrets.token_hex(4)  
     save_path = get_save_path(out_folder,save_name)

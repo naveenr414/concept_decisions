@@ -4,7 +4,7 @@
 SEEDS=(42 43 44)          # Add as many seeds as you want
 GPU_MAP=(0 2 3)           # GPU assignment for each seed index
 
-METHODS=(imperfect_concepts random entropy greedy lp multiple)
+METHODS=(policy_selection policy_selection_lp policy_selection_td policy_selection_multiple) #(imperfect_concepts random entropy greedy lp multiple)
 
 environment=food
 
@@ -65,16 +65,17 @@ for i in "${!SEEDS[@]}"; do
   done
 
   # pareto LP session (cart_pole only)
-  session_name="imperfect_cart_pole_pong_lp_pareto_${seed}"
-  setup_tmux_session "$session_name" "$gpu"
-  : > "runs/logs/error_${session_name}.txt"
+  # session_name="imperfect_cart_pole_pong_lp_pareto_${seed}"
+  # setup_tmux_session "$session_name" "$gpu"
+  # : > "runs/logs/error_${session_name}.txt"
 done
 
 
 for seed in "${SEEDS[@]}"; do
 
   for method in "${METHODS[@]}"; do
-    for env in cart_pole pong; do
+    for env in cart_pole # pong
+    do
 
       tmux_target="imperfect_cart_pole_pong_${method}_${seed}"
 
@@ -92,7 +93,7 @@ for seed in "${SEEDS[@]}"; do
   done
 
   for method in "${METHODS[@]}"; do
-    for env in mini_grid boxing 
+    for env in mini_grid # boxing 
     do 
 
       tmux_target="imperfect_mini_grid_boxing_${method}_${seed}"
@@ -111,36 +112,36 @@ for seed in "${SEEDS[@]}"; do
   done
 
 
-  env=cart_pole
-  for intervention_prob in 0.25 0.75; do
-    for method in "${METHODS[@]}"; do
+  # env=cart_pole
+  # for intervention_prob in 0.25 0.75; do
+  #   for method in "${METHODS[@]}"; do
 
-      tmux_target="imperfect_mini_grid_boxing_${method}_${seed}"
+  #     tmux_target="imperfect_mini_grid_boxing_${method}_${seed}"
 
-      tmux send-keys -t "$tmux_target" \
-        "conda activate ${environment}; python -u method_comparison_intervention.py \
-        --seed ${seed} \
-        --environment_string ${env} \
-        --training_timesteps ${training_timesteps[$env]} \
-        --gold_timesteps ${gold_timesteps[$env]} \
-        --num_concepts_selected ${num_concepts[$env]} \
-        --method ${method} \
-        --intervention_prob ${intervention_prob} \
-        --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
-    done
-  done
+  #     tmux send-keys -t "$tmux_target" \
+  #       "conda activate ${environment}; python -u method_comparison_intervention.py \
+  #       --seed ${seed} \
+  #       --environment_string ${env} \
+  #       --training_timesteps ${training_timesteps[$env]} \
+  #       --gold_timesteps ${gold_timesteps[$env]} \
+  #       --num_concepts_selected ${num_concepts[$env]} \
+  #       --method ${method} \
+  #       --intervention_prob ${intervention_prob} \
+  #       --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
+  #   done
+  # done
 
 
-  env=cart_pole
-  tmux_target="imperfect_cart_pole_pong_lp_pareto_${seed}"
+  # env=cart_pole
+  # tmux_target="imperfect_cart_pole_pong_lp_pareto_${seed}"
 
-  tmux send-keys -t "$tmux_target" \
-    "conda activate ${environment}; python -u pareto_curve.py \
-    --seed ${seed} \
-    --environment_string ${env} \
-    --training_timesteps ${training_timesteps[$env]} \
-    --gold_timesteps ${gold_timesteps[$env]} \
-    --num_concepts_selected ${num_concepts[$env]} \
-    --intervention_prob 0.5 \
-    --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
+  # tmux send-keys -t "$tmux_target" \
+  #   "conda activate ${environment}; python -u pareto_curve.py \
+  #   --seed ${seed} \
+  #   --environment_string ${env} \
+  #   --training_timesteps ${training_timesteps[$env]} \
+  #   --gold_timesteps ${gold_timesteps[$env]} \
+  #   --num_concepts_selected ${num_concepts[$env]} \
+  #   --intervention_prob 0.5 \
+  #   --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
 done

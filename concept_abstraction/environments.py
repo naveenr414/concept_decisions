@@ -248,7 +248,7 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
                     ),get_raw_state_cartpole)
             return env 
         if concept_list is None or use_processed:
-            vec_env = SubprocVecEnv([make_env for _ in range(8)])
+            vec_env = DummyVecEnv([make_env for _ in range(8)])
         else:
             vec_env = DummyVecEnv([make_env for _ in range(num_envs)])
     elif environment_string == "glucose":
@@ -302,7 +302,8 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
             return env
         
         if concept_list is None or use_processed:
-            vec_env = SubprocVecEnv([make_env for _ in range(8)])
+            # TODO: Change back to subprocvecenv
+            vec_env = DummyVecEnv([make_env for _ in range(8)])
         else:
             vec_env = DummyVecEnv([make_env for _ in range(num_envs)])
 
@@ -317,7 +318,7 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
             vec_env = get_n_atari_env(num_envs,"PongNoFrameskip-v4",False,num_stack=num_stack,processed_concepts=processed_concepts)
         else:
             vec_env = get_n_atari_env(num_envs,"PongNoFrameskip-v4",True,processed_concepts=processed_concepts)
-        
+    
     if use_processed:
         vec_env = VecConceptWrapper(vec_env, fast_predictor, concept_idx,intervention_prob=intervention_prob,processed_concepts=processed_concepts)
         vec_env = VecNormalize(
