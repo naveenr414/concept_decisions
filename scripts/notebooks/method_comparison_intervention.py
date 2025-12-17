@@ -186,7 +186,7 @@ if is_main and method == 'policy_selection_multiple':
 
 if is_main:
     two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=idx,intervention_prob=intervention_prob,processed_concepts=processed_concepts)
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_intervention_{}_{}".format(environment_string,method,intervention_prob))    
+    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_intervention_{}_{}_{}".format(environment_string,method,intervention_prob,seed))    
     reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
     results[method] = {'reward': reward, 'concepts': idx}
 

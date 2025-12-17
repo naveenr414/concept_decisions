@@ -13,8 +13,8 @@ sessions=(
   # perfect_mini_grid_entropy
   # perfect_mini_grid_greedy
   # perfect_mini_grid_lp
-  perfect_mini_grid_policy_selection_lp
-  perfect_mini_grid_policy_selection_td
+  # perfect_mini_grid_policy_selection_lp
+  # perfect_mini_grid_policy_selection_td
 
   # perfect_cart_pole_perfect_concepts
   # perfect_cart_pole_random
@@ -36,9 +36,9 @@ sessions=(
   # perfect_boxing_random
   # perfect_boxing_entropy
   # perfect_boxing_greedy
-  # perfect_boxing_lp
-  # perfect_boxing_policy_selection_lp
-  # perfect_boxing_policy_selection_td
+  perfect_boxing_lp
+  perfect_boxing_policy_selection_lp
+  perfect_boxing_policy_selection_td
 
   # perfect_glucose_perfect_concepts
   # perfect_glucose_random
@@ -64,9 +64,9 @@ sessions=(
   # imperfect_mini_grid_boxing_greedy
   # imperfect_mini_grid_boxing_lp
   # imperfect_mini_grid_boxing_multiple
-  imperfect_mini_grid_boxing_policy_selection_lp
-  imperfect_mini_grid_boxing_policy_selection_td
-  imperfect_mini_grid_boxing_policy_selection_multiple
+  # imperfect_mini_grid_boxing_policy_selection_lp
+  # imperfect_mini_grid_boxing_policy_selection_td
+  # imperfect_mini_grid_boxing_policy_selection_multiple
 )
 
 environment=food
@@ -125,9 +125,9 @@ for idx in "${!SEEDS[@]}"; do
   gpu=${GPU_MAP[$idx]}
 
   # --- Perfect methods ---
-  for method in policy_selection_lp policy_selection_td # perfect_concepts random entropy greedy lp policy_selection
+  for method in lp policy_selection_lp policy_selection_td  # perfect_concepts random entropy greedy lp policy_selection_td
   do 
-    for env in mini_grid # cart_pole mini_grid pong boxing glucose 
+    for env in boxing # cart_pole mini_grid pong boxing glucose 
     do 
       session="perfect_${env}_${method}_${seed}"
       tmux send-keys -t "$session" \
@@ -142,10 +142,10 @@ for idx in "${!SEEDS[@]}"; do
     done
   done
 
-  # # --- Imperfect CartPole/Pong ---
-  # for method in policy_selection_lp policy_selection_td policy_selection_multiple  # imperfect_concepts random entropy greedy lp multiple
+  # # # --- Imperfect CartPole/Pong ---
+  # for method in  policy_selection_multiple  # imperfect_concepts random entropy greedy lp multiple policy_selection_lp policy_selection_td
   # do 
-  #   for env in cart_pole # pong 
+  #   for env in  cart_pole # pong
   #   do 
   #     session="imperfect_cart_pole_pong_${method}_${seed}"
   #     tmux send-keys -t "$session" \
@@ -160,21 +160,21 @@ for idx in "${!SEEDS[@]}"; do
   #   done
   # done
 
-  # --- Imperfect MiniGrid/Boxing ---
-  for method in policy_selection_lp policy_selection_td policy_selection_multiple # imperfect_concepts random entropy greedy lp multiple
-  do 
-    for env in mini_grid # boxing
-    do 
-      session="imperfect_mini_grid_boxing_${method}_${seed}"
-      tmux send-keys -t "$session" \
-        "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_imperfect.py \
-        --seed ${seed} \
-        --environment_string ${env} \
-        --training_timesteps ${training_timesteps[$env]} \
-        --gold_timesteps ${gold_timesteps[$env]} \
-        --num_concepts_selected ${num_concepts[$env]} \
-        --method ${method} \
-        --out_folder basic >> ../../runs/logs/error_imperfect_mini_grid_boxing_${method}_${seed}.txt 2>&1" ENTER
-    done
-  done
+  # # --- Imperfect MiniGrid/Boxing ---
+  # for method in policy_selection_lp policy_selection_td policy_selection_multiple # imperfect_concepts random entropy greedy lp multiple
+  # do 
+  #   for env in boxing # mini_grid
+  #   do 
+  #     session="imperfect_mini_grid_boxing_${method}_${seed}"
+  #     tmux send-keys -t "$session" \
+  #       "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_imperfect.py \
+  #       --seed ${seed} \
+  #       --environment_string ${env} \
+  #       --training_timesteps ${training_timesteps[$env]} \
+  #       --gold_timesteps ${gold_timesteps[$env]} \
+  #       --num_concepts_selected ${num_concepts[$env]} \
+  #       --method ${method} \
+  #       --out_folder basic >> ../../runs/logs/error_imperfect_mini_grid_boxing_${method}_${seed}.txt 2>&1" ENTER
+  #   done
+  # done
 done

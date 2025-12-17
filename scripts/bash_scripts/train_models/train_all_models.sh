@@ -10,8 +10,8 @@ GPU_MAP=(0 2 3)
 sessions=(
   # base_mini_grid
   # base_cart_pole
-  base_pong
-  # base_boxing
+  # base_pong
+  base_boxing
   # base_glucose
 )
 

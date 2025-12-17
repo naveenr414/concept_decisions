@@ -191,7 +191,7 @@ def get_n_atari_env(n_envs,atari_env_name,use_concepts,recordable=False,num_stac
         vec_env = DummyVecEnv([
             lambda seed=i: safe_make_env(seed=seed)
             for i in range(n_envs)
-        ], start_method='spawn')
+        ])
     return vec_env
 
 def get_environment(environment_string,concept_list,seed,concept_idx=[],use_processed=False,processed_concepts=None,fast_predictor=None,intervention_prob=0.0,concept_accuracy=1.0):
@@ -290,12 +290,19 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
 
             env = gym.make("simglucose/adolescent2-custom-v0", render_mode=None)
             env = Monitor(env)
+            
             if concept_list is not None:
                 env = ConceptWrapper(env,spaces.Box(
-                        low=0, high=255,
+                        low=-100, high=100,
                         shape=(6,),  # Height x Width, no color channel
-                        dtype=np.uint8
-                    ),get_raw_state_glucose)
+                        dtype=np.float32
+                    ),get_raw_state_glucose,obs_function=get_raw_state_glucose)
+            else:
+                env = ConceptWrapper(env,spaces.Box(
+                        low=-100, high=100,
+                        shape=(6,),  # Height x Width, no color channel
+                        dtype=np.float32
+                    ),get_raw_state_glucose,obs_function=get_raw_state_glucose)
 
             return env 
         vec_env = DummyVecEnv([make_env for i in range(num_envs)])

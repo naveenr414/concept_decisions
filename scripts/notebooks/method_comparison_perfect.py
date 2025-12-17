@@ -122,16 +122,7 @@ if is_main and method == 'policy_selection_lp':
     subset_concept, idx = policy_coverage_selection_lp(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model)
 
 if is_main and method == 'policy_selection_td':
-    full_two_stage_env, full_two_stage_gym_env = get_environment(environment_string,concept_list,seed,processed_concepts=processed_concepts,concept_idx=list(range(len(concept_list))))
-    
-    if environment_string in ["cart_pole","mini_grid"]:
-        all_concept_model = train_ppo_model(full_two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=250_000,custom_name="{}_perfect_greedy_{}".format(environment_string,seed)) 
-    elif environment_string == "glucose":
-        all_concept_model = train_ppo_model(full_two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=1_000_000,custom_name="{}_perfect_greedy_{}".format(environment_string,seed)) 
-    else:
-        all_concept_model = train_ppo_model(full_two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=2_000_000,custom_name="{}_perfect_greedy_{}".format(environment_string,seed)) 
-
-    subset_concept, idx = policy_coverage_selection_lp_advantage(full_two_stage_gym_env,concept_list,num_concepts_selected,all_concept_model)
+    subset_concept, idx = policy_coverage_selection_lp_advantage(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model)
 
 if is_main:
     two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,processed_concepts=processed_concepts,concept_idx=idx)

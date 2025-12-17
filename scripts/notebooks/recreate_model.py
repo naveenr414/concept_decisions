@@ -78,8 +78,8 @@ if is_main:
         else:
             groundtruth_model = train_ppo_model(ground_truth_env,environment_string,total_timesteps=gold_timesteps,policy=policy)
         groundtruth_model.save(model_name)
-    groundtruth_reward = evaluate_model(environment_string,ground_truth_gym_env,groundtruth_model,seed)
-    results['ground_truth'] = {'reward': groundtruth_reward}
+    # groundtruth_reward = evaluate_model(environment_string,ground_truth_gym_env,groundtruth_model,seed)
+    # results['ground_truth'] = {'reward': groundtruth_reward}
 
 # if is_main:
 #     model_name = "../../results/models/concept_predictor_env={}_training={}_seed={}.pth".format(environment_string,100,seed)

@@ -218,8 +218,6 @@ def rollout_q_estimates_td(model, env, concept_list, states=None, gamma=0.99,
                 if tuple(concepts[i]) not in all_state_actions:
                     all_state_actions[tuple(concepts[i])] = set()   
                 
-                # TODO: Remove this
-                # all_state_actions[tuple(concepts[i])].add(actions[i])
                 for j in range(env.action_space.n):
                     all_state_actions[tuple(concepts[i])].add(j)
 

@@ -73,27 +73,27 @@ done
 
 for seed in "${SEEDS[@]}"; do
 
-  # for method in "${METHODS[@]}"; do
-  #   for env in cart_pole pong
-  #   do
+  for method in "${METHODS[@]}"; do
+    for env in pong # cart_pole
+    do
 
-  #     tmux_target="imperfect_cart_pole_pong_${method}_${seed}"
+      tmux_target="imperfect_cart_pole_pong_${method}_${seed}"
 
-  #     tmux send-keys -t "$tmux_target" \
-  #       "conda activate ${environment}; python -u method_comparison_intervention.py \
-  #       --seed ${seed} \
-  #       --environment_string ${env} \
-  #       --training_timesteps ${training_timesteps[$env]} \
-  #       --gold_timesteps ${gold_timesteps[$env]} \
-  #       --num_concepts_selected ${num_concepts[$env]} \
-  #       --method ${method} \
-  #       --intervention_prob 0.5 \
-  #       --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
-  #   done
-  # done
+      tmux send-keys -t "$tmux_target" \
+        "conda activate ${environment}; python -u method_comparison_intervention.py \
+        --seed ${seed} \
+        --environment_string ${env} \
+        --training_timesteps ${training_timesteps[$env]} \
+        --gold_timesteps ${gold_timesteps[$env]} \
+        --num_concepts_selected ${num_concepts[$env]} \
+        --method ${method} \
+        --intervention_prob 0.5 \
+        --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
+    done
+  done
 
   for method in "${METHODS[@]}"; do
-    for env in mini_grid # boxing 
+    for env in boxing # mini_grid 
     do 
 
       tmux_target="imperfect_mini_grid_boxing_${method}_${seed}"
