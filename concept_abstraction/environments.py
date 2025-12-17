@@ -22,7 +22,7 @@ from concept_abstraction.environment_wrappers import *
 
 cv2.setNumThreads(1)
 
-def get_raw_state_cartpole(env,obs,info):
+def get_raw_state_cartpole(_,obs,__):
     """Get the raw underlying state in a CartPole environment
     Arguments:
         env: CartPole environment
@@ -31,39 +31,6 @@ def get_raw_state_cartpole(env,obs,info):
     Returns: The same 4-vector observation"""
 
     return obs 
-
-def get_raw_state_glucose(env,obs,info):
-    """Get the raw underlying state in a CartPole environment
-    Arguments:
-        env: CartPole environment
-        obs: Current observation, 4-vector
-    
-    Returns: The same 4-vector observation"""
-
-    return obs 
-
-
-def get_raw_pixels_mini_grid(env, obs=None):
-    pixels = env.render()[:160, :160]
-    gray = np.dot(pixels[..., :3], [0.2989, 0.5870, 0.1140]).astype(np.uint8)
-    small_pixels = cv2.resize(gray, (84, 84), interpolation=cv2.INTER_NEAREST)
-    return small_pixels
-
-def get_fast_mini_grid_pixels(env,obs=None):
-    # obs["image"] has shape (7, 7, 3) or (n, n, 3)
-    img = obs["image"].astype(np.uint8)
-
-    # Simple nearest neighbor upscale to 84x84
-    small_pixels = cv2.resize(img, (84, 84), interpolation=cv2.INTER_NEAREST)
-
-    return small_pixels
-
-
-def get_raw_pixels_cartpole_slow(env, obs=None):
-    pixels = env.render()
-    gray = cv2.cvtColor(pixels, cv2.COLOR_RGB2GRAY)
-    small_pixels = cv2.resize(gray, (240,160), interpolation=cv2.INTER_NEAREST).astype(np.uint8)
-    return small_pixels
 
 def get_raw_pixels_cartpole(env, obs=None):
     pixels = env.render()
@@ -72,6 +39,13 @@ def get_raw_pixels_cartpole(env, obs=None):
     # Convert to grayscale in C
     gray = cv2.cvtColor(small_pixels, cv2.COLOR_RGB2GRAY)
     return gray
+
+
+def get_raw_pixels_mini_grid(env, obs=None):
+    pixels = env.render()[:160, :160]
+    gray = np.dot(pixels[..., :3], [0.2989, 0.5870, 0.1140]).astype(np.uint8)
+    small_pixels = cv2.resize(gray, (84, 84), interpolation=cv2.INTER_NEAREST)
+    return small_pixels
 
 def can_move(position, direction, grid):
     """
@@ -114,8 +88,7 @@ def get_raw_state_mini_grid(env,obs,info):
     vec = [agent_pos[0],agent_pos[1],agent_dir,key_pos[0],key_pos[1],door_pos[0],door_pos[1],int(door_open)]+[int(direction_movable[i]) for i in ['right','down','left','up']]
     return vec 
 
-
-def get_raw_state_atari(env,obs, info):
+def get_raw_state_atari(env,_, __):
     """Get the raw underlying state in an Atari environment
     
     Arguments:
@@ -126,6 +99,17 @@ def get_raw_state_atari(env,obs, info):
 
     pixels = env.unwrapped._ale.getScreenGrayscale().astype(np.uint8)
     return cv2.resize(pixels, (84,84),interpolation=cv2.INTER_NEAREST)
+
+
+def get_raw_state_glucose(_,obs,__):
+    """Get the raw underlying state in a CartPole environment
+    Arguments:
+        env: CartPole environment
+        obs: Current observation, 4-vector
+    
+    Returns: The same 4-vector observation"""
+
+    return obs 
 
 def make_ocenv(env_name,use_concepts,seed=0,recordable=False,num_stack=4,processed_concepts=None):
     """Create an OCAtari environment for a given concept list
@@ -204,9 +188,9 @@ def get_n_atari_env(n_envs,atari_env_name,use_concepts,recordable=False,num_stac
             for i in range(n_envs)
         ])
     else:
-        vec_env = SubprocVecEnv([
+        vec_env = DummyVecEnv([
             lambda seed=i: safe_make_env(seed=seed)
-            for i in range(8)
+            for i in range(n_envs)
         ], start_method='spawn')
     return vec_env
 
@@ -251,26 +235,6 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
             vec_env = DummyVecEnv([make_env for _ in range(8)])
         else:
             vec_env = DummyVecEnv([make_env for _ in range(num_envs)])
-    elif environment_string == "glucose":
-        def make_env():
-            register(
-                id="simglucose/adolescent2-custom-v0",
-                entry_point=GlucoseEnvironment,  # adjust if using a module
-                max_episode_steps=288,
-                kwargs={"patient_name": "adolescent#002"},
-            )
-
-            env = gym.make("simglucose/adolescent2-custom-v0", render_mode=None)
-            env = Monitor(env)
-            if concept_list is not None:
-                env = ConceptWrapper(env,spaces.Box(
-                        low=0, high=255,
-                        shape=(6,),  # Height x Width, no color channel
-                        dtype=np.uint8
-                    ),get_raw_state_glucose)
-
-            return env 
-        vec_env = SubprocVecEnv([make_env for i in range(8)])
     elif environment_string  == "mini_grid":
         num_stack = 1
         
@@ -302,23 +266,40 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
             return env
         
         if concept_list is None or use_processed:
-            # TODO: Change back to subprocvecenv
-            vec_env = DummyVecEnv([make_env for _ in range(8)])
+            vec_env = DummyVecEnv([make_env for _ in range(num_envs)])
         else:
             vec_env = DummyVecEnv([make_env for _ in range(num_envs)])
-
-    elif environment_string == "boxing":
-        if concept_list is None or use_processed:
-            vec_env = get_n_atari_env(num_envs,"BoxingNoFrameskip-v4",False,num_stack=num_stack,processed_concepts=processed_concepts)
-        else:
-            vec_env = get_n_atari_env(num_envs,"BoxingNoFrameskip-v4",True,processed_concepts=processed_concepts)
-
     elif environment_string == "pong":
         if concept_list is None or use_processed:
             vec_env = get_n_atari_env(num_envs,"PongNoFrameskip-v4",False,num_stack=num_stack,processed_concepts=processed_concepts)
         else:
             vec_env = get_n_atari_env(num_envs,"PongNoFrameskip-v4",True,processed_concepts=processed_concepts)
-    
+    elif environment_string == "boxing":
+        if concept_list is None or use_processed:
+            vec_env = get_n_atari_env(num_envs,"BoxingNoFrameskip-v4",False,num_stack=num_stack,processed_concepts=processed_concepts)
+        else:
+            vec_env = get_n_atari_env(num_envs,"BoxingNoFrameskip-v4",True,processed_concepts=processed_concepts)
+    elif environment_string == "glucose":
+        def make_env():
+            register(
+                id="simglucose/adolescent2-custom-v0",
+                entry_point=GlucoseEnvironment,  # adjust if using a module
+                max_episode_steps=288,
+                kwargs={"patient_name": "adolescent#002"},
+            )
+
+            env = gym.make("simglucose/adolescent2-custom-v0", render_mode=None)
+            env = Monitor(env)
+            if concept_list is not None:
+                env = ConceptWrapper(env,spaces.Box(
+                        low=0, high=255,
+                        shape=(6,),  # Height x Width, no color channel
+                        dtype=np.uint8
+                    ),get_raw_state_glucose)
+
+            return env 
+        vec_env = DummyVecEnv([make_env for i in range(num_envs)])
+
     if use_processed:
         vec_env = VecConceptWrapper(vec_env, fast_predictor, concept_idx,intervention_prob=intervention_prob,processed_concepts=processed_concepts)
         vec_env = VecNormalize(

@@ -142,85 +142,54 @@ if is_main:
 
 # All Concept Model 
 if is_main and method == 'imperfect_concepts': 
-    two_stage_env, two_stage_gym_env = get_environment(environment_string,concept_list,seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=list(range(len(concept_list))),intervention_prob=intervention_prob,processed_concepts=processed_concepts)
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_intervention_all_concepts_real_{}".format(environment_string,intervention_prob))    
-    all_concepts_imperfect_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
-    results['imperfect_concepts'] = {'reward': all_concepts_imperfect_reward, 'concepts': list(range(len(concept_list)))}
-
-# ## Comparing Methods
+    subset_concept = concept_list 
+    idx = list(range(len(concept_list)))
 
 # Random
 if is_main and method == 'random':
     subset_concept, idx = random_selection(concept_list,num_concepts_selected)
-    two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=idx,intervention_prob=intervention_prob,processed_concepts=processed_concepts)
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_intervention_random_{}".format(environment_string,intervention_prob))    
-    random_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
-    results['random'] = {'reward': random_two_stage_reward, 'concepts': idx}
 
 # # Basic Greedy
 if is_main and method == 'entropy':
     subset_concept, idx = basic_greedy_selection(concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary")
-    idx = idx.tolist()
-    two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=idx,intervention_prob=intervention_prob,processed_concepts=processed_concepts)
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_intervention_basic_greedy_{}".format(environment_string,intervention_prob))    
-    basic_greedy_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
-    results['entropy'] = {'reward': basic_greedy_two_stage_reward, 'concepts': idx}
 
 # # Greedy
 if is_main and method == 'greedy':
     subset_concept, idx = greedy_selection(concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary")
-    two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=idx,intervention_prob=intervention_prob,processed_concepts=processed_concepts)
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_intervention_greedy_{}".format(environment_string,intervention_prob))    
-    greedy_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
-    results['greedy'] = {'reward': greedy_two_stage_reward, 'concepts': idx}
 
 # # LP
 if is_main and method == 'lp':
     subset_concept, idx = lp_based_selection(ground_truth_env,concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary")
-    two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=idx,intervention_prob=intervention_prob,processed_concepts=processed_concepts)
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_intervention_lp_{}".format(environment_string,intervention_prob))    
-    lp_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
-    results['lp'] = {'reward': lp_two_stage_reward, 'concepts': idx}
 
 # # Multiple
 if is_main and method == 'multiple':
     subset_concept, idx = multiple_lp_selection(ground_truth_env,concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary",[acc for acc in acc_list])
-    two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=idx,intervention_prob=intervention_prob,processed_concepts=processed_concepts)
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_intervention_multiple_{}".format(environment_string,intervention_prob))    
-    multiple_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
-    results['multiple'] = {'reward': multiple_two_stage_reward, 'concepts': idx}
-
-
-if is_main and method == 'policy_selection':
-    subset_concept, idx = policy_coverage_selection(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model)
-    two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=idx,intervention_prob=intervention_prob,processed_concepts=processed_concepts)
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_intervention_policy_selection_{}".format(environment_string,intervention_prob))    
-    lp_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
-    results['policy_selection'] = {'reward': lp_two_stage_reward, 'concepts': idx}
 
 if is_main and method == 'policy_selection_lp':
     subset_concept, idx = policy_coverage_selection_lp(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model)
-    two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=idx,intervention_prob=intervention_prob,processed_concepts=processed_concepts)
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_intervention_policy_selection_lp_{}".format(environment_string,intervention_prob))    
-    lp_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
-    results['policy_selection_lp'] = {'reward': lp_two_stage_reward, 'concepts': idx}
 
 if is_main and method == 'policy_selection_td':
     full_two_stage_env, full_two_stage_gym_env = get_environment(environment_string,concept_list,seed,processed_concepts=processed_concepts,concept_idx=list(range(len(concept_list))))
-    all_concept_model = train_ppo_model(full_two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=250_000,custom_name="{}_imperfect_policy_td_{}".format(environment_string,seed)) 
+    
+    if environment_string in ["cart_pole","mini_grid"]:
+        all_concept_model = train_ppo_model(full_two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=250_000,custom_name="{}_perfect_greedy_{}".format(environment_string,seed)) 
+    elif environment_string == "glucose":
+        all_concept_model = train_ppo_model(full_two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=1_000_000,custom_name="{}_perfect_greedy_{}".format(environment_string,seed)) 
+    else:
+        all_concept_model = train_ppo_model(full_two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=2_000_000,custom_name="{}_perfect_greedy_{}".format(environment_string,seed)) 
+
     subset_concept, idx = policy_coverage_selection_lp_advantage(full_two_stage_gym_env,concept_list,num_concepts_selected,all_concept_model)
-    two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=idx,intervention_prob=intervention_prob,processed_concepts=processed_concepts)
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_intervention_policy_selection_td_{}".format(environment_string,intervention_prob))    
-    lp_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
-    results['policy_selection_td'] = {'reward': lp_two_stage_reward, 'concepts': idx}
 
 
 if is_main and method == 'policy_selection_multiple':
     subset_concept, idx = policy_coverage_selection_exp_lp(ground_truth_gym_env,concept_list,acc_list,num_concepts_selected,groundtruth_model)
+
+if is_main:
     two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=idx,intervention_prob=intervention_prob,processed_concepts=processed_concepts)
-    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_intervention_policy_selection_multiple_{}".format(environment_string,intervention_prob))    
-    lp_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
-    results['policy_selection_multiple'] = {'reward': lp_two_stage_reward, 'concepts': idx}
+    model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_intervention_{}_{}".format(environment_string,method,intervention_prob))    
+    reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
+    results[method] = {'reward': reward, 'concepts': idx}
+
 
 if is_main:
     save_name = secrets.token_hex(4)  

@@ -22,7 +22,7 @@ os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 os.environ["GRB_LICENSE_FILE"] = "/usr0/home/naveenr/gurobi.lic"
 # -
 
-from concept_abstraction.selection import greedy_selection_supervised, lp_selection_supervised, lp_selection_supervised_imperfect, multiple_selection_supervised, greedy_selection_supervised,imperfect_lp_selection_supervised
+from concept_abstraction.selection import greedy_selection_supervised, lp_selection_supervised, multiple_selection_supervised, greedy_selection_supervised
 from concept_abstraction.env_utils import *
 from concept_abstraction.utils import *
 import sys 
@@ -217,7 +217,6 @@ greedy_selection = greedy_selection_supervised(train_X,train_Y,num_concepts)
 manual_selection = manually_selected_concepts
 random_selection = random.sample(list(range(312)),num_concepts)
 accuracies = np.mean(test_X == pred_test_X,axis=0)
-imperfect_selection = imperfect_lp_selection_supervised(train_X,train_Y,num_concepts,accuracies)
 
 
 def get_performance_real(selected_concepts):
@@ -259,11 +258,9 @@ for intervention_percent in [0.2,0.4,0.6,0.8,1.0]:
                                 lp_selection,
                                 multiple_selection,
                                 greedy_selection,
-                                random_selection,
-                                imperfect_selection],[
+                                random_selection],[
                                     "manual","lp","multiple",
                                     'greedy','random',
-                                    'imperfect'
                                 ]):
         if description not in results['intervention']:
             results['intervention'][description] = {}

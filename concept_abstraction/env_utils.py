@@ -7,8 +7,6 @@ import torch.optim as optim
 import random
 from collections import Counter
 
-
-
 class QNetwork(nn.Module):
     """Q-Network with proper initialization"""
     def __init__(self, state_dim, action_dim, hidden_dim=128):
@@ -494,47 +492,3 @@ def get_recordable(env):
 
     env = gym.wrappers.RecordVideo(env, video_folder="../../runs/videos/", episode_trigger=lambda e: True)
     return env 
-
-def save_fqe(fqe,path):
-    save_dict = {
-        "state_dim": fqe.state_dim,
-        "action_dim": fqe.action_dim,
-        "gamma": fqe.gamma,
-        "n_ensemble": fqe.n_ensemble,
-        "hidden_dims": fqe.hidden_dims,  # or store manually
-        "ensemble_state_dicts": [q.state_dict() for q in fqe.ensemble],
-        "state_mean": fqe.state_mean,
-        "state_std": fqe.state_std
-    }
-    torch.save(save_dict, path)
-
-def load_fqe(path, eval_env, optimal_model, device='cuda'):
-    checkpoint = torch.load(path, map_location=device)
-
-    fqe = FittedQEvaluation(
-        state_dim=checkpoint["state_dim"],
-        action_dim=checkpoint["action_dim"],
-        policy_model=optimal_model,
-        gamma=checkpoint["gamma"],
-        hidden_dims=checkpoint["hidden_dims"],
-        n_ensemble=checkpoint["n_ensemble"],
-        device=device,
-        state_mean=checkpoint['state_mean'],
-        state_std=checkpoint['state_std']
-    )
-
-    state_mean = checkpoint['state_mean']
-    state_std = checkpoint['state_std']
-
-    for q_net, state_dict in zip(fqe.ensemble, checkpoint["ensemble_state_dicts"]):
-        q_net.load_state_dict(state_dict)
-
-    collector = TransitionCollector(eval_env, optimal_model)
-    transitions = collector.collect_diverse_states(n_transitions=10000)
-    data = collector.transitions_to_arrays(transitions)
-    states = (data['states'] - state_mean) / state_std
-
-    q_values, _ = fqe.get_q_values(states)
-
-
-    return fqe, states, state_mean, state_std, q_values 

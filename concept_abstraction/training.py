@@ -30,6 +30,20 @@ stderr_buffer = StringIO()
 with redirect_stderr(stderr_buffer):
     from stable_baselines3 import PPO
     from stable_baselines3.common.callbacks import BaseCallback
+
+class ConceptPredictorCNN(nn.Module):
+    def __init__(self, num_concepts, num_frames=4, features_dim=512, height=84, width=84):
+        super().__init__()
+        obs_space = gym.spaces.Box(low=0, high=255, shape=(num_frames, height, width), dtype=np.uint8)
+        self.feature_extractor = NatureCNN(obs_space, features_dim)
+        self.classifier = nn.Linear(features_dim, num_concepts)
+    
+    def forward(self, x):
+        if x.ndim == 4 and x.shape[1] not in [1, 3, 4]:
+            x = x.permute(0, 3, 1, 2)
+        features = self.feature_extractor(x)
+        return self.classifier(features)
+
 class WandbLoggingCallback(BaseCallback):
     def __init__(self, smooth_alpha=0.9, log_freq=10):
         super().__init__()
@@ -658,84 +672,3 @@ def evaluate_concept_predictor(
         print(f"  {status} Concept {i}: {acc:.3f}")
     
     return acc_list
-
-
-class ConceptPredictorCNN(nn.Module):
-    def __init__(self, num_concepts, num_frames=4, features_dim=512, height=84, width=84):
-        super().__init__()
-        # Use a real Box space so SB3 doesn't complain
-        obs_space = gym.spaces.Box(low=0, high=255, shape=(num_frames, height, width), dtype=np.uint8)
-        
-        # NatureCNN automatically normalizes and flattens
-        self.feature_extractor = NatureCNN(obs_space, features_dim)
-        self.classifier = nn.Linear(features_dim, num_concepts)
-    
-    def forward(self, x):
-        # x should be (B, num_frames, H, W)
-        # If your data is (B, H, W, num_frames), permute:
-        if x.ndim == 4 and x.shape[1] not in [1, 3, 4]:
-            x = x.permute(0, 3, 1, 2)
-        features = self.feature_extractor(x)
-        return self.classifier(features)
-
-
-class RegularizedMotionAwareCNN(nn.Module):
-    def __init__(self, num_outputs, num_frames=2, input_size=84, dropout=0.2):
-        super().__init__()
-        self.num_frames = num_frames
-        
-        # Separate encoders for appearance and motion
-        self.appearance_encoder = nn.Sequential(
-            nn.Conv2d(num_frames, 32, kernel_size=8, stride=4, padding=2),
-            nn.ReLU(),
-            nn.BatchNorm2d(32),
-        )
-        
-        self.motion_encoder = nn.Sequential(
-            nn.Conv2d(num_frames - 1, 32, kernel_size=8, stride=4, padding=2),
-            nn.ReLU(),
-            nn.BatchNorm2d(32),
-        )
-        
-        # Fusion layer
-        self.fusion = nn.Sequential(
-            nn.Conv2d(64, 64, kernel_size=4, stride=2, padding=1),
-            nn.ReLU(),
-            nn.BatchNorm2d(64),
-            
-            nn.Conv2d(64, 128, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(),
-            nn.BatchNorm2d(128),
-        )
-        
-        with torch.no_grad():
-            dummy_appear = torch.zeros(1, num_frames, input_size, input_size)
-            dummy_motion = torch.zeros(1, num_frames - 1, input_size, input_size)
-            appear_feat = self.appearance_encoder(dummy_appear)
-            motion_feat = self.motion_encoder(dummy_motion)
-            fused = self.fusion(torch.cat([appear_feat, motion_feat], dim=1))
-            feature_size = fused.view(1, -1).shape[1]
-        
-        self.classifier = nn.Sequential(
-            nn.Linear(feature_size, 256),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(256, num_outputs)
-        )
-    
-    def forward(self, x):
-        batch_size = x.shape[0]
-        
-        # Appearance pathway
-        appear_features = self.appearance_encoder(x)
-        
-        # Motion pathway (frame differences)
-        motion = x[:, 1:] - x[:, :-1]
-        motion_features = self.motion_encoder(motion)
-        
-        # Fuse
-        combined = torch.cat([appear_features, motion_features], dim=1)
-        fused = self.fusion(combined)
-        features = fused.view(batch_size, -1)
-        
-        return self.classifier(features)

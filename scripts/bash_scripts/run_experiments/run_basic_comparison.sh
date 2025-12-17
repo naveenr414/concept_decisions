@@ -8,17 +8,19 @@ SEEDS=(42 43 44)
 GPU_MAP=(0 2 3)
 
 sessions=(
-  # perfect_mini_grid
-  # perfect_mini_grid_policy_selection
-  # perfect_mini_grid_policy_selection_lp
-  # perfect_mini_grid_policy_selection_td
+  # perfect_mini_grid_perfect_concepts
+  # perfect_mini_grid_random
+  # perfect_mini_grid_entropy
+  # perfect_mini_grid_greedy
+  # perfect_mini_grid_lp
+  perfect_mini_grid_policy_selection_lp
+  perfect_mini_grid_policy_selection_td
 
   # perfect_cart_pole_perfect_concepts
   # perfect_cart_pole_random
   # perfect_cart_pole_entropy
   # perfect_cart_pole_greedy
   # perfect_cart_pole_lp
-  # perfect_cart_pole_policy_selection
   # perfect_cart_pole_policy_selection_lp
   # perfect_cart_pole_policy_selection_td
 
@@ -27,7 +29,6 @@ sessions=(
   # perfect_pong_entropy
   # perfect_pong_greedy
   # perfect_pong_lp
-  # perfect_pong_policy_selection
   # perfect_pong_policy_selection_lp
   # perfect_pong_policy_selection_td
 
@@ -36,7 +37,6 @@ sessions=(
   # perfect_boxing_entropy
   # perfect_boxing_greedy
   # perfect_boxing_lp
-  # perfect_boxing_policy_selection
   # perfect_boxing_policy_selection_lp
   # perfect_boxing_policy_selection_td
 
@@ -45,7 +45,6 @@ sessions=(
   # perfect_glucose_entropy
   # perfect_glucose_greedy
   # perfect_glucose_lp
-  # perfect_glucose_policy_selection
   # perfect_glucose_policy_selection_lp
   # perfect_glucose_policy_selection_td
 
@@ -55,10 +54,9 @@ sessions=(
   # imperfect_cart_pole_pong_greedy
   # imperfect_cart_pole_pong_lp
   # imperfect_cart_pole_pong_multiple
-  # imperfect_cart_pole_pong_policy_selection
   # imperfect_cart_pole_pong_policy_selection_lp
   # imperfect_cart_pole_pong_policy_selection_td
-  imperfect_cart_pole_pong_policy_selection_multiple
+  # imperfect_cart_pole_pong_policy_selection_multiple
 
   # imperfect_mini_grid_boxing_imperfect_concepts
   # imperfect_mini_grid_boxing_random
@@ -66,9 +64,8 @@ sessions=(
   # imperfect_mini_grid_boxing_greedy
   # imperfect_mini_grid_boxing_lp
   # imperfect_mini_grid_boxing_multiple
-  # imperfect_mini_grid_boxing_policy_selection
-  # imperfect_mini_grid_boxing_policy_selection_lp
-  # imperfect_mini_grid_boxing_policy_selection_td
+  imperfect_mini_grid_boxing_policy_selection_lp
+  imperfect_mini_grid_boxing_policy_selection_td
   imperfect_mini_grid_boxing_policy_selection_multiple
 )
 
@@ -128,43 +125,43 @@ for idx in "${!SEEDS[@]}"; do
   gpu=${GPU_MAP[$idx]}
 
   # --- Perfect methods ---
-  # for method in policy_selection policy_selection_lp policy_selection_td # perfect_concepts random entropy greedy lp policy_selection
-  # do 
-  #   for env in cart_pole mini_grid # pong boxing glucose 
-  #   do 
-  #     session="perfect_${env}_${method}_${seed}"
-  #     tmux send-keys -t "$session" \
-  #       "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_perfect.py \
-  #       --seed ${seed} \
-  #       --environment_string ${env} \
-  #       --training_timesteps ${training_timesteps[$env]} \
-  #       --gold_timesteps ${gold_timesteps[$env]} \
-  #       --num_concepts_selected ${num_concepts[$env]} \
-  #       --method ${method} \
-  #       --out_folder basic >> ../../runs/logs/error_perfect_${env}_${method}_${seed}.txt 2>&1" ENTER
-  #   done
-  # done
-
-  # # --- Imperfect CartPole/Pong ---
-  for method in policy_selection_multiple # policy_selection policy_selection_lp policy_selection_td policy_selection_multiple  # imperfect_concepts random entropy greedy lp multiple
+  for method in policy_selection_lp policy_selection_td # perfect_concepts random entropy greedy lp policy_selection
   do 
-    for env in cart_pole # pong 
+    for env in mini_grid # cart_pole mini_grid pong boxing glucose 
     do 
-      session="imperfect_cart_pole_pong_${method}_${seed}"
+      session="perfect_${env}_${method}_${seed}"
       tmux send-keys -t "$session" \
-        "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_imperfect.py \
+        "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_perfect.py \
         --seed ${seed} \
         --environment_string ${env} \
         --training_timesteps ${training_timesteps[$env]} \
         --gold_timesteps ${gold_timesteps[$env]} \
         --num_concepts_selected ${num_concepts[$env]} \
         --method ${method} \
-        --out_folder basic >> ../../runs/logs/error_imperfect_cart_pole_pong_${method}_${seed}.txt 2>&1" ENTER
+        --out_folder basic >> ../../runs/logs/error_perfect_${env}_${method}_${seed}.txt 2>&1" ENTER
     done
   done
 
+  # # --- Imperfect CartPole/Pong ---
+  # for method in policy_selection_lp policy_selection_td policy_selection_multiple  # imperfect_concepts random entropy greedy lp multiple
+  # do 
+  #   for env in cart_pole # pong 
+  #   do 
+  #     session="imperfect_cart_pole_pong_${method}_${seed}"
+  #     tmux send-keys -t "$session" \
+  #       "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_imperfect.py \
+  #       --seed ${seed} \
+  #       --environment_string ${env} \
+  #       --training_timesteps ${training_timesteps[$env]} \
+  #       --gold_timesteps ${gold_timesteps[$env]} \
+  #       --num_concepts_selected ${num_concepts[$env]} \
+  #       --method ${method} \
+  #       --out_folder basic >> ../../runs/logs/error_imperfect_cart_pole_pong_${method}_${seed}.txt 2>&1" ENTER
+  #   done
+  # done
+
   # --- Imperfect MiniGrid/Boxing ---
-  for method in policy_selection_multiple # policy_selection policy_selection_lp policy_selection_td policy_selection_multiple # imperfect_concepts random entropy greedy lp multiple
+  for method in policy_selection_lp policy_selection_td policy_selection_multiple # imperfect_concepts random entropy greedy lp multiple
   do 
     for env in mini_grid # boxing
     do 
