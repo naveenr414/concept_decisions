@@ -188,7 +188,7 @@ def get_n_atari_env(n_envs,atari_env_name,use_concepts,recordable=False,num_stac
             for i in range(n_envs)
         ])
     else:
-        vec_env = DummyVecEnv([
+        vec_env = SubprocVecEnv([
             lambda seed=i: safe_make_env(seed=seed)
             for i in range(n_envs)
         ])
@@ -232,7 +232,7 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
                     ),get_raw_state_cartpole)
             return env 
         if concept_list is None or use_processed:
-            vec_env = DummyVecEnv([make_env for _ in range(8)])
+            vec_env = SubprocVecEnv([make_env for _ in range(8)])
         else:
             vec_env = DummyVecEnv([make_env for _ in range(num_envs)])
     elif environment_string  == "mini_grid":
@@ -266,7 +266,7 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
             return env
         
         if concept_list is None or use_processed:
-            vec_env = DummyVecEnv([make_env for _ in range(num_envs)])
+            vec_env = SubprocVecEnv([make_env for _ in range(num_envs)])
         else:
             vec_env = DummyVecEnv([make_env for _ in range(num_envs)])
     elif environment_string == "pong":
@@ -305,13 +305,13 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
                     ),get_raw_state_glucose,obs_function=get_raw_state_glucose)
 
             return env 
-        vec_env = DummyVecEnv([make_env for i in range(num_envs)])
+        vec_env = SubprocVecEnv([make_env for i in range(num_envs)])
 
     if use_processed:
         vec_env = VecConceptWrapper(vec_env, fast_predictor, concept_idx,intervention_prob=intervention_prob,processed_concepts=processed_concepts)
         vec_env = VecNormalize(
                 vec_env,
-                norm_obs=True,
+                norm_obs=False,
                 norm_reward=False,   # or True if you want reward normalization too
                 clip_obs=10.0
             )

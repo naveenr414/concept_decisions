@@ -81,38 +81,38 @@ if is_main:
     # groundtruth_reward = evaluate_model(environment_string,ground_truth_gym_env,groundtruth_model,seed)
     # results['ground_truth'] = {'reward': groundtruth_reward}
 
-# if is_main:
-#     model_name = "../../results/models/concept_predictor_env={}_training={}_seed={}.pth".format(environment_string,100,seed)
-
-#     height = width = 84
-
-#     if environment_string == "mini_grid":
-#         num_frames = 1
-#     else:
-#         num_frames = 4
-
-#     if environment_string == "cart_pole":
-#         height = 160
-#         width = 240
-
-#     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-#     concept_predictor, acc_list = train_concept_predictor(ground_truth_gym_env,groundtruth_model,concept_list,list(range(len(concept_list))),environment_string,epochs=25,max_episode_length=10_000)
-#     torch.save(concept_predictor.state_dict(), model_name)
-#     concept_predictor.eval()
-#     results["concept_accuracy"] = acc_list.tolist()
-#     print("Concept Accuracy {}".format(acc_list.tolist()))
-
-if is_main:    
-    model_name = "../../results/q_estimates/env={}_training={}_seed={}_selection={}_source={}.pkl".format(environment_string,gold_timesteps,seed,"q_value","human_selected_binary")
-    q_estimates = rollout_q_estimates_td(groundtruth_model,ground_truth_gym_env,concept_list)
-    pickle.dump(q_estimates,open(model_name,"wb"))
-
-
 if is_main:
-    save_name = secrets.token_hex(4)  
-    save_path = get_save_path(out_folder,save_name)
-    delete_duplicate_results(out_folder,"",results)
-    json.dump(results,open('../../results/'+save_path,'w'))
+    model_name = "../../results/models/concept_predictor_env={}_training={}_seed={}.pth".format(environment_string,100,seed)
+
+    height = width = 84
+
+    if environment_string == "mini_grid":
+        num_frames = 1
+    else:
+        num_frames = 4
+
+    if environment_string == "cart_pole":
+        height = 160
+        width = 240
+
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    concept_predictor, acc_list = train_concept_predictor(ground_truth_gym_env,groundtruth_model,concept_list,list(range(len(concept_list))),environment_string,epochs=25,max_episode_length=10_000)
+    torch.save(concept_predictor.state_dict(), model_name)
+    concept_predictor.eval()
+    results["concept_accuracy"] = acc_list.tolist()
+    print("Concept Accuracy {}".format(acc_list.tolist()))
+
+# if is_main:    
+#     model_name = "../../results/q_estimates/env={}_training={}_seed={}_selection={}_source={}.pkl".format(environment_string,gold_timesteps,seed,"q_value","human_selected_binary")
+#     q_estimates = rollout_q_estimates_td(groundtruth_model,ground_truth_gym_env,concept_list)
+#     pickle.dump(q_estimates,open(model_name,"wb"))
+
+
+# if is_main:
+#     save_name = secrets.token_hex(4)  
+#     save_path = get_save_path(out_folder,save_name)
+#     delete_duplicate_results(out_folder,"",results)
+#     json.dump(results,open('../../results/'+save_path,'w'))
 
 if is_main:
     ground_truth_env.close()

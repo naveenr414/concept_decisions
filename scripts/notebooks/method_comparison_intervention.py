@@ -161,28 +161,21 @@ if is_main and method == 'greedy':
 if is_main and method == 'lp':
     subset_concept, idx = lp_based_selection(ground_truth_env,concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary")
 
+
+if is_main and method == 'lp_hybrid':
+    subset_concept, idx = policy_coverage_selection_lp_hybrid(
+    ground_truth_gym_env,
+    concept_list,
+    num_concepts_selected,
+    groundtruth_model,
+    q_estimates)
+
 # # Multiple
 if is_main and method == 'multiple':
     subset_concept, idx = multiple_lp_selection(ground_truth_env,concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary",[acc for acc in acc_list])
 
 if is_main and method == 'policy_selection_lp':
     subset_concept, idx = policy_coverage_selection_lp(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model)
-
-if is_main and method == 'policy_selection_td':
-    full_two_stage_env, full_two_stage_gym_env = get_environment(environment_string,concept_list,seed,processed_concepts=processed_concepts,concept_idx=list(range(len(concept_list))))
-    
-    if environment_string in ["cart_pole","mini_grid"]:
-        all_concept_model = train_ppo_model(full_two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=250_000,custom_name="{}_perfect_greedy_{}".format(environment_string,seed)) 
-    elif environment_string == "glucose":
-        all_concept_model = train_ppo_model(full_two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=1_000_000,custom_name="{}_perfect_greedy_{}".format(environment_string,seed)) 
-    else:
-        all_concept_model = train_ppo_model(full_two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=2_000_000,custom_name="{}_perfect_greedy_{}".format(environment_string,seed)) 
-
-    subset_concept, idx = policy_coverage_selection_lp_advantage(full_two_stage_gym_env,concept_list,num_concepts_selected,all_concept_model)
-
-
-if is_main and method == 'policy_selection_multiple':
-    subset_concept, idx = policy_coverage_selection_exp_lp(ground_truth_gym_env,concept_list,acc_list,num_concepts_selected,groundtruth_model)
 
 if is_main:
     two_stage_env, two_stage_gym_env = get_environment(environment_string,subset_concept,seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=idx,intervention_prob=intervention_prob,processed_concepts=processed_concepts)

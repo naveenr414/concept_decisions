@@ -118,6 +118,26 @@ if is_main and method == 'greedy':
 if is_main and method == 'lp':
     subset_concept, idx = lp_based_selection(ground_truth_env,concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary")
 
+if is_main and method == 'lp_hybrid':
+    subset_concept, idx = policy_coverage_selection_lp_hybrid(
+    ground_truth_gym_env,
+    concept_list,
+    num_concepts_selected,
+    groundtruth_model,
+    q_estimates)
+
+if is_main and method == 'lp_weighted':
+    subset_concept, idx = policy_coverage_selection_lp_weighted(
+    ground_truth_gym_env,
+    concept_list,
+    num_concepts_selected,
+    groundtruth_model,
+    q_estimates)
+
+
+if is_main and method == 'lp_old':
+    subset_concept, idx = lp_based_selection_old(ground_truth_env,concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary")
+
 if is_main and method == 'policy_selection_lp':
     subset_concept, idx = policy_coverage_selection_lp(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model)
 

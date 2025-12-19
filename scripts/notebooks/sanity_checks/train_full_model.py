@@ -61,14 +61,14 @@ if is_main:
 # ### Basic Setup
 
 if is_main:
-    concept_list = get_concepts(environment_string,"human_selected_binary",seed)
-    ground_truth_env, ground_truth_gym_env, additional_info = get_environment(environment_string, None, seed)   
+    concept_list,processed_concepts = get_concepts(environment_string,"human_selected_binary",seed)
+    ground_truth_env, ground_truth_gym_env = get_environment(environment_string, None, seed)   
     model_name = "../../../results/models/env={}_training={}_seed={}.zip".format(environment_string,gold_timesteps,seed)
     groundtruth_model = PPO.load(model_name)
 
 if is_main:
     model_name = "../../../results/models/concept_predictor_env={}_training={}_seed={}.pth".format(environment_string,100,seed)
-    
+
     height = width = 84
 
     if environment_string == "mini_grid":
@@ -89,20 +89,13 @@ if is_main:
         concept_predictor, acc_list = train_concept_predictor(ground_truth_gym_env,groundtruth_model,concept_list,list(range(len(concept_list))),environment_string,epochs=25,max_episode_length=10_000)
         torch.save(concept_predictor.state_dict(), model_name)
         concept_predictor.eval()
+        results["concept_accuracy"] = acc_list.tolist()
 
-if is_main and torch.cuda.is_available():
-    concept_predictor = concept_predictor.cuda()
-    concept_predictor.eval()
-    
-    # Warmup to allocate memory
-    dummy_input = torch.zeros(8, num_frames, height, width, device='cuda')
-    with torch.no_grad():
-        _ = concept_predictor(dummy_input)
 
 if is_main:
-    two_stage_env, two_stage_gym_env, additional_info = get_environment(environment_string, concept_list, seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=list(range(len(concept_list))))   
+    two_stage_env, two_stage_gym_env = get_environment(environment_string,concept_list,seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=list(range(len(concept_list))),processed_concepts=processed_concepts)
     model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_all_concepts_real".format(environment_string))    
-    greedy_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,additional_info,model,seed)
+    greedy_two_stage_reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
     print(greedy_two_stage_reward)
     ground_truth_env.close()
     ground_truth_gym_env.close()

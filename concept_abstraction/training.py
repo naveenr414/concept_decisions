@@ -99,7 +99,7 @@ class WandbLoggingCallback(BaseCallback):
 
         return True
 
-def get_model(environment_string,policy,override={}):
+def get_model(environment_string,policy,custom_name="",override={}):
     default_model_dict = {
         'n_steps': 512,
         'batch_size': 128,
@@ -150,16 +150,25 @@ def get_model(environment_string,policy,override={}):
             default_model_dict['batch_size'] = 1024
             default_model_dict['n_epochs'] = 4
         elif environment_string == "pong":
-            default_model_dict['policy_kwargs'] = {'net_arch': [128,128]}
+            default_model_dict['policy_kwargs'] = {'net_arch': [256,256]}
             default_model_dict['n_steps'] = 1024
             default_model_dict['batch_size'] = 512
             default_model_dict['n_epochs'] = 10
         elif environment_string == "boxing":
-            default_model_dict['policy_kwargs'] = {'net_arch': [128,128]}
-            default_model_dict['n_steps'] = 128
-            default_model_dict['batch_size'] = 256
-            default_model_dict['n_epochs'] = 4
-            default_model_dict['ent_coef'] = 0.01
+            if "imperfect" in custom_name or "all_concepts_real" in custom_name or "intervention" in custom_name:
+                print("Using imperfect boxing")
+                default_model_dict['policy_kwargs'] = {'net_arch': [512, 256]} # Wider first layer
+                default_model_dict['n_steps'] = 2048                          # Larger rollout for stability
+                default_model_dict['batch_size'] = 512                        # Better gradient estimate
+                default_model_dict['n_epochs'] = 10                           # Standard for PPO, helps critic
+                default_model_dict['learning_rate'] = 2e-4                    # Slightly lower for stability
+                default_model_dict['ent_coef'] = 0.01                         # Keep for now, watch entropy_loss           
+            else:
+                default_model_dict['policy_kwargs'] = {'net_arch': [128,128]}
+                default_model_dict['n_steps'] = 128
+                default_model_dict['batch_size'] = 256
+                default_model_dict['n_epochs'] = 4
+                default_model_dict['ent_coef'] = 0.01
     else:
         if environment_string == "cart_pole":
             default_model_dict['n_steps'] = 4096
@@ -206,7 +215,7 @@ def train_ppo_model(env,environment_string,seed=42,total_timesteps=150_000,polic
     np.random.seed(seed)
     random.seed(seed)
 
-    model_params = get_model(environment_string,policy,override=override)
+    model_params = get_model(environment_string,policy,override=override,custom_name=custom_name)
     model_params['env'] = environment_string
 
     name = "{}_{}".format(environment_string,policy)

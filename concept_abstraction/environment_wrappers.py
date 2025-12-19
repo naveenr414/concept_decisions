@@ -93,11 +93,20 @@ class VecConceptWrapper(VecEnvWrapper):
         self.num_velocity = len(velocity_concepts)
         self.concept_accuracy = concept_accuracy
         
-        self.mask = torch.tensor(
-            [int(np.random.random() < self.intervention_prob) for i in concept_idx], 
-            device='cuda', dtype=torch.bool
-        )
-        
+        num_concepts = len(concept_idx)
+        # 1. Calculate the exact number of concepts to mask
+        k = round(self.intervention_prob * num_concepts)
+
+        # 2. Generate a mask of False values
+        self.mask = torch.zeros(num_concepts, device='cuda', dtype=torch.bool)
+
+        # 3. Randomly select exactly k indices and set them to True
+        if k > 0:
+            indices = torch.randperm(num_concepts, device='cuda')[:k]
+            self.mask[indices] = 1
+
+        print("Indices are {}".format(indices))
+
         # PRE-ALLOCATE BUFFERS
         self.num_envs = venv.num_envs
         self._buffers_ready = False
@@ -229,8 +238,9 @@ class VecConceptWrapper(VecEnvWrapper):
                 
                 self.predictions_gpu[:] = self.fast_predictor(obs_tensor)[:, self.concept_idx].float()
             
-            self.predictions_gpu = torch.sigmoid(self.predictions_gpu)
-            self.predictions_gpu[:, self.mask] = concept_vals[:, self.mask]
+            max_val = torch.max(self.predictions_gpu)
+            # self.predictions_gpu = torch.sigmoid(self.predictions_gpu)
+            self.predictions_gpu[:, self.mask] = max_val*2*concept_vals[:, self.mask]-max_val
         else:
             self.predictions_gpu[:] = concept_vals
 

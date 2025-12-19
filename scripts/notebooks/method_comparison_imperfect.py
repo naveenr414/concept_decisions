@@ -166,12 +166,35 @@ if is_main and method == 'greedy':
 if is_main and method == 'lp':
     subset_concept, idx = lp_based_selection(ground_truth_env,concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary")
 
+if is_main and method == 'lp_old':
+    subset_concept, idx = lp_based_selection_old(ground_truth_env,concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary")
+
 # # Multiple
 if is_main and method == 'multiple':
     subset_concept, idx = multiple_lp_selection(ground_truth_env,concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary",acc_list)
 
+if is_main and method == 'multiple_old':
+    subset_concept, idx = multiple_lp_selection_old(ground_truth_env,concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary",acc_list)
+
 if is_main and method == 'completeness':
     subset_concept, idx = concept_completeness_selection(ground_truth_env,concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary")
+
+if is_main and method == 'lp_hybrid':
+    subset_concept, idx = policy_coverage_selection_lp_hybrid(
+    ground_truth_gym_env,
+    concept_list,
+    num_concepts_selected,
+    groundtruth_model,
+    q_estimates)
+
+if is_main and method == 'lp_weighted':
+    subset_concept, idx = policy_coverage_selection_lp_weighted(
+    ground_truth_gym_env,
+    concept_list,
+    num_concepts_selected,
+    groundtruth_model,
+    q_estimates)
+
 
 if is_main and method == 'lp_policy':
     subset_concept, idx = lp_based_selection(ground_truth_env,concept_list,num_concepts_selected,"policy",q_estimates,"human_selected_binary")
@@ -180,16 +203,7 @@ if is_main and method == 'policy_selection_lp':
     subset_concept, idx = policy_coverage_selection_lp(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model)
 
 if is_main and method == 'policy_selection_td':
-    full_two_stage_env, full_two_stage_gym_env = get_environment(environment_string,concept_list,seed,processed_concepts=processed_concepts,concept_idx=list(range(len(concept_list))))
-    
-    if environment_string in ["cart_pole","mini_grid"]:
-        all_concept_model = train_ppo_model(full_two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=250_000,custom_name="{}_perfect_greedy_{}".format(environment_string,seed)) 
-    elif environment_string == "glucose":
-        all_concept_model = train_ppo_model(full_two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=1_000_000,custom_name="{}_perfect_greedy_{}".format(environment_string,seed)) 
-    else:
-        all_concept_model = train_ppo_model(full_two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=2_000_000,custom_name="{}_perfect_greedy_{}".format(environment_string,seed)) 
-
-    subset_concept, idx = policy_coverage_selection_lp_advantage(full_two_stage_gym_env,concept_list,num_concepts_selected,all_concept_model)
+    subset_concept, idx = policy_coverage_selection_lp_advantage(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model)
 
 
 if is_main and method == 'policy_selection_multiple':
@@ -199,7 +213,7 @@ if is_main:
     two_stage_env, two_stage_gym_env = get_environment(environment_string,concept_list,seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=idx,processed_concepts=processed_concepts)
     model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_imperfect_{}_{}".format(environment_string,method,seed))    
     reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
-    results[method] = {'reward': reward, 'concepts': list(range(len(concept_list)))}
+    results[method] = {'reward': reward, 'concepts': idx}
 
 
 if is_main:
