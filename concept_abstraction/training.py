@@ -212,12 +212,18 @@ def train_ppo_model(env,environment_string,seed=42,total_timesteps=150_000,polic
         env: Gymnasium environment
     
     Returns: Stable Baseline3 PPO Model"""
-    torch.manual_seed(seed)
-    np.random.seed(seed)
     random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
+    # Optional but recommended for determinism
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
     model_params = get_model(environment_string,policy,override=override,custom_name=custom_name)
     model_params['env'] = environment_string
+    env.seed(seed)
+
 
     name = "{}_{}".format(environment_string,policy)
     if custom_name != "":
@@ -243,6 +249,7 @@ def train_ppo_model(env,environment_string,seed=42,total_timesteps=150_000,polic
             gamma=0.99,
             verbose=0,
             device=model_params['device'],
+            seed=seed,
         )
 
     if silent:
@@ -283,7 +290,7 @@ class RandomAgent:
         actions = np.array([self.action_space.sample() for _ in range(self.num_envs)])
         return actions, None
 
-def evaluate_model(environment_string,env,model,seed,max_steps=50_000):
+def evaluate_model(environment_string,env,model,seed,max_steps=100_000):
     """Evaluation Function that tailors the evaluation
         based on the environment
         
@@ -296,13 +303,21 @@ def evaluate_model(environment_string,env,model,seed,max_steps=50_000):
     
     Returns: Average Reward (for most environments) or MIMIC WIQ score"""
 
-    np.random.seed(seed)
     random.seed(seed)
+    np.random.seed(seed)
     torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    env.seed(seed)
+    if hasattr(model, "set_random_seed"):
+        model.set_random_seed(seed)
+
     if environment_string == "glucose":
-        return get_average_reward(env,model,max_steps=5000,max_steps_per=500)
+        return get_average_reward(env,model,seed,max_steps=10000,max_steps_per=1000)
     else:
-        return get_average_reward(env,model,max_steps=max_steps)
+        return get_average_reward(env,model,seed,max_steps=max_steps)
 #----------------------------
 # Lightweight CNN for 1-channel input
 # ----------------------------

@@ -391,7 +391,7 @@ def rollout_pi_estimates(model, env, concept_list, num_rollouts=200, max_steps=2
     return pair_list
 
 
-def get_average_reward(vec_env, model, max_steps=100_000,max_steps_per=10000):
+def get_average_reward(vec_env, model,seed, max_steps=100_000,max_steps_per=10000):
     """
     Evaluate a model on a SubprocVecEnv (or any VecEnv) and return the average reward.
 
@@ -408,9 +408,13 @@ def get_average_reward(vec_env, model, max_steps=100_000,max_steps_per=10000):
     num_envs = vec_env.num_envs
     episode_rewards = []
     rewards_accum = np.zeros(num_envs)
+    vec_env.seed(seed)
     obs, _ = vec_env.reset()
     total_steps = 0
     steps_per = np.zeros(num_envs)
+
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
     while total_steps < max_steps:
         actions, _ = model.predict(obs)
