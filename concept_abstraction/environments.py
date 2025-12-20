@@ -133,7 +133,7 @@ def make_ocenv(env_name,use_concepts,seed=0,recordable=False,num_stack=4,process
             env_name,
             mode="ram",
             render_mode=None, 
-            frameskip=2, 
+            frameskip=4, 
         )
     env = Monitor(env)
     env.ale = env.unwrapped._ale
@@ -311,12 +311,18 @@ def get_environment(environment_string,concept_list,seed,concept_idx=[],use_proc
         vec_env = VecConceptWrapper(vec_env, fast_predictor, concept_idx,intervention_prob=intervention_prob,processed_concepts=processed_concepts)
         vec_env = VecNormalize(
                 vec_env,
-                norm_obs=False,
+                norm_obs=True,
                 norm_reward=False,   # or True if you want reward normalization too
                 clip_obs=10.0
             )
     elif concept_list is not None:
         vec_env = VecConceptWrapper(vec_env, None, concept_idx,intervention_prob=intervention_prob,processed_concepts=processed_concepts,concept_accuracy=concept_accuracy)
+        vec_env = VecNormalize(
+                vec_env,
+                norm_obs=True,
+                norm_reward=False,   # or True if you want reward normalization too
+                clip_obs=10.0
+            )
         vec_env.observation_space = spaces.MultiBinary(len(concept_idx))
 
     gymnasium_env = GymnasiumWrapper(vec_env)

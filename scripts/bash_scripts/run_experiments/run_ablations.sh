@@ -85,20 +85,20 @@ for idx in "${!SEEDS[@]}"; do
     done 
   done 
   
-  for method in completeness lp_policy 
-  do 
-    for env in mini_grid
-    do 
-      session="ablations_${seed}"
-      tmux send-keys -t "$session" \
-        "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_imperfect.py \
-        --seed ${seed} \
-        --environment_string ${env} \
-        --training_timesteps ${training_timesteps[$env]} \
-        --gold_timesteps ${gold_timesteps[$env]} \
-        --num_concepts_selected ${num_concepts[$env]} \
-        --method ${method} \
-        --out_folder basic >> ../../runs/logs/error_ablations_${seed}.txt 2>&1" ENTER
-    done 
-  done 
+  # for method in completeness lp_policy 
+  # do 
+  #   for env in mini_grid
+  #   do 
+  #     session="ablations_${seed}"
+  #     tmux send-keys -t "$session" \
+  #       "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_imperfect.py \
+  #       --seed ${seed} \
+  #       --environment_string ${env} \
+  #       --training_timesteps ${training_timesteps[$env]} \
+  #       --gold_timesteps ${gold_timesteps[$env]} \
+  #       --num_concepts_selected ${num_concepts[$env]} \
+  #       --method ${method} \
+  #       --out_folder basic >> ../../runs/logs/error_ablations_${seed}.txt 2>&1" ENTER
+  #   done 
+  # done 
 done

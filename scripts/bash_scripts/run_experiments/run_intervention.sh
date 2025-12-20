@@ -4,7 +4,7 @@
 SEEDS=(42 43 44)          # Add as many seeds as you want
 GPU_MAP=(0 2 3)           # GPU assignment for each seed index
 
-METHODS=(random entropy greedy lp_hybrid)
+METHODS=(lp_hybrid)
 
 environment=food
 
@@ -73,24 +73,24 @@ done
 
 for seed in "${SEEDS[@]}"; do
 
-  for method in "${METHODS[@]}"; do
-    for env in cart_pole 
-    do
+  # for method in "${METHODS[@]}"; do
+  #   for env in cart_pole 
+  #   do
 
-      tmux_target="intervention_cart_pole_pong_${method}_${seed}"
+  #     tmux_target="intervention_cart_pole_pong_${method}_${seed}"
 
-      tmux send-keys -t "$tmux_target" \
-        "conda activate ${environment}; python -u method_comparison_intervention.py \
-        --seed ${seed} \
-        --environment_string ${env} \
-        --training_timesteps ${training_timesteps[$env]} \
-        --gold_timesteps ${gold_timesteps[$env]} \
-        --num_concepts_selected ${num_concepts[$env]} \
-        --method ${method} \
-        --intervention_prob 0.5 \
-        --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
-    done
-  done
+  #     tmux send-keys -t "$tmux_target" \
+  #       "conda activate ${environment}; python -u method_comparison_intervention.py \
+  #       --seed ${seed} \
+  #       --environment_string ${env} \
+  #       --training_timesteps ${training_timesteps[$env]} \
+  #       --gold_timesteps ${gold_timesteps[$env]} \
+  #       --num_concepts_selected ${num_concepts[$env]} \
+  #       --method ${method} \
+  #       --intervention_prob 0.5 \
+  #       --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
+  #   done
+  # done
 
   for method in "${METHODS[@]}"; do
     for env in boxing  
@@ -112,22 +112,22 @@ for seed in "${SEEDS[@]}"; do
   done
 
 
-  env=cart_pole
-  for intervention_prob in 0.25 0.75; do
-    for method in "${METHODS[@]}"; do
+  # env=cart_pole
+  # for intervention_prob in 0.25 0.75; do
+  #   for method in "${METHODS[@]}"; do
 
-      tmux_target="intervention_cart_pole_pong_${method}_${seed}"
+  #     tmux_target="intervention_cart_pole_pong_${method}_${seed}"
 
-      tmux send-keys -t "$tmux_target" \
-        "conda activate ${environment}; python -u method_comparison_intervention.py \
-        --seed ${seed} \
-        --environment_string ${env} \
-        --training_timesteps ${training_timesteps[$env]} \
-        --gold_timesteps ${gold_timesteps[$env]} \
-        --num_concepts_selected ${num_concepts[$env]} \
-        --method ${method} \
-        --intervention_prob ${intervention_prob} \
-        --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
-    done
-  done
+  #     tmux send-keys -t "$tmux_target" \
+  #       "conda activate ${environment}; python -u method_comparison_intervention.py \
+  #       --seed ${seed} \
+  #       --environment_string ${env} \
+  #       --training_timesteps ${training_timesteps[$env]} \
+  #       --gold_timesteps ${gold_timesteps[$env]} \
+  #       --num_concepts_selected ${num_concepts[$env]} \
+  #       --method ${method} \
+  #       --intervention_prob ${intervention_prob} \
+  #       --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
+  #   done
+  # done
 done

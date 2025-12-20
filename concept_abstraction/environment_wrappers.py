@@ -105,8 +105,6 @@ class VecConceptWrapper(VecEnvWrapper):
             indices = torch.randperm(num_concepts, device='cuda')[:k]
             self.mask[indices] = 1
 
-        print("Indices are {}".format(indices))
-
         # PRE-ALLOCATE BUFFERS
         self.num_envs = venv.num_envs
         self._buffers_ready = False
@@ -162,10 +160,12 @@ class VecConceptWrapper(VecEnvWrapper):
         processed_obs, rewards, dones, infos = self.venv.step_wait()
         processed_obs = self._process_batch(processed_obs,infos)
         
-        for idx, i in enumerate(infos):
-            if "terminal_observation" in i:
-                i['terminal_observation'] = processed_obs[idx]
-
+        for idx, info in enumerate(infos):
+            if "terminal_observation" in info:
+                terminal_pixels = info["terminal_observation"]
+                term_obs_batch = np.expand_dims(terminal_pixels, 0)
+                info['terminal_observation'] = self._process_batch(term_obs_batch, [info])[0]
+        
         return processed_obs, rewards, dones, infos    
         
     def _process_batch(self, obs_batch,infos):
@@ -236,47 +236,26 @@ class VecConceptWrapper(VecEnvWrapper):
                 else:
                     obs_tensor = obs_batch.to('cuda', dtype=torch.float32, non_blocking=True) / 255.0
                 
-                self.predictions_gpu[:] = self.fast_predictor(obs_tensor)[:, self.concept_idx].float()
-            
-            max_val = torch.max(self.predictions_gpu)
-            # self.predictions_gpu = torch.sigmoid(self.predictions_gpu)
-            self.predictions_gpu[:, self.mask] = max_val*2*concept_vals[:, self.mask]-max_val
+                logits = self.fast_predictor(obs_tensor)[:, self.concept_idx].float()
+                
+                # 2. CLAMP the logits to a fixed range
+                # This prevents any "rogue" high-confidence predictions from 
+                # overpowering your intervention.
+                logit_bound = 15.0
+                logits = torch.clamp(logits, -logit_bound, logit_bound)
+                
+                self.predictions_gpu[:] = logits
+                
+                # 3. SET INTERVENTION to the exact bounds
+                # If concept is 1, set to +15; if 0, set to -15.
+                # This ensures intervention is ALWAYS the max/min possible value.
+                self.predictions_gpu[:, self.mask] = (concept_vals[:, self.mask] * 2 - 1) * logit_bound
         else:
             self.predictions_gpu[:] = concept_vals
 
         # Just allocate fresh CPU array - this is actually very cheap
         return self.predictions_gpu.cpu().numpy()
     
-    def __getstate__(self):
-        state = self.__dict__.copy()
-
-        # --- Drop non-picklable SB3 / Gym objects ---
-        state['venv'] = None
-        state['fast_predictor'] = None
-
-        # Spaces contain mappingproxy → not picklable
-        state['observation_space'] = None
-        state['action_space'] = None
-        state['class_attributes'] = False
-
-        # Drop all torch tensors (esp. CUDA)
-        for k, v in state.items():
-            if isinstance(v, torch.Tensor):
-                state[k] = None
-            else:
-                print(k,type(v))
-                import pickle 
-                pickle.dump(v,open("temp.pkl","wb"))
-
-        # Runtime buffers
-        state['_buffers_ready'] = False
-        state['observations_gpu'] = None
-        state['predictions_gpu'] = None
-        state['predictions_cpu'] = None
-        state['obs_batch_gpu'] = None
-
-        return state 
-
 
     def __setstate__(self, state):
         self.__dict__.update(state)

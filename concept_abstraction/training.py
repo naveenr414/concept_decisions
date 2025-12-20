@@ -163,6 +163,7 @@ def get_model(environment_string,policy,custom_name="",override={}):
                 default_model_dict['n_epochs'] = 10                           # Standard for PPO, helps critic
                 default_model_dict['learning_rate'] = 2e-4                    # Slightly lower for stability
                 default_model_dict['ent_coef'] = 0.01                         # Keep for now, watch entropy_loss           
+                default_model_dict['clip_fraction'] = 0.1                     # Keep for now, watch entropy_loss           
             else:
                 default_model_dict['policy_kwargs'] = {'net_arch': [128,128]}
                 default_model_dict['n_steps'] = 128
