@@ -139,9 +139,9 @@ def get_model(environment_string,policy,custom_name="",override={}):
             default_model_dict['policy_kwargs'] = {'net_arch': [64,64]}
             default_model_dict['batch_size'] = 128
             default_model_dict['n_steps'] = 256
-            default_model_dict['n_epochs'] = 10
+            default_model_dict['n_epochs'] = 4
             default_model_dict['ent_coef'] = 0
-            default_model_dict['learning_rate'] = 3e-4
+            default_model_dict['learning_rate'] = 1e-4
             default_model_dict['clip_range'] = 0.1
             default_model_dict['target_kl'] = 0.01
         elif environment_string == "mini_grid":
@@ -172,11 +172,11 @@ def get_model(environment_string,policy,custom_name="",override={}):
                 default_model_dict['ent_coef'] = 0.01
     else:
         if environment_string == "cart_pole":
-            default_model_dict['n_steps'] = 4096
-            default_model_dict['batch_size'] = 512
-            default_model_dict['n_epochs'] = 10
-            default_model_dict['ent_coef'] = 0.01
-            default_model_dict['learning_rate'] = 3*10**-4
+            default_model_dict['n_steps'] = 1024
+            default_model_dict['batch_size'] = 256
+            default_model_dict['n_epochs'] = 4
+            default_model_dict['ent_coef'] = 0.0005
+            default_model_dict['learning_rate'] = 1*10**-4
             default_model_dict['vf_coef'] = 0.5
             default_model_dict['device'] = 'cuda'
         elif environment_string == 'mini_grid':
