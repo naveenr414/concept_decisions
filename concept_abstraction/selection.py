@@ -1054,7 +1054,6 @@ def policy_coverage_selection_lp_hybrid(
                         final_vals.append(tup)
     final_vals = final_vals[:250_000]
     final_vals = sorted(final_vals,reverse=True)
-    weights = [i[0] for i in final_vals]
 
     # --------------------------------------------------
     # Collect observations / actions (same as before)
@@ -1147,7 +1146,7 @@ def policy_coverage_selection_lp_hybrid(
     if len(fixed_idx) > 0:
         model.setObjective(gp.quicksum(y[p] for p in range(M)), GRB.MAXIMIZE)    
     else:
-        model.setObjective(gp.quicksum(weights[i]*y_2[i] for i in range(len(final_vals))), GRB.MAXIMIZE)    
+        model.setObjective(gp.quicksum(y_2[i] for i in range(len(final_vals))), GRB.MAXIMIZE)    
     model.optimize()
 
     if model.Status not in (GRB.OPTIMAL, GRB.TIME_LIMIT):
