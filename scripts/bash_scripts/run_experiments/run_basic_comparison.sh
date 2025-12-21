@@ -24,8 +24,8 @@ sessions=(
   # perfect_pong_random
   # perfect_pong_entropy
   # perfect_pong_greedy
-  # perfect_pong_lp_hybrid
-  perfect_pong_policy_selection_lp
+  perfect_pong_lp_hybrid
+  # perfect_pong_policy_selection_lp
 
   # perfect_boxing_perfect_concepts
   # perfect_boxing_random
@@ -127,7 +127,7 @@ for idx in "${!SEEDS[@]}"; do
   #   done
   # done
 
-  for method in policy_selection_lp # lp_hybrid 
+  for method in lp_hybrid # lp_hybrid 
   do 
     for env in pong
     do 
