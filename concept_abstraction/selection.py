@@ -1122,11 +1122,9 @@ def policy_coverage_selection_lp_hybrid(
             model.addConstr(y_2[i] == 0)  # cannot be covered
     
     # Prefix constraints: enforce consecutive coverage
-    # y[i] <= y[i-1] for i>0
-
-    # TODO: Remove this
-    # for i in range(1, len(final_vals)):
-    #     model.addConstr(y_2[i] <= y_2[i-1], name=f"prefix_{i}")
+    if len(fixed_idx) == 0:
+        for i in range(1, len(final_vals)):
+            model.addConstr(y_2[i] <= y_2[i-1], name=f"prefix_{i}")
 
     weights = [i[0] for i in final_vals]
 
@@ -1147,10 +1145,7 @@ def policy_coverage_selection_lp_hybrid(
 
     # Constraint: maximize covered pairs
     model.addConstr(gp.quicksum(y[p] for p in range(M))/M >= coverage_ratio)
-    if len(fixed_idx) > 0:
-        model.setObjective(gp.quicksum(y[p] for p in range(M)), GRB.MAXIMIZE)    
-    else:
-        model.setObjective(gp.quicksum(weights[i]*y_2[i] for i in range(len(final_vals))), GRB.MAXIMIZE)    
+    model.setObjective(gp.quicksum(weights[i]*y_2[i] for i in range(len(final_vals))), GRB.MAXIMIZE)    
     model.optimize()
 
     if model.Status not in (GRB.OPTIMAL, GRB.TIME_LIMIT):
@@ -1165,8 +1160,6 @@ def policy_coverage_selection_lp_hybrid(
                 num_concepts_selected,
                 groundtruth_model,
                 q_estimates,
-                num_pairs_lp=20_000,
-                rollout_steps=1_000,
                 coverage_ratio=coverage_ratio
             )
 
