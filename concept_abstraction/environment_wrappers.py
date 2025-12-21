@@ -249,9 +249,10 @@ class VecConceptWrapper(VecEnvWrapper):
                 # 3. SET INTERVENTION to the exact bounds
                 # If concept is 1, set to +15; if 0, set to -15.
                 # This ensures intervention is ALWAYS the max/min possible value.
-                self.predictions_gpu[:, self.mask] = (concept_vals[:, self.mask] * 2 - 1) * logit_bound
+                self.predictions_gpu[:, self.mask] = (concept_vals[:, self.mask] * 30 - 15) * logit_bound
         else:
-            self.predictions_gpu[:] = concept_vals
+            base = concept_vals * 30 - 15
+            self.predictions_gpu[:] = base
 
         # Just allocate fresh CPU array - this is actually very cheap
         return self.predictions_gpu.cpu().numpy()

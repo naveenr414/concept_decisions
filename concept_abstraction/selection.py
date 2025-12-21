@@ -479,6 +479,7 @@ def lp_based_selection(env,concept_list,num_concepts_selected,selection_function
                 seen.add(tuple(i[1]))
         gap_diffs = final_gap_diffs
         final_vals = gap_diffs[:100_000]
+        print("Final vals {}".format(len(final_vals)))
         idx, num_covered = max_prefix_gurobi(final_vals,num_concepts_selected)
         if len(idx) < num_concepts_selected:
             idx, num_covered = max_prefix_gurobi(final_vals,num_concepts_selected,weighted=True,fixed_idx=idx)
