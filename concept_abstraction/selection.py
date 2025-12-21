@@ -1020,12 +1020,10 @@ def policy_coverage_selection_lp_hybrid(
     groundtruth_model,
     q_estimates,
     num_pairs_lp=20_000,
-    rollout_steps=1_000,
+    rollout_steps=10_000,
     coverage_ratio=0.95,
     fixed_idx = []
 ):
-    rng = np.random.default_rng()
-
     unique_actions = list(set([int(i[1]) for i in q_estimates]))
     actions = np.array([i[1] for i in q_estimates])
 
@@ -1037,15 +1035,6 @@ def policy_coverage_selection_lp_hybrid(
     final_vals = []
     num_actions = len(set([i[1] for i in q_estimates]))
     print(num_actions)
-    state_diff = []
-    for i in range(0,len(q_estimates),num_actions):
-        temp = []
-        for j in range(num_actions):
-            for j_prime in range(j):
-                temp.append(q_estimates[i+j][2]-q_estimates[i+j_prime][2])
-        state_diff.append((q_estimates[i][0],np.array(temp)))
-    gap_diffs = []
-    final_gap_diffs = []
     seen = set() 
     for a in unique_actions:
             relevant_idx = np.where(actions == a)[0]
@@ -1074,6 +1063,7 @@ def policy_coverage_selection_lp_hybrid(
     all_actions = []
 
     obs, info = ground_truth_gym_env.reset()
+
     for _ in range(rollout_steps):
         actions = groundtruth_model.predict(obs)[0]
         for j in range(len(actions)):
@@ -1091,8 +1081,8 @@ def policy_coverage_selection_lp_hybrid(
     # --------------------------------------------------
     # Sample cross-action pairs
     # --------------------------------------------------
-    idx_i = rng.integers(0, N, size=5 * num_pairs_lp)
-    idx_j = rng.integers(0, N, size=5 * num_pairs_lp)
+    idx_i = np.random.randint(low=0, high=N, size=5 * num_pairs_lp)
+    idx_j = np.random.randint(low=0, high=N, size=5 * num_pairs_lp)
 
     valid = all_actions[idx_i] != all_actions[idx_j]
     idx_i = idx_i[valid][:num_pairs_lp]
