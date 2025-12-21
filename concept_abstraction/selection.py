@@ -1021,7 +1021,7 @@ def policy_coverage_selection_lp_hybrid(
     q_estimates,
     num_pairs_lp=20_000,
     rollout_steps=10_000,
-    coverage_ratio=0.95,
+    coverage_ratio=0.99,
     fixed_idx = []
 ):
     unique_actions = list(set([int(i[1]) for i in q_estimates]))
@@ -1111,10 +1111,7 @@ def policy_coverage_selection_lp_hybrid(
     # y_p variables (pair covered)
     y = model.addVars(M, lb=0.0, ub=1.0, vtype=GRB.CONTINUOUS, name="y")
 
-    if len(fixed_idx) > 0:
-        y_2 = model.addVars(len(final_vals), lb=0.0, vtype=GRB.CONTINUOUS, name="y_2")
-    else:
-        y_2 = model.addVars(len(final_vals), lb=0.0, ub=ub, vtype=GRB.BINARY, name="y_2")
+    y_2 = model.addVars(len(final_vals), lb=0.0, ub=ub, vtype=GRB.BINARY, name="y_2")
 
     for i, (_, elems) in enumerate(final_vals):
         if elems:  # make sure not empty
@@ -1127,9 +1124,8 @@ def policy_coverage_selection_lp_hybrid(
     
     # Prefix constraints: enforce consecutive coverage
     # y[i] <= y[i-1] for i>0
-    if len(fixed_idx) == 0:
-        for i in range(1, len(final_vals)):
-            model.addConstr(y_2[i] <= y_2[i-1], name=f"prefix_{i}")
+    for i in range(1, len(final_vals)):
+        model.addConstr(y_2[i] <= y_2[i-1], name=f"prefix_{i}")
 
     for p in range(M):
         model.addConstr(
@@ -1148,7 +1144,10 @@ def policy_coverage_selection_lp_hybrid(
 
     # Constraint: maximize covered pairs
     model.addConstr(gp.quicksum(y[p] for p in range(M))/M >= coverage_ratio)
-    model.setObjective(gp.quicksum(weights[i]*y_2[i] for i in range(len(final_vals))), GRB.MAXIMIZE)    
+    if len(fixed_idx) > 0:
+        model.setObjective(gp.quicksum(y[p] for p in range(M)), GRB.MAXIMIZE)    
+    else:
+        model.setObjective(gp.quicksum(weights[i]*y_2[i] for i in range(len(final_vals))), GRB.MAXIMIZE)    
     model.optimize()
 
     if model.Status not in (GRB.OPTIMAL, GRB.TIME_LIMIT):

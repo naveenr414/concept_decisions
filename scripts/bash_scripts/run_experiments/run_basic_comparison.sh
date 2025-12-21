@@ -14,17 +14,18 @@ sessions=(
   # perfect_mini_grid_greedy
   # perfect_mini_grid_lp_hybrid
 
-  perfect_cart_pole_perfect_concepts
-  perfect_cart_pole_random
-  perfect_cart_pole_entropy
-  perfect_cart_pole_greedy
-  perfect_cart_pole_lp_hybrid
+  # perfect_cart_pole_perfect_concepts
+  # perfect_cart_pole_random
+  # perfect_cart_pole_entropy
+  # perfect_cart_pole_greedy
+  # perfect_cart_pole_lp_hybrid
 
   # perfect_pong_perfect_concepts
   # perfect_pong_random
   # perfect_pong_entropy
   # perfect_pong_greedy
-  perfect_pong_lp_hybrid
+  # perfect_pong_lp_hybrid
+  perfect_pong_policy_selection_lp
 
   # perfect_boxing_perfect_concepts
   # perfect_boxing_random
@@ -38,12 +39,12 @@ sessions=(
   # perfect_glucose_greedy
   # perfect_glucose_lp_hybrid
 
-  imperfect_cart_pole_pong_imperfect_concepts
-  imperfect_cart_pole_pong_ground_truth
-  imperfect_cart_pole_pong_random
-  imperfect_cart_pole_pong_entropy
-  imperfect_cart_pole_pong_greedy
-  imperfect_cart_pole_pong_lp_hybrid
+  # imperfect_cart_pole_pong_imperfect_concepts
+  # imperfect_cart_pole_pong_ground_truth
+  # imperfect_cart_pole_pong_random
+  # imperfect_cart_pole_pong_entropy
+  # imperfect_cart_pole_pong_greedy
+  # imperfect_cart_pole_pong_lp_hybrid
 
   # imperfect_mini_grid_boxing_imperfect_concepts
   # imperfect_mini_grid_boxing_ground_truth
@@ -93,15 +94,15 @@ setup_tmux_session() {
 }
 
 # # Create tmux sessions for each experiment × seed, assigning GPU
-# for idx in "${!SEEDS[@]}"; do
-#   seed=${SEEDS[$idx]}
-#   gpu=${GPU_MAP[$idx]}
-#   for s in "${sessions[@]}"; do
-#       session_name="${s}_${seed}"
-#       setup_tmux_session "$session_name" "$gpu"
-#       : > "runs/logs/error_${session_name}.txt"
-#   done
-# done
+for idx in "${!SEEDS[@]}"; do
+  seed=${SEEDS[$idx]}
+  gpu=${GPU_MAP[$idx]}
+  for s in "${sessions[@]}"; do
+      session_name="${s}_${seed}"
+      setup_tmux_session "$session_name" "$gpu"
+      : > "runs/logs/error_${session_name}.txt"
+  done
+done
 
 # Run experiments
 for idx in "${!SEEDS[@]}"; do
@@ -109,24 +110,24 @@ for idx in "${!SEEDS[@]}"; do
   gpu=${GPU_MAP[$idx]}
 
   # # # --- Perfect methods ---
-  for method in perfect_concepts random entropy greedy lp_hybrid 
-  do 
-    for env in cart_pole # mini_grid pong glucose boxing
-    do 
-      session="perfect_${env}_${method}_${seed}"
-      tmux send-keys -t "$session" \
-        "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_perfect.py \
-        --seed ${seed} \
-        --environment_string ${env} \
-        --training_timesteps ${training_timesteps[$env]} \
-        --gold_timesteps ${gold_timesteps[$env]} \
-        --num_concepts_selected ${num_concepts[$env]} \
-        --method ${method} \
-        --out_folder basic >> ../../runs/logs/error_perfect_${env}_${method}_${seed}.txt 2>&1" ENTER
-    done
-  done
+  # for method in perfect_concepts random entropy greedy lp_hybrid 
+  # do 
+  #   for env in cart_pole # mini_grid pong glucose boxing
+  #   do 
+  #     session="perfect_${env}_${method}_${seed}"
+  #     tmux send-keys -t "$session" \
+  #       "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_perfect.py \
+  #       --seed ${seed} \
+  #       --environment_string ${env} \
+  #       --training_timesteps ${training_timesteps[$env]} \
+  #       --gold_timesteps ${gold_timesteps[$env]} \
+  #       --num_concepts_selected ${num_concepts[$env]} \
+  #       --method ${method} \
+  #       --out_folder basic >> ../../runs/logs/error_perfect_${env}_${method}_${seed}.txt 2>&1" ENTER
+  #   done
+  # done
 
-  for method in lp_hybrid 
+  for method in policy_selection_lp # lp_hybrid 
   do 
     for env in pong
     do 
@@ -143,23 +144,23 @@ for idx in "${!SEEDS[@]}"; do
     done
   done
 
-  # # # # # --- Imperfect CartPole/Pong ---
-  for method in ground_truth imperfect_concepts random entropy greedy lp_hybrid 
-  do 
-    for env in  cart_pole # pong
-    do 
-      session="imperfect_cart_pole_pong_${method}_${seed}"
-      tmux send-keys -t "$session" \
-        "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_imperfect.py \
-        --seed ${seed} \
-        --environment_string ${env} \
-        --training_timesteps ${training_timesteps[$env]} \
-        --gold_timesteps ${gold_timesteps[$env]} \
-        --num_concepts_selected ${num_concepts[$env]} \
-        --method ${method} \
-        --out_folder basic >> ../../runs/logs/error_imperfect_cart_pole_pong_${method}_${seed}.txt 2>&1" ENTER
-    done
-  done
+  # # # # # # --- Imperfect CartPole/Pong ---
+  # for method in ground_truth imperfect_concepts random entropy greedy lp_hybrid 
+  # do 
+  #   for env in  cart_pole # pong
+  #   do 
+  #     session="imperfect_cart_pole_pong_${method}_${seed}"
+  #     tmux send-keys -t "$session" \
+  #       "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_imperfect.py \
+  #       --seed ${seed} \
+  #       --environment_string ${env} \
+  #       --training_timesteps ${training_timesteps[$env]} \
+  #       --gold_timesteps ${gold_timesteps[$env]} \
+  #       --num_concepts_selected ${num_concepts[$env]} \
+  #       --method ${method} \
+  #       --out_folder basic >> ../../runs/logs/error_imperfect_cart_pole_pong_${method}_${seed}.txt 2>&1" ENTER
+  #   done
+  # done
 
 
   # # --- Imperfect MiniGrid/Boxing ---
