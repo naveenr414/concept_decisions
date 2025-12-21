@@ -73,7 +73,7 @@ if is_main:
     num_concepts_selected = min(num_concepts_selected,len(concept_list))
     ground_truth_env, ground_truth_gym_env = get_environment(environment_string, None, seed)   
     model_name = "../../results/models/env={}_training={}_seed={}.zip".format(environment_string,gold_timesteps,seed)
-    if os.path.exists(model_name):
+    if os.path.exists(model_name) and method != "ground_truth":
         groundtruth_model = PPO.load(model_name)
     else:
         if "cyclic" in environment_string or "tree" in environment_string or "glucose" in environment_string:
@@ -88,7 +88,7 @@ if is_main:
         
         groundtruth_model.save(model_name)
 
-    if method == 'imperfect_concepts':
+    if method == 'imperfect_concepts' or method == "ground_truth":
         groundtruth_reward = evaluate_model(environment_string,ground_truth_gym_env,groundtruth_model,seed)
         results['ground_truth'] = {'reward': groundtruth_reward}
 
@@ -107,7 +107,7 @@ if is_main:
         width = 240
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    if os.path.exists(model_name):
+    if os.path.exists(model_name) and method != "ground_truth":
         concept_predictor = ConceptPredictorCNN(len(concept_list), num_frames=num_frames,height=height,width=width).to(device)
         concept_predictor.load_state_dict(torch.load(model_name, weights_only=True))
         concept_predictor.eval()
@@ -139,7 +139,7 @@ if is_main and torch.cuda.is_available():
 
 if is_main:    
     model_name = "../../results/q_estimates/env={}_training={}_seed={}_selection={}_source={}.pkl".format(environment_string,gold_timesteps,seed,"q_value","human_selected_binary")
-    if os.path.exists(model_name):
+    if os.path.exists(model_name) and method != "ground_truth":
         q_estimates = pickle.load(open(model_name,"rb"))
     else:
         q_estimates = rollout_q_estimates_td(groundtruth_model,ground_truth_gym_env,concept_list)
@@ -209,7 +209,7 @@ if is_main and method == 'policy_selection_td':
 if is_main and method == 'policy_selection_multiple':
     subset_concept, idx = policy_coverage_selection_exp_lp(ground_truth_gym_env,concept_list,acc_list,num_concepts_selected,groundtruth_model)
 
-if is_main:
+if is_main and method != "ground_truth":
     two_stage_env, two_stage_gym_env = get_environment(environment_string,concept_list,seed,fast_predictor=concept_predictor,use_processed=True,concept_idx=idx,processed_concepts=processed_concepts)
     model = train_ppo_model(two_stage_env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_imperfect_{}_{}".format(environment_string,method,seed))    
     reward = evaluate_model(environment_string,two_stage_gym_env,model,seed)
@@ -225,5 +225,7 @@ if is_main:
 if is_main:
     ground_truth_env.close()
     ground_truth_gym_env.close()
-    two_stage_env.close()
-    two_stage_gym_env.close()
+
+    if method != "ground_truth":
+        two_stage_env.close()
+        two_stage_gym_env.close()
