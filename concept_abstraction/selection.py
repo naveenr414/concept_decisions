@@ -1110,7 +1110,10 @@ def policy_coverage_selection_lp_hybrid(
     # y_p variables (pair covered)
     y = model.addVars(M, lb=0.0, ub=1.0, vtype=GRB.CONTINUOUS, name="y")
 
-    y_2 = model.addVars(len(final_vals), lb=0.0, ub=ub, vtype=GRB.BINARY, name="y_2")
+    if len(fixed_idx) == 0:
+        y_2 = model.addVars(len(final_vals), lb=0.0, ub=ub, vtype=GRB.BINARY, name="y_2")
+    else:
+        y_2 = model.addVars(len(final_vals), lb=0.0, vtype=GRB.CONTINUOUS, name="y_2")
 
     for i, (_, elems) in enumerate(final_vals):
         if elems:  # make sure not empty
@@ -1122,9 +1125,9 @@ def policy_coverage_selection_lp_hybrid(
             model.addConstr(y_2[i] == 0)  # cannot be covered
     
     # Prefix constraints: enforce consecutive coverage
-    if len(fixed_idx) == 0:
-        for i in range(1, len(final_vals)):
-            model.addConstr(y_2[i] <= y_2[i-1], name=f"prefix_{i}")
+    # if len(fixed_idx) == 0:
+    #     for i in range(1, len(final_vals)):
+    #         model.addConstr(y_2[i] <= y_2[i-1], name=f"prefix_{i}")
 
     weights = [i[0] for i in final_vals]
 
@@ -1145,7 +1148,12 @@ def policy_coverage_selection_lp_hybrid(
 
     # Constraint: maximize covered pairs
     model.addConstr(gp.quicksum(y[p] for p in range(M))/M >= coverage_ratio)
+    
+    # if len(fixed_idx) > 0:
+    #     model.setObjective(gp.quicksum(y[p] for p in range(M)), GRB.MAXIMIZE)    
+    # else:
     model.setObjective(gp.quicksum(weights[i]*y_2[i] for i in range(len(final_vals))), GRB.MAXIMIZE)    
+
     model.optimize()
 
     if model.Status not in (GRB.OPTIMAL, GRB.TIME_LIMIT):
@@ -1174,7 +1182,7 @@ def policy_coverage_selection_lp_hybrid(
     print("There are {} x vals".format(len_x_vals))
     idx = [i for i in range(len(x_vals)) if x_vals[i] > 0.5]
 
-    if len_x_vals < num_concepts_selected:
+    if len_x_vals < num_concepts_selected and fixed_idx == []:
         return policy_coverage_selection_lp_hybrid(ground_truth_gym_env,concept_list,
                                                    num_concepts_selected,groundtruth_model,
                                                    q_estimates,fixed_idx=idx)
