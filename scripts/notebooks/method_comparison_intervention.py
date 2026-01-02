@@ -35,6 +35,7 @@ if is_main:
     parser.add_argument('--training_timesteps', help='Number of training timesteps without concepts', type=int, default=10000)
     parser.add_argument('--gold_timesteps', help='Number of training timesteps without concepts', type=int, default=10000)
     parser.add_argument('--num_concepts_selected', help='Number of concepts selected by greedy or random',type=int, default=0)
+    parser.add_argument('--predictor_epochs', help='Number of epochs the predictor is trained for',type=int, default=100)
     parser.add_argument('--intervention_prob', help='Intervention Accuracy',type=float, default=0.0)
     parser.add_argument('--method', help='Which selection method',type=str, default='random')
     parser.add_argument('--out_folder', help='Which folder to write results to',type=str, default="basic")
@@ -49,6 +50,7 @@ if is_main:
     intervention_prob = args.intervention_prob
     method = args.method 
     out_folder = args.out_folder
+    predictor_epochs = args.predictor_epochs
 
 
 if is_main:
@@ -89,7 +91,7 @@ if is_main:
         groundtruth_model.save(model_name)
 
 if is_main:
-    model_name = "../../results/models/concept_predictor_env={}_training={}_seed={}.pth".format(environment_string,100,seed)
+    model_name = "../../results/models/concept_predictor_env={}_training={}_seed={}.pth".format(environment_string,predictor_epochs,seed)
 
     height = width = 84
 
@@ -108,7 +110,7 @@ if is_main:
         concept_predictor.load_state_dict(torch.load(model_name, weights_only=True))
         concept_predictor.eval()
     else:
-        concept_predictor, acc_list = train_concept_predictor(ground_truth_gym_env,groundtruth_model,concept_list,list(range(len(concept_list))),environment_string,epochs=25,max_episode_length=10_000)
+        concept_predictor, acc_list = train_concept_predictor(ground_truth_gym_env,groundtruth_model,concept_list,list(range(len(concept_list))),environment_string,epochs=predictor_epochs,max_episode_length=10_000)
         torch.save(concept_predictor.state_dict(), model_name)
         concept_predictor.eval()
 
