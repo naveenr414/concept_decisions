@@ -22,7 +22,7 @@ os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 os.environ["GRB_LICENSE_FILE"] = "/usr0/home/naveenr/gurobi.lic"
 # -
 
-from concept_abstraction.selection import greedy_selection_supervised, lp_selection_supervised, multiple_selection_supervised, greedy_selection_supervised
+from concept_abstraction.selection import *
 from concept_abstraction.env_utils import *
 from concept_abstraction.utils import *
 import sys 
@@ -103,40 +103,10 @@ train_Y = np.array([i['class_label'] for i in train])
 test_X = np.array([i['attribute_label'] for i in test])
 test_Y = np.array([i['class_label'] for i in test])
 
-results['perfect']['lp'] = {}
-for c in range(20,num_concepts_selected,20):
-    lp_concept_list = lp_selection_supervised(train_X,train_Y,c)
-    results['perfect']['lp'][c] = {
-        'reward': get_performance(lp_concept_list,np.ones(312)),
-        'concepts': lp_concept_list
-    }
-print("Finished LP")
-
-manually_selected_concepts = open("../../data/cub/manual_concepts.txt").read().strip().split("\n")
-manually_selected_concepts = [int(i) for i in manually_selected_concepts]
-results['perfect']['manual'] = {
-    'reward': get_performance(manually_selected_concepts,np.ones(312)),
-    'concepts': manually_selected_concepts
-}
-print("Manual Performance {}".format(results['perfect']['manual']['reward']))
-
 
 # #### Imperfect Concepts
 
 # +
-def sigmoid(z):
-    return 1/(1 + np.exp(-z))
-
-train = pickle.load(open("../../data/cub/train_error.pkl","rb"))
-test = pickle.load(open("../../data/cub/test_error.pkl","rb"))
-
-pred_train_X = sigmoid(np.array([i['attribute_label'] for i in train])).round()
-train_Y = np.array([i['class_label'] for i in train])
-pred_test_X = sigmoid(np.array([i['attribute_label'] for i in test])).round()
-test_Y = np.array([i['class_label'] for i in test])
-
-# +
-from sklearn.neural_network import MLPClassifier
 
 def get_performance_real(selected_concepts):
     mlp = MLPClassifier(
@@ -156,36 +126,37 @@ def get_performance_real(selected_concepts):
     return acc
 
 
+
+# +
+def sigmoid(z):
+    return 1/(1 + np.exp(-z))
+
+train = pickle.load(open("../../data/cub/train_error.pkl","rb"))
+test = pickle.load(open("../../data/cub/test_error.pkl","rb"))
+
+pred_train_X = sigmoid(np.array([i['attribute_label'] for i in train]))
+train_Y = np.array([i['class_label'] for i in train])
+pred_test_X = sigmoid(np.array([i['attribute_label'] for i in test]))
+test_Y = np.array([i['class_label'] for i in test])
 # -
 
-results['imperfect'] = {}
+num_concepts_range = range(20,num_concepts_selected,20)
+
+train_concept_accuracy = np.mean(pred_train_X.round() == train_X,axis=0)
+test_concept_accuracy = np.mean(pred_test_X.round() == test_X,axis=0)
 
 manually_selected_concepts = open("../../data/cub/manual_concepts.txt").read().strip().split("\n")
 manually_selected_concepts = [int(i) for i in manually_selected_concepts]
 
 
+results['imperfect'] = {}
+
 results['imperfect']['manual'] = {'reward': get_performance_real(manually_selected_concepts), 'concepts': manually_selected_concepts}
-
-results['imperfect']['lp'] = {}
-for c in results['perfect']['lp']:
-    results['imperfect']['lp'][c] = {
-        'reward': get_performance_real(results['perfect']['lp'][c]['concepts']),
-        'concepts': c
-    }
-
-results['imperfect']['multiple'] = {}
-for c in results['perfect']['lp']:
-    imperfect_concepts = multiple_selection_supervised(train_X,train_Y,c)
-    results['imperfect']['multiple'][c] = {
-        'reward': get_performance_real(imperfect_concepts), 
-        'concepts': imperfect_concepts
-    }
-results['imperfect']['multiple']
 
 # +
 results['imperfect']['random'] = {}
 
-for c in results['perfect']['lp']:
+for c in num_concepts_range:
     random_concepts = random.sample(list(range(312)),c)
     results['imperfect']['random'][c] = {
         'reward': get_performance_real(random_concepts), 
@@ -194,15 +165,85 @@ for c in results['perfect']['lp']:
 results['imperfect']['random']
 
 # +
+results['imperfect']['entropy'] = {}
+
+for c in num_concepts_range:
+    entropy_concepts = basic_greedy_selection_supervised(train_X,train_Y,c)
+    results['imperfect']['entropy'][c] = {
+        'reward': get_performance_real(entropy_concepts), 
+        'concepts': entropy_concepts
+    }
+results['imperfect']['entropy']
+
+# +
 results['imperfect']['greedy'] = {}
 
-for c in results['perfect']['lp']:
+for c in num_concepts_range:
     greedy_concepts = greedy_selection_supervised(train_X,train_Y,c)
     results['imperfect']['greedy'][c] = {
         'reward': get_performance_real(greedy_concepts), 
         'concepts': greedy_concepts
     }
 results['imperfect']['greedy']
+
+# +
+results['imperfect']['lp_hybrid'] = {}
+
+for c in num_concepts_range:
+    greedy_concepts = lp_selection_supervised(train_X,train_Y,c)
+    results['imperfect']['lp_hybrid'][c] = {
+        'reward': get_performance_real(greedy_concepts), 
+        'concepts': greedy_concepts
+    }
+results['imperfect']['lp_hybrid']
+# -
+
+train_matrix = train_X
+labels = train_Y
+concept_accuracy = train_concept_accuracy
+num_concepts = 20
+
+# +
+acc = np.asarray(concept_accuracy)
+acc = [0.999 for i in range(len(concept_accuracy))]
+
+train_X = np.asarray(train_matrix)
+labels = np.asarray(labels)
+# Convert rows to tuples to make them hashable
+rows_as_tuples = [tuple(row) for row in train_X]
+row_counts = Counter(rows_as_tuples)   # counts of each unique row
+
+unique_rows = np.array(list(row_counts.keys()))
+unique_counts = np.array([row_counts[r] for r in row_counts])
+unique_labels = np.array([labels[np.all(train_X == r, axis=1)][0] for r in unique_rows])
+
+pairs = [
+    (i, j) 
+    for i, j in combinations(range(len(unique_rows)), 2) 
+    if unique_labels[i] != unique_labels[j]
+]
+
+per_train_constraint_weighted = []
+
+for i, j in pairs:
+    elems_diff = np.where(unique_rows[i] != unique_rows[j])[0].tolist()
+    weight = unique_counts[i] * unique_counts[j]   # multiplicity weight
+    per_train_constraint_weighted.append((weight, elems_diff))
+
+final_vals = per_train_constraint_weighted
+n = len(final_vals)
+m = max([max(i[1]) for i in final_vals])+1
+
+# +
+results['imperfect']['multiple_log'] = {}
+
+for c in num_concepts_range:
+    greedy_concepts = multiple_log_selection_supervised(train_X,train_Y,train_concept_accuracy,c)
+    results['imperfect']['multiple_log'][c] = {
+        'reward': get_performance_real(greedy_concepts), 
+        'concepts': greedy_concepts
+    }
+results['imperfect']['multiple_log']
 # -
 
 # ## Intervention
@@ -211,12 +252,12 @@ test = pickle.load(open("../../data/cub/test_error.pkl","rb"))
 
 
 num_concepts = len(manually_selected_concepts)
-lp_selection  = lp_selection_supervised(train_X,train_Y,num_concepts)
-multiple_selection  = multiple_selection_supervised(train_X,train_Y,num_concepts)
-greedy_selection = greedy_selection_supervised(train_X,train_Y,num_concepts)
 manual_selection = manually_selected_concepts
-random_selection = random.sample(list(range(312)),num_concepts)
-accuracies = np.mean(test_X == pred_test_X,axis=0)
+random_selection = random.sample(list(range(312)),112)
+entropy_selection = basic_greedy_selection_supervised(train_X,train_Y,112)
+greedy_selection = greedy_selection_supervised(train_X,train_Y,112)
+lp_selection  = lp_selection_supervised(train_X,train_Y,112)
+multiple_selection  = multiple_log_selection_supervised(train_X,train_Y,train_concept_accuracy,112)
 
 
 def get_performance_real(selected_concepts):
@@ -258,9 +299,12 @@ for intervention_percent in [0.2,0.4,0.6,0.8,1.0]:
                                 lp_selection,
                                 multiple_selection,
                                 greedy_selection,
-                                random_selection],[
-                                    "manual","lp","multiple",
+                                random_selection,
+                                entropy_selection
+                                ],[
+                                    "manual","lp","multiple_log",
                                     'greedy','random',
+                                    'entropy'
                                 ]):
         if description not in results['intervention']:
             results['intervention'][description] = {}

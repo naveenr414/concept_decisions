@@ -142,14 +142,29 @@ if is_main and method == 'policy_selection_lp':
     subset_concept, idx = policy_coverage_selection_lp(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model)
 
 if is_main and method == 'policy_selection_prefix':
-    subset_concept, idx = policy_coverage_selection_lp_hybrid_prefix(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model)
+    subset_concept, idx = policy_coverage_selection_lp_hybrid_prefix(
+    ground_truth_gym_env,
+    concept_list,
+    num_concepts_selected,
+    groundtruth_model,
+    q_estimates)
 
 if is_main and method == 'policy_selection_restart':
-    subset_concept, idx = policy_coverage_selection_lp_hybrid_on_restart(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model)
+    subset_concept, idx = policy_coverage_selection_lp_hybrid_on_restart(
+    ground_truth_gym_env,
+    concept_list,
+    num_concepts_selected,
+    groundtruth_model,
+    q_estimates)
 
 if is_main and method == 'policy_selection_unweighted':
-    subset_concept, idx = policy_coverage_selection_lp_unweighted(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model)
-
+    subset_concept, idx = policy_coverage_selection_lp_unweighted(
+    ground_truth_gym_env,
+    concept_list,
+    num_concepts_selected,
+    groundtruth_model,
+    q_estimates)
+    
 if is_main and method == 'policy_selection_td':
     subset_concept, idx = policy_coverage_selection_lp_advantage(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model)
 

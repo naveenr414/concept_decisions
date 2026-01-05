@@ -70,7 +70,7 @@ for idx in "${!SEEDS[@]}"; do
   env=mini_grid 
   for g in 100000 250000 500000
   do 
-    for method in greedy lp_hybrid 
+    for method in entropy greedy lp_hybrid multiple_log
     do 
       session="ablations_${seed}"
       tmux send-keys -t "$session" \

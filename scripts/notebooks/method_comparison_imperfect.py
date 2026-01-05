@@ -117,7 +117,7 @@ if is_main:
         concept_predictor.eval()
         results["concept_accuracy"] = acc_list.tolist()
 
-if is_main and (method == "multiple" or method == "policy_selection_multiple") and 'concept_accuracy' not in results:
+if is_main and "multiple" in method and 'concept_accuracy' not in results:
     matching_params = get_results_matching_parameters("training","",{'environment_string': environment_string,
                 'gold_timesteps': gold_timesteps, 'seed': seed})
     if len(matching_params) > 0 and 'concept_accuracy' in matching_params[0]:
@@ -171,7 +171,11 @@ if is_main and method == 'lp_old':
 
 # # Multiple
 if is_main and method == 'multiple':
-    subset_concept, idx = multiple_lp_selection(ground_truth_env,concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary",acc_list)
+    subset_concept, idx = policy_coverage_selection_multiple(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model,q_estimates,acc_list)
+if is_main and method == 'multiple_log':
+    subset_concept, idx = policy_coverage_selection_multiple_log(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model,q_estimates,acc_list)
+
+
 
 if is_main and method == 'multiple_old':
     subset_concept, idx = multiple_lp_selection_old(ground_truth_env,concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary",acc_list)
@@ -207,13 +211,28 @@ if is_main and method == 'policy_selection_td':
 
 
 if is_main and method == 'policy_selection_prefix':
-    subset_concept, idx = policy_coverage_selection_lp_hybrid_prefix(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model)
+    subset_concept, idx = policy_coverage_selection_lp_hybrid_prefix(
+    ground_truth_gym_env,
+    concept_list,
+    num_concepts_selected,
+    groundtruth_model,
+    q_estimates)
 
 if is_main and method == 'policy_selection_restart':
-    subset_concept, idx = policy_coverage_selection_lp_hybrid_on_restart(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model)
+    subset_concept, idx = policy_coverage_selection_lp_hybrid_on_restart(
+    ground_truth_gym_env,
+    concept_list,
+    num_concepts_selected,
+    groundtruth_model,
+    q_estimates)
 
 if is_main and method == 'policy_selection_unweighted':
-    subset_concept, idx = policy_coverage_selection_lp_unweighted(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model)
+    subset_concept, idx = policy_coverage_selection_lp_unweighted(
+    ground_truth_gym_env,
+    concept_list,
+    num_concepts_selected,
+    groundtruth_model,
+    q_estimates)
 
 
 if is_main and method == 'policy_selection_multiple':
