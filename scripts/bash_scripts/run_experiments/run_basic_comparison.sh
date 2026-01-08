@@ -1,50 +1,42 @@
 #!/bin/bash
 
 # Seeds to run in parallel
-SEEDS=(42 43 44)
+SEEDS=(42 43 44 45 46 47)
 
 # Map seeds to GPUs (manually, can also extend dynamically)
 # Make sure you have enough GPUs for the number of seeds you run in parallel
-GPU_MAP=(0 2 3)
+GPU_MAP=(0 2 3 1 0 2)
 
 sessions=(
-  # perfect_mini_grid_perfect_concepts
-  # perfect_mini_grid_random
-  # perfect_mini_grid_entropy
-  # perfect_mini_grid_greedy
-  # perfect_mini_grid_lp_hybrid
+  perfect_mini_grid_perfect_concepts
+  perfect_mini_grid_random
+  perfect_mini_grid_entropy
+  perfect_mini_grid_greedy
+  perfect_mini_grid_lp_hybrid
 
-  # perfect_cart_pole_perfect_concepts
-  # perfect_cart_pole_random
-  # perfect_cart_pole_entropy
-  # perfect_cart_pole_greedy
-  # perfect_cart_pole_lp_hybrid
+  perfect_cart_pole_perfect_concepts
+  perfect_cart_pole_random
+  perfect_cart_pole_entropy
+  perfect_cart_pole_greedy
+  perfect_cart_pole_lp_hybrid
 
-  # perfect_pong_perfect_concepts
-  # perfect_pong_random
-  # perfect_pong_entropy
-  # perfect_pong_greedy
-  # perfect_pong_lp_hybrid
-  # perfect_pong_policy_selection_lp
-  # perfect_pong_policy_selection_prefix
-  # perfect_pong_policy_selection_restart
-  # perfect_pong_policy_selection_unweighted
+  perfect_pong_perfect_concepts
+  perfect_pong_random
+  perfect_pong_entropy
+  perfect_pong_greedy
+  perfect_pong_lp_hybrid
 
-  # perfect_boxing_perfect_concepts
-  # perfect_boxing_random
-  # perfect_boxing_entropy
-  # perfect_boxing_greedy
-  # perfect_boxing_lp_hybrid
-  # perfect_boxing_policy_selection_lp
-  # perfect_boxing_policy_selection_prefix
-  # perfect_boxing_policy_selection_restart
-  # perfect_boxing_policy_selection_unweighted
+  perfect_boxing_perfect_concepts
+  perfect_boxing_random
+  perfect_boxing_entropy
+  perfect_boxing_greedy
+  perfect_boxing_lp_hybrid
 
-  # perfect_glucose_perfect_concepts
-  # perfect_glucose_random
-  # perfect_glucose_entropy
-  # perfect_glucose_greedy
-  # perfect_glucose_lp_hybrid
+  perfect_glucose_perfect_concepts
+  perfect_glucose_random
+  perfect_glucose_entropy
+  perfect_glucose_greedy
+  perfect_glucose_lp_hybrid
 
   # imperfect_cart_pole_pong_imperfect_concepts
   # imperfect_cart_pole_pong_ground_truth
@@ -57,7 +49,7 @@ sessions=(
   # imperfect_cart_pole_pong_policy_selection_restart
   # imperfect_cart_pole_pong_policy_selection_unweighted
   # imperfect_cart_pole_pong_multiple
-  imperfect_cart_pole_pong_multiple_log
+  # imperfect_cart_pole_pong_multiple_log
 
   # imperfect_mini_grid_boxing_imperfect_concepts
   # imperfect_mini_grid_boxing_ground_truth
@@ -66,7 +58,7 @@ sessions=(
   # imperfect_mini_grid_boxing_greedy
   # imperfect_mini_grid_boxing_lp_hybrid
   # imperfect_mini_grid_boxing_multiple
-  imperfect_mini_grid_boxing_multiple_log
+  # imperfect_mini_grid_boxing_multiple_log
 
 )
 

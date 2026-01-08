@@ -1,11 +1,11 @@
 #!/bin/bash
 
 # Seeds to run in parallel
-SEEDS=(42 43 44)
+SEEDS=(42 43 44 45 46 47)
 
 # Map seeds to GPUs (manually, can also extend dynamically)
 # Make sure you have enough GPUs for the number of seeds you run in parallel
-GPU_MAP=(0 2 3)
+GPU_MAP=(0 2 3 1 0 2)
 
 sessions=(
   base_mini_grid
@@ -55,7 +55,7 @@ do
     seed=${SEEDS[$idx]}
     gpu=${GPU_MAP[$idx]}
 
-    for env in boxing # cart_pole mini_grid boxing pong glucose 
+    for env in cart_pole mini_grid boxing pong glucose 
     do 
     session="base_${env}_${seed}"
     tmux send-keys -t "$session" \

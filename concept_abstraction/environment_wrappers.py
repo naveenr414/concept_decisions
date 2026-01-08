@@ -22,6 +22,7 @@ class VecConceptWrapper(VecEnvWrapper):
         self.height = height 
         self.intervention_prob = intervention_prob
         self.concept_accuracy = concept_accuracy
+        self.training_mode = True 
         
         # Group concepts by type (keep your existing code)
         value_threshold_concepts = [p for p in self.processed_concepts 
@@ -94,16 +95,11 @@ class VecConceptWrapper(VecEnvWrapper):
         self.concept_accuracy = concept_accuracy
         
         num_concepts = len(concept_idx)
-        # 1. Calculate the exact number of concepts to mask
-        k = round(self.intervention_prob * num_concepts)
-
-        # 2. Generate a mask of False values
-        self.mask = torch.zeros(num_concepts, device='cuda', dtype=torch.bool)
-
-        # 3. Randomly select exactly k indices and set them to True
-        if k > 0:
-            indices = torch.randperm(num_concepts, device='cuda')[:k]
-            self.mask[indices] = 1
+        self.mask = torch.zeros(
+            (self.num_envs, num_concepts),
+            device="cuda",
+            dtype=torch.bool
+        )
 
         # PRE-ALLOCATE BUFFERS
         self.num_envs = venv.num_envs
@@ -112,6 +108,18 @@ class VecConceptWrapper(VecEnvWrapper):
         self.predictions_gpu = None
         self.predictions_cpu = None
         self.obs_batch_gpu = None
+
+    def _resample_intervention_mask(self, env_ids):
+        num_concepts = self.mask.shape[1]
+        k = round(self.intervention_prob * num_concepts)
+
+        for i in env_ids:
+            self.mask[i].zero_()
+            if k > 0 and (np.random.random() < 1.0 or not self.training_mode):
+                idx = torch.randperm(num_concepts, device="cuda")[:k]
+                self.mask[i, idx] = True
+            else:
+                self.mask[i,:] = False 
 
     def _init_buffers(self,obs,infos):
         """Initialize buffers on first call"""
@@ -150,14 +158,29 @@ class VecConceptWrapper(VecEnvWrapper):
         self._buffers_ready = True
 
     def reset(self):
+        self._resample_intervention_mask(list(range(len(self.mask))))
         obs = self.venv.reset()
         infos = self.venv.reset_infos
-        self._init_buffers(obs,infos)
-        obs = self._process_batch(obs,infos)
-        return obs 
-    
+        self._init_buffers(obs, infos)
+        return self._process_batch(obs, infos)
+
+    def set_eval_mode(self):
+        self.training_mode = False
+        self._resample_intervention_mask(list(range(len(self.mask))))
+
+    def set_train_mode(self):
+        self.training_mode = True
+
+
     def step_wait(self):
         processed_obs, rewards, dones, infos = self.venv.step_wait()
+        if self.training_mode:
+            env_ids_done = np.where(dones)[0]
+            if len(env_ids_done) > 0:
+                self._resample_intervention_mask(env_ids_done)
+
+
+
         processed_obs = self._process_batch(processed_obs,infos)
         
         for idx, info in enumerate(infos):
@@ -241,15 +264,19 @@ class VecConceptWrapper(VecEnvWrapper):
                 # 2. CLAMP the logits to a fixed range
                 # This prevents any "rogue" high-confidence predictions from 
                 # overpowering your intervention.
-                logit_bound = 15.0
+                logit_bound = 5.0
                 logits = torch.clamp(logits, -logit_bound, logit_bound)
                 
                 self.predictions_gpu[:] = logits
                 
                 # 3. SET INTERVENTION to the exact bounds
-                # If concept is 1, set to +15; if 0, set to -15.
+                # If concept is 1, set to +5; if 0, set to -5.
                 # This ensures intervention is ALWAYS the max/min possible value.
-                self.predictions_gpu[:, self.mask] = (concept_vals[:, self.mask] * 30 - 15) * logit_bound
+                for i in range(self.num_envs):
+                    self.predictions_gpu[i, self.mask[i]] = (
+                        (concept_vals[i, self.mask[i]] * 2 - 1) * logit_bound
+                    )
+
         else:
             base = concept_vals * 30 - 15
             self.predictions_gpu[:] = base
