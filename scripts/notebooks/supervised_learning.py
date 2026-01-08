@@ -46,7 +46,7 @@ is_jupyter = 'ipykernel' in sys.modules
 # +
 if is_jupyter: 
     seed        = 42
-    num_concepts_selected = 21
+    num_concepts_selected = 121
     out_folder = "cub"
 else:
     parser = argparse.ArgumentParser()
@@ -94,6 +94,8 @@ def get_performance(selected_concepts,accuracy_by_concept):
 # ## Perfrect Concepts
 
 results['perfect'] = {}
+results['imperfect'] = {}
+results['intervention'] = {}
 
 train = pickle.load(open("../../data/cub/train.pkl","rb"))
 test = pickle.load(open("../../data/cub/test.pkl","rb"))
@@ -104,13 +106,30 @@ test_X = np.array([i['attribute_label'] for i in test])
 test_Y = np.array([i['class_label'] for i in test])
 
 
-# #### Imperfect Concepts
+def get_performance(selected_concepts):
+    mlp = MLPClassifier(
+        hidden_layer_sizes=(128),
+        activation='relu',
+        solver='adam',
+    )
 
-# +
+    # Train the model
+    mlp.fit(train_X[:,selected_concepts], train_Y)
+
+    # Predict on the test set
+    y_pred = mlp.predict(test_X[:,selected_concepts])
+
+    # Compute accuracy
+    acc = accuracy_score(test_Y.reshape(-1,1), y_pred)
+    return acc
+
+
+
+# #### Imperfect Concepts
 
 def get_performance_real(selected_concepts):
     mlp = MLPClassifier(
-        hidden_layer_sizes=(128),
+        hidden_layer_sizes=(256),
         activation='relu',
         solver='adam',
     )
@@ -126,7 +145,6 @@ def get_performance_real(selected_concepts):
     return acc
 
 
-
 # +
 def sigmoid(z):
     return 1/(1 + np.exp(-z))
@@ -134,9 +152,9 @@ def sigmoid(z):
 train = pickle.load(open("../../data/cub/train_error.pkl","rb"))
 test = pickle.load(open("../../data/cub/test_error.pkl","rb"))
 
-pred_train_X = sigmoid(np.array([i['attribute_label'] for i in train]))
+pred_train_X = sigmoid(np.array([i['attribute_label'] for i in train])).round()
 train_Y = np.array([i['class_label'] for i in train])
-pred_test_X = sigmoid(np.array([i['attribute_label'] for i in test]))
+pred_test_X = sigmoid(np.array([i['attribute_label'] for i in test])).round()
 test_Y = np.array([i['class_label'] for i in test])
 # -
 
@@ -148,8 +166,6 @@ test_concept_accuracy = np.mean(pred_test_X.round() == test_X,axis=0)
 manually_selected_concepts = open("../../data/cub/manual_concepts.txt").read().strip().split("\n")
 manually_selected_concepts = [int(i) for i in manually_selected_concepts]
 
-
-results['imperfect'] = {}
 
 results['imperfect']['manual'] = {'reward': get_performance_real(manually_selected_concepts), 'concepts': manually_selected_concepts}
 
@@ -196,43 +212,6 @@ for c in num_concepts_range:
         'concepts': greedy_concepts
     }
 results['imperfect']['lp_hybrid']
-# -
-
-train_matrix = train_X
-labels = train_Y
-concept_accuracy = train_concept_accuracy
-num_concepts = 20
-
-# +
-acc = np.asarray(concept_accuracy)
-acc = [0.999 for i in range(len(concept_accuracy))]
-
-train_X = np.asarray(train_matrix)
-labels = np.asarray(labels)
-# Convert rows to tuples to make them hashable
-rows_as_tuples = [tuple(row) for row in train_X]
-row_counts = Counter(rows_as_tuples)   # counts of each unique row
-
-unique_rows = np.array(list(row_counts.keys()))
-unique_counts = np.array([row_counts[r] for r in row_counts])
-unique_labels = np.array([labels[np.all(train_X == r, axis=1)][0] for r in unique_rows])
-
-pairs = [
-    (i, j) 
-    for i, j in combinations(range(len(unique_rows)), 2) 
-    if unique_labels[i] != unique_labels[j]
-]
-
-per_train_constraint_weighted = []
-
-for i, j in pairs:
-    elems_diff = np.where(unique_rows[i] != unique_rows[j])[0].tolist()
-    weight = unique_counts[i] * unique_counts[j]   # multiplicity weight
-    per_train_constraint_weighted.append((weight, elems_diff))
-
-final_vals = per_train_constraint_weighted
-n = len(final_vals)
-m = max([max(i[1]) for i in final_vals])+1
 
 # +
 results['imperfect']['multiple_log'] = {}
@@ -262,7 +241,7 @@ multiple_selection  = multiple_log_selection_supervised(train_X,train_Y,train_co
 
 def get_performance_real(selected_concepts):
     mlp = MLPClassifier(
-        hidden_layer_sizes=(128),
+        hidden_layer_sizes=(256),
         activation='relu',
         solver='adam',
     )
@@ -302,7 +281,7 @@ for intervention_percent in [0.2,0.4,0.6,0.8,1.0]:
                                 random_selection,
                                 entropy_selection
                                 ],[
-                                    "manual","lp","multiple_log",
+                                    "manual","lp_hybrid","multiple_log",
                                     'greedy','random',
                                     'entropy'
                                 ]):
