@@ -185,10 +185,11 @@ def get_model(environment_string,policy,custom_name="",override={}):
             default_model_dict['n_epochs'] = 4
             default_model_dict['device'] = 'cuda'
         elif environment_string == "pong":
-            default_model_dict['n_steps'] = 512
+            default_model_dict['n_steps'] = 1024
             default_model_dict['batch_size'] = 256
-            default_model_dict['n_epochs'] = 10
+            default_model_dict['n_epochs'] = 5
             default_model_dict['device'] = 'cuda'
+            default_model_dict['learning_rate'] = 1e-4
         elif environment_string == "boxing":
             default_model_dict['n_steps'] = 1024
             default_model_dict['batch_size'] = 1024
