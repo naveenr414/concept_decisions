@@ -65,43 +65,43 @@ if is_main:
     concept_list,processed_concepts = get_concepts(environment_string,"human_selected_binary",seed)
     ground_truth_env, ground_truth_gym_env = get_environment(environment_string, None, seed)   
     model_name = "../../results/models/env={}_training={}_seed={}.zip".format(environment_string,gold_timesteps,seed)
-    if os.path.exists(model_name) and not train_ground_truth:
-        groundtruth_model = PPO.load(model_name)
+    # if os.path.exists(model_name) and not train_ground_truth:
+    #     groundtruth_model = PPO.load(model_name)
+    # else:
+    if "cyclic" in environment_string or "tree" in environment_string or "glucose" in environment_string:
+        policy = "MlpPolicy"
     else:
-        if "cyclic" in environment_string or "tree" in environment_string or "glucose" in environment_string:
-            policy = "MlpPolicy"
-        else:
-            policy = "CnnPolicy"
+        policy = "CnnPolicy"
 
-        if policy == "MlpPolicy":
-            groundtruth_model = train_ppo_model(ground_truth_env,environment_string+"_raw",total_timesteps=gold_timesteps,policy=policy)
-        else:
-            groundtruth_model = train_ppo_model(ground_truth_env,environment_string,total_timesteps=gold_timesteps,policy=policy)
-        groundtruth_model.save(model_name)
+    if policy == "MlpPolicy":
+        groundtruth_model = train_ppo_model(ground_truth_env,environment_string+"_raw",total_timesteps=gold_timesteps,policy=policy)
+    else:
+        groundtruth_model = train_ppo_model(ground_truth_env,environment_string,total_timesteps=gold_timesteps,policy=policy)
+    groundtruth_model.save(model_name)
     groundtruth_reward = evaluate_model(environment_string,ground_truth_gym_env,groundtruth_model,seed)
     results['ground_truth'] = {'reward': groundtruth_reward}
 
-if is_main:
-    if environment_string != "glucose":
-        model_name = "../../results/models/concept_predictor_env={}_training={}_seed={}.pth".format(environment_string,100,seed)
+# if is_main:
+#     if environment_string != "glucose":
+#         model_name = "../../results/models/concept_predictor_env={}_training={}_seed={}.pth".format(environment_string,100,seed)
 
-        height = width = 84
+#         height = width = 84
 
-        if environment_string == "mini_grid":
-            num_frames = 1
-        else:
-            num_frames = 4
+#         if environment_string == "mini_grid":
+#             num_frames = 1
+#         else:
+#             num_frames = 4
 
-        if environment_string == "cart_pole":
-            height = 160
-            width = 240
+#         if environment_string == "cart_pole":
+#             height = 160
+#             width = 240
 
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        concept_predictor, acc_list = train_concept_predictor(ground_truth_gym_env,groundtruth_model,concept_list,list(range(len(concept_list))),environment_string,epochs=25,max_episode_length=10_000)
-        torch.save(concept_predictor.state_dict(), model_name)
-        concept_predictor.eval()
-        results["concept_accuracy"] = acc_list.tolist()
-        print("Concept Accuracy {}".format(acc_list.tolist()))
+#         device = 'cuda' if torch.cuda.is_available() else 'cpu'
+#         concept_predictor, acc_list = train_concept_predictor(ground_truth_gym_env,groundtruth_model,concept_list,list(range(len(concept_list))),environment_string,epochs=25,max_episode_length=10_000)
+#         torch.save(concept_predictor.state_dict(), model_name)
+#         concept_predictor.eval()
+#         results["concept_accuracy"] = acc_list.tolist()
+#         print("Concept Accuracy {}".format(acc_list.tolist()))
 
 if is_main:    
     model_name = "../../results/q_estimates/env={}_training={}_seed={}_selection={}_source={}.pkl".format(environment_string,gold_timesteps,seed,"q_value","human_selected_binary")

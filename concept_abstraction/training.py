@@ -152,8 +152,9 @@ def get_model(environment_string,policy,custom_name="",override={}):
         elif environment_string == "pong":
             default_model_dict['policy_kwargs'] = {'net_arch': [256,256]}
             default_model_dict['n_steps'] = 1024
-            default_model_dict['batch_size'] = 512
-            default_model_dict['n_epochs'] = 10
+            default_model_dict['batch_size'] = 256
+            default_model_dict['n_epochs'] = 5
+            default_model_dict['learning_rate'] = 1e-4
         elif environment_string == "boxing":
             if "imperfect" in custom_name or "all_concepts_real" in custom_name or "intervention" in custom_name:
                 print("Using imperfect boxing")
