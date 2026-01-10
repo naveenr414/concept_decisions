@@ -428,11 +428,9 @@ def get_average_reward(vec_env, model,seed, max_steps=100_000,max_steps_per=1000
 
         for i in range(num_envs):
             if terminated[i] or truncated[i] or steps_per[i] >= max_steps_per:
-                print(terminated[i],truncated[i],steps_per[i])
                 episode_rewards.append(rewards_accum[i])
                 rewards_accum[i] = 0  # reset for next episode
                 steps_per[i] = 0
-    print(len(episode_rewards),episode_rewards)
     return np.mean(episode_rewards)
 
 def list_to_string(obs):
