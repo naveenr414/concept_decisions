@@ -365,21 +365,21 @@ def policy_coverage_selection_lp_hybrid(
     print(num_actions)
     seen = set() 
     for a in unique_actions:
-        relevant_idx = np.where(actions == a)[0]
-        if len(relevant_idx) <= 500:
-            relevant_low = relevant_high = relevant_idx
-        else:
-            relevant_low = np.argsort(np.abs(q_values))[:500]
-            relevant_high = np.argsort(np.abs(q_values))[-500:]
-        for low_idx in relevant_low:
-            for high_idx in relevant_high:
-                diff = abs(q_values[low_idx] - q_values[high_idx])
-                # tuple of differing concept indices
-                diffs = tuple(i for i, (l, h) in enumerate(zip(discretized_X[low_idx], discretized_X[high_idx])) if l != h)
-                tup = (diff, diffs)
-                if diffs not in seen and diffs != ():
-                    seen.add(diffs)
-                    final_vals.append(tup)
+            relevant_idx = np.where(actions == a)[0]
+            if len(relevant_idx) <= 500:
+                relevant_low = relevant_high = relevant_idx
+            else:
+                relevant_low = np.argsort(np.abs(q_values))[:500]
+                relevant_high = np.argsort(np.abs(q_values))[-500:]
+            for low_idx in relevant_low:
+                for high_idx in relevant_high:
+                    diff = abs(q_values[low_idx] - q_values[high_idx])
+                    # tuple of differing concept indices
+                    diffs = tuple(i for i, (l, h) in enumerate(zip(discretized_X[low_idx], discretized_X[high_idx])) if l != h)
+                    tup = (diff, diffs)
+                    if diffs not in seen and diffs != ():
+                        seen.add(diffs)
+                        final_vals.append(tup)
     final_vals = final_vals[:250_000]
     final_vals = sorted(final_vals,reverse=True)
 
@@ -396,7 +396,7 @@ def policy_coverage_selection_lp_hybrid(
         for j in range(len(actions)):
             all_observations.append([c(info[j]['observation']) for c in concept_list])
             all_actions.append(actions[j])
-        obs, _, _, _, info = ground_truth_gym_env.step(actions)
+        obs, rew, t_1, t_2, info = ground_truth_gym_env.step(actions)
 
     all_observations = np.asarray(all_observations, dtype=np.int8)
     all_actions = np.asarray(all_actions)
@@ -430,6 +430,7 @@ def policy_coverage_selection_lp_hybrid(
 
     ub = 1.0
     len_x_vals = 0
+    trials = 0
 
     # x_d variables (concept selection)
     x = model.addVars(K, lb=0.0, ub=1.0, vtype=GRB.BINARY, name="x")
@@ -452,8 +453,9 @@ def policy_coverage_selection_lp_hybrid(
             model.addConstr(y_2[i] == 0)  # cannot be covered
     
     # Prefix constraints: enforce consecutive coverage
-    for i in range(1, len(final_vals)):
-        model.addConstr(y_2[i] <= y_2[i-1], name=f"prefix_{i}")
+    # if len(fixed_idx) == 0:
+    #     for i in range(1, len(final_vals)):
+    #         model.addConstr(y_2[i] <= y_2[i-1], name=f"prefix_{i}")
 
     weights = [i[0] for i in final_vals]
 
@@ -465,13 +467,19 @@ def policy_coverage_selection_lp_hybrid(
 
     # Cardinality constraint
     model.addConstr(
-        gp.quicksum(x[d] for d in range(K)) == num_concepts_selected,
+        gp.quicksum(x[d] for d in range(K)) <= num_concepts_selected,
         name="budget",
     )
+    if len(fixed_idx) > 0:
+        for i in fixed_idx:
+            model.addConstr(x[i] == 1)
 
     # Constraint: maximize covered pairs
     model.addConstr(gp.quicksum(y[p] for p in range(M))/M >= coverage_ratio)
     
+    # if len(fixed_idx) > 0:
+    #     model.setObjective(gp.quicksum(y[p] for p in range(M)), GRB.MAXIMIZE)    
+    # else:
     model.setObjective(gp.quicksum(weights[i]*y_2[i] for i in range(len(final_vals))), GRB.MAXIMIZE)    
 
     model.optimize()
@@ -495,11 +503,28 @@ def policy_coverage_selection_lp_hybrid(
     # Rounding: take top-k x_d
     # --------------------------------------------------
     x_vals = np.array([x[d].X for d in range(K)])
+    y_vals = np.array([y[p].X for p in range(M)])
+    len_x_vals = sum(x_vals)
+
+
+    print("There are {} x vals".format(len_x_vals))
     idx = [i for i in range(len(x_vals)) if x_vals[i] > 0.5]
+
+    if len_x_vals < num_concepts_selected and fixed_idx == []:
+        return policy_coverage_selection_lp_hybrid(ground_truth_gym_env,concept_list,
+                                                   num_concepts_selected,groundtruth_model,
+                                                   q_estimates,fixed_idx=idx)
+
+
     subset_concept = [concept_list[i] for i in idx]
 
-    return subset_concept, idx
+    # Optional: compute achieved coverage on LP sample
+    covered = disagreement[:, idx].any(axis=1)
+    coverage_ratio = covered.mean()
 
+    print("Coverage {}".format(coverage_ratio))
+
+    return subset_concept, idx
 
 def policy_coverage_selection_multiple_log(
     ground_truth_gym_env,
@@ -557,7 +582,7 @@ def policy_coverage_selection_multiple_log(
         for j in range(len(actions)):
             all_observations.append([c(info[j]['observation']) for c in concept_list])
             all_actions.append(actions[j])
-        obs, _ ,_ , _, info = ground_truth_gym_env.step(actions)
+        obs, rew, t_1, t_2, info = ground_truth_gym_env.step(actions)
 
     all_observations = np.asarray(all_observations, dtype=np.int8)
     all_actions = np.asarray(all_actions)
@@ -647,6 +672,11 @@ def policy_coverage_selection_multiple_log(
             name=f"cover_{p}",
         )
 
+    # Prefix constraints: enforce consecutive coverage
+    # if len(fixed_idx) == 0:
+    #     for i in range(1, len(final_vals)):
+    #         model.addConstr(y_2[i] <= y_2[i-1], name=f"prefix_{i}")
+
     weights = [i[0] for i in final_vals]
 
     model.addConstr(gp.quicksum(y[p] for p in range(M)) / M >= coverage_ratio)
@@ -663,6 +693,9 @@ def policy_coverage_selection_multiple_log(
 
     # Constraint: maximize covered pairs
     
+    # if len(fixed_idx) > 0:
+    #     model.setObjective(gp.quicksum(y[p] for p in range(M)), GRB.MAXIMIZE)    
+    # else:
     model.setObjective(gp.quicksum(weights[i]*y_2[i] for i in range(len(final_vals))), GRB.MAXIMIZE)    
 
     model.optimize()
@@ -687,11 +720,30 @@ def policy_coverage_selection_multiple_log(
     # Rounding: take top-k x_d
     # --------------------------------------------------
     x_vals = np.array([x[d].X for d in range(K)])
+    y_vals = np.array([y[p].X for p in range(M)])
+    y_2_vals = np.array([y_2[p].X for p in range(len(y_2))])
 
+    print("Y Vals mean",np.mean(y_vals))
+    print("Y 2 Vals maen {}".format(np.mean(y_2_vals)))
+    len_x_vals = sum(x_vals)
+
+
+    print("There are {} x vals".format(len_x_vals))
     idx = [i for i in range(len(x_vals)) if x_vals[i] > 0.5]
+
+    if len_x_vals < num_concepts_selected and fixed_idx == []:
+        return policy_coverage_selection_multiple_log(ground_truth_gym_env,concept_list,
+                                                   num_concepts_selected,groundtruth_model,
+                                                   q_estimates,acc_list,fixed_idx=idx)
+
 
     subset_concept = [concept_list[i] for i in idx]
 
+    # Optional: compute achieved coverage on LP sample
+    covered = disagreement[:, idx].any(axis=1)
+    coverage_ratio = covered.mean()
+
+    print("Coverage {}".format(coverage_ratio))
 
     return subset_concept, idx
 

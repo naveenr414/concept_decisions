@@ -58,47 +58,39 @@ for idx in "${!SEEDS[@]}"; do
   for s in "${sessions[@]}"; do
       session_name="${s}_${seed}"
       setup_tmux_session "$session_name" "$gpu"
-      : > "runs/logs/error_${session_name}.txt"
+      for shift in 0 3 
+      do 
+        true_seed=$(( SEEDS[idx] + shift ))
+        session_name="${s}_${true_seed}"
+        : > "runs/logs/error_${session_name}.txt"
+      done 
   done
 done
 
 # Run experiments
-for idx in "${!SEEDS[@]}"; do
-  seed=${SEEDS[$idx]}
-  gpu=${GPU_MAP[$idx]}
-  
-  env=mini_grid 
-  for g in 100000 250000 500000
-  do 
-    for method in entropy greedy lp_hybrid multiple_log
+for shift in 0 3 
+do 
+  for idx in "${!SEEDS[@]}"; do
+    seed=${SEEDS[$idx]}
+    gpu=${GPU_MAP[$idx]}
+    true_seed=$(( SEEDS[idx] + shift ))
+    
+    env=mini_grid 
+    for g in 100000 250000 500000
     do 
-      session="ablations_${seed}"
-      tmux send-keys -t "$session" \
-        "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_imperfect.py \
-        --seed ${seed} \
-        --environment_string ${env} \
-        --training_timesteps ${training_timesteps[$env]} \
-        --gold_timesteps ${g} \
-        --num_concepts_selected ${num_concepts[$env]} \
-        --method ${method} \
-        --out_folder ablations >> ../../runs/logs/error_ablations_${seed}.txt 2>&1" ENTER
+      for method in entropy greedy lp_hybrid multiple_log
+      do 
+        session="ablations_${seed}"
+        tmux send-keys -t "$session" \
+          "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_imperfect.py \
+          --seed ${true_seed} \
+          --environment_string ${env} \
+          --training_timesteps ${training_timesteps[$env]} \
+          --gold_timesteps ${g} \
+          --num_concepts_selected ${num_concepts[$env]} \
+          --method ${method} \
+          --out_folder ablations >> ../../runs/logs/error_ablations_${true_seed}.txt 2>&1" ENTER
+      done 
     done 
   done 
-  
-  # for method in completeness lp_policy 
-  # do 
-  #   for env in mini_grid
-  #   do 
-  #     session="ablations_${seed}"
-  #     tmux send-keys -t "$session" \
-  #       "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_imperfect.py \
-  #       --seed ${seed} \
-  #       --environment_string ${env} \
-  #       --training_timesteps ${training_timesteps[$env]} \
-  #       --gold_timesteps ${gold_timesteps[$env]} \
-  #       --num_concepts_selected ${num_concepts[$env]} \
-  #       --method ${method} \
-  #       --out_folder basic >> ../../runs/logs/error_ablations_${seed}.txt 2>&1" ENTER
-  #   done 
-  # done 
 done
