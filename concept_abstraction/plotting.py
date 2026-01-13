@@ -229,24 +229,36 @@ def plot_line(ax,x_values,y_values,y_confidence,labels,formatting):
 
     if formatting['color_palette'][0] == '#':
         colors = [formatting['color_palette']]
-        assert len(x_values) == 1
     else:
         assert formatting['color_palette'] in color_schemes
-        assert len(color_schemes[formatting['color_palette']]) >= len(x_values)
-
         colors = color_schemes[formatting['color_palette']]
 
-    linewidth = 0.6
-    if 'linewidth' in formatting:
-        linewidth = formatting['linewidth']
-    
-    linestyle='-'
-    if 'linestyle' in formatting:
-        linestyle = formatting['linestyle']
+    linewidth = formatting.get('linewidth', 0.6)
+
+    if 'linestyle' not in formatting:
+        linestyles = ['-'] * len(x_values)
+    elif isinstance(formatting['linestyle'], list):
+        linestyles = formatting['linestyle']
+    else:
+        linestyles = [formatting['linestyle']] * len(x_values)
+
 
     for i in range(len(x_values)):
-        ax.plot(x_values[i],y_values[i],label=labels[i],linewidth=linewidth,color=colors[i],linestyle=linestyle)
-        ax.fill_between(x_values[i],np.array(y_values[i])-np.array(y_confidence[i]),np.array(y_values[i])+np.array(y_confidence[i]), alpha=0.2,color=colors[i])
+        ax.plot(
+            x_values[i],
+            y_values[i],
+            label=labels[i],
+            linewidth=linewidth,
+            color=colors[i],
+            linestyle=linestyles[i],
+        )
+        ax.fill_between(
+            x_values[i],
+            np.array(y_values[i]) - np.array(y_confidence[i]),
+            np.array(y_values[i]) + np.array(y_confidence[i]),
+            alpha=0.2,
+            color=colors[i],
+        )
 
 def plot_scatter(ax,x_values,y_values,formatting):
     """Create a line plot, based on the following:
