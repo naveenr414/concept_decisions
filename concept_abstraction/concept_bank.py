@@ -315,7 +315,7 @@ def get_all_mini_grid_names():
 
     for i in range(12):
         for j in range(val_ranges[i][0],val_ranges[i][1]+1):
-            all_concepts.append(vec[i])
+            all_concepts.append(vec[i]+"_"+str(j))
     return all_concepts
 
 ## Pong Concepts
