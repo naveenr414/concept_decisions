@@ -536,8 +536,10 @@ def policy_coverage_selection_multiple_log(
     num_pairs_lp=20_000,
     rollout_steps=10_000,
     coverage_ratio=0.99,
-    fixed_idx=[]
+    fixed_idx=None
 ):
+    if fixed_idx is None:
+        fixed_idx = []
     unique_actions = list(set([int(i[1]) for i in q_estimates]))
     actions = np.array([i[1] for i in q_estimates])
 
@@ -551,21 +553,29 @@ def policy_coverage_selection_multiple_log(
     print(num_actions)
     seen = set() 
     for a in unique_actions:
-            relevant_idx = np.where(actions == a)[0]
-            if len(relevant_idx) <= 500:
-                relevant_low = relevant_high = relevant_idx
-            else:
-                relevant_low = np.argsort(np.abs(q_values))[:500]
-                relevant_high = np.argsort(np.abs(q_values))[-500:]
-            for low_idx in relevant_low:
-                for high_idx in relevant_high:
-                    diff = abs(q_values[low_idx] - q_values[high_idx])
-                    # tuple of differing concept indices
-                    diffs = tuple(i for i, (l, h) in enumerate(zip(discretized_X[low_idx], discretized_X[high_idx])) if l != h)
-                    tup = (diff, diffs)
-                    if diffs not in seen and diffs != ():
-                        seen.add(diffs)
-                        final_vals.append(tup)
+        relevant_idx = np.where(actions == a)[0]
+
+        if len(relevant_idx) <= 500:
+            relevant_low = relevant_idx
+            relevant_high = relevant_idx
+        else:
+            # Restrict to this action only
+            q_sub = q_values[relevant_idx]
+
+            # Sort by absolute Q-value *within this action*
+            order = np.argsort(np.abs(q_sub))
+
+            relevant_low = relevant_idx[order[:500]]
+            relevant_high = relevant_idx[order[-500:]]
+        for low_idx in relevant_low:
+            for high_idx in relevant_high:
+                diff = abs(q_values[low_idx] - q_values[high_idx])
+                # tuple of differing concept indices
+                diffs = tuple(i for i, (l, h) in enumerate(zip(discretized_X[low_idx], discretized_X[high_idx])) if l != h)
+                tup = (diff, diffs)
+                if diffs not in seen and diffs != ():
+                    seen.add(diffs)
+                    final_vals.append(tup)
     final_vals = final_vals[:250_000]
     final_vals = sorted(final_vals,reverse=True)
 
@@ -684,7 +694,7 @@ def policy_coverage_selection_multiple_log(
 
     # Cardinality constraint
     model.addConstr(
-        gp.quicksum(x[d] for d in range(K)) == num_concepts_selected,
+        gp.quicksum(x[d] for d in range(K)) <= num_concepts_selected,
         name="budget",
     )
     if len(fixed_idx) > 0:
@@ -725,16 +735,25 @@ def policy_coverage_selection_multiple_log(
 
     print("Y Vals mean",np.mean(y_vals))
     print("Y 2 Vals maen {}".format(np.mean(y_2_vals)))
-    len_x_vals = sum(x_vals)
+    len_x_vals = np.sum(x_vals >  0.5)
 
 
     print("There are {} x vals".format(len_x_vals))
     idx = [i for i in range(len(x_vals)) if x_vals[i] > 0.5]
 
     if len_x_vals < num_concepts_selected and fixed_idx == []:
-        return policy_coverage_selection_multiple_log(ground_truth_gym_env,concept_list,
-                                                   num_concepts_selected,groundtruth_model,
-                                                   q_estimates,acc_list,fixed_idx=idx)
+        return policy_coverage_selection_multiple_log(
+            ground_truth_gym_env=ground_truth_gym_env,
+            concept_list=concept_list,
+            num_concepts_selected=num_concepts_selected,
+            groundtruth_model=groundtruth_model,
+            q_estimates=q_estimates,
+            acc_list=acc_list,
+            num_pairs_lp=num_pairs_lp,
+            rollout_steps=rollout_steps,
+            coverage_ratio=coverage_ratio,
+            fixed_idx=idx,
+        )
 
 
     subset_concept = [concept_list[i] for i in idx]

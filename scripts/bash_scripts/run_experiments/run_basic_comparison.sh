@@ -38,11 +38,11 @@ sessions=(
   # perfect_glucose_greedy
   # perfect_glucose_lp_hybrid
 
-  imperfect_cart_pole_pong_imperfect_concepts
-  imperfect_cart_pole_pong_random
-  imperfect_cart_pole_pong_entropy
-  imperfect_cart_pole_pong_greedy
-  imperfect_cart_pole_pong_lp_hybrid
+  # imperfect_cart_pole_pong_imperfect_concepts
+  # imperfect_cart_pole_pong_random
+  # imperfect_cart_pole_pong_entropy
+  # imperfect_cart_pole_pong_greedy
+  # imperfect_cart_pole_pong_lp_hybrid
   imperfect_cart_pole_pong_multiple_log
 
   # imperfect_mini_grid_boxing_imperfect_concepts
@@ -109,7 +109,7 @@ for idx in "${!SEEDS[@]}"; do
 done
 
 # Run experiments
-for shift in 3 # 0 3 
+for shift in 0 3 
 do 
   for idx in "${!SEEDS[@]}"; do
     seed=${SEEDS[$idx]}
@@ -135,9 +135,9 @@ do
     # done
 
     # # # # # # --- Imperfect CartPole/Pong ---
-    for method in imperfect_concepts random entropy greedy lp_hybrid multiple_log 
+    for method in multiple_log # imperfect_concepts random entropy greedy lp_hybrid multiple_log 
     do 
-      for env in  pong # cart_pole 
+      for env in cart_pole # pong  
       do 
         session="imperfect_cart_pole_pong_${method}_${seed}"
         tmux send-keys -t "$session" \

@@ -120,12 +120,12 @@ if is_main:
 if is_main and "multiple" in method and 'concept_accuracy' not in results:
     matching_params = get_results_matching_parameters("training","",{'environment_string': environment_string,
                 'gold_timesteps': gold_timesteps, 'seed': seed})
-    if len(matching_params) > 0 and 'concept_accuracy' in matching_params[0]:
-        acc_list = matching_params[0]['concept_accuracy']
-        results["concept_accuracy"] = acc_list
-    else:
-        acc_list = evaluate_concept_predictor(concept_predictor,ground_truth_gym_env,groundtruth_model,concept_list)
-        results["concept_accuracy"] = acc_list.tolist()
+    # if len(matching_params) > 0 and 'concept_accuracy' in matching_params[0]:
+    #     acc_list = matching_params[0]['concept_accuracy']
+    #     results["concept_accuracy"] = acc_list
+    # else:
+    acc_list = evaluate_concept_predictor(concept_predictor,ground_truth_gym_env,groundtruth_model,concept_list)
+    results["concept_accuracy"] = acc_list.tolist()
 
 if is_main and torch.cuda.is_available():
     concept_predictor = concept_predictor.cuda()
