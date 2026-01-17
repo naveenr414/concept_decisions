@@ -8,7 +8,31 @@ SEEDS=(42 43 44)
 GPU_MAP=(0 1 2)
 
 sessions=(
-  ablations
+  # ablations
+
+  # perfect_mini_grid_relaxed
+  # perfect_mini_grid_rho_0
+  # perfect_mini_grid_rho_05
+  # perfect_mini_grid_rho_075
+  perfect_mini_grid_mi
+
+  # perfect_cart_pole_relaxed
+  # perfect_cart_pole_rho_0
+  # perfect_cart_pole_rho_05
+  # perfect_cart_pole_rho_075
+  perfect_cart_pole_mi
+
+  # imperfect_mini_grid_relaxed
+  # imperfect_mini_grid_rho_0
+  # imperfect_mini_grid_rho_05
+  # imperfect_mini_grid_rho_075
+  imperfect_mini_grid_mi
+
+  # imperfect_cart_pole_relaxed
+  # imperfect_cart_pole_rho_0
+  # imperfect_cart_pole_rho_05
+  # imperfect_cart_pole_rho_075
+  imperfect_cart_pole_mi
 )
 
 environment=food
@@ -23,7 +47,7 @@ declare -A gold_timesteps=(
 )
 
 declare -A training_timesteps=(
-  [mini_grid]=250000
+  [mini_grid]=500000
   [cart_pole]=4000000
   [pong]=15000000
   [boxing]=15000000
@@ -75,22 +99,58 @@ do
     gpu=${GPU_MAP[$idx]}
     true_seed=$(( SEEDS[idx] + shift ))
     
-    env=mini_grid 
-    for g in 100000 250000 500000
+    # env=mini_grid 
+    # for g in 100000 250000 500000
+    # do 
+    #   for method in entropy greedy lp_hybrid multiple_log
+    #   do 
+    #     session="ablations_${seed}"
+    #     tmux send-keys -t "$session" \
+    #       "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_imperfect.py \
+    #       --seed ${true_seed} \
+    #       --environment_string ${env} \
+    #       --training_timesteps ${training_timesteps[$env]} \
+    #       --gold_timesteps ${g} \
+    #       --num_concepts_selected ${num_concepts[$env]} \
+    #       --method ${method} \
+    #       --out_folder ablations >> ../../runs/logs/error_ablations_${true_seed}.txt 2>&1" ENTER
+    #   done 
+    # done 
+
+    for method in mi # relaxed rho_05 rho_075 mi 
     do 
-      for method in entropy greedy lp_hybrid multiple_log
+      for env in cart_pole mini_grid
       do 
-        session="ablations_${seed}"
+        session="perfect_${env}_${method}_${seed}"
         tmux send-keys -t "$session" \
-          "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_imperfect.py \
+          "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_perfect.py \
           --seed ${true_seed} \
           --environment_string ${env} \
           --training_timesteps ${training_timesteps[$env]} \
-          --gold_timesteps ${g} \
+          --gold_timesteps ${gold_timesteps[$env]} \
           --num_concepts_selected ${num_concepts[$env]} \
           --method ${method} \
-          --out_folder ablations >> ../../runs/logs/error_ablations_${true_seed}.txt 2>&1" ENTER
-      done 
-    done 
+          --out_folder basic >> ../../runs/logs/error_perfect_${env}_${method}_${true_seed}.txt 2>&1" ENTER
+      done
+    done
+
+    for method in relaxed rho_05 rho_075 mi 
+    do 
+      for env in cart_pole mini_grid
+      do 
+        session="imperfect_${env}_${method}_${seed}"
+        tmux send-keys -t "$session" \
+          "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_perfect.py \
+          --seed ${true_seed} \
+          --environment_string ${env} \
+          --training_timesteps ${training_timesteps[$env]} \
+          --gold_timesteps ${gold_timesteps[$env]} \
+          --num_concepts_selected ${num_concepts[$env]} \
+          --method ${method} \
+          --out_folder basic >> ../../runs/logs/error_perfect_${env}_${method}_${true_seed}.txt 2>&1" ENTER
+      done
+    done
+
+
   done 
 done

@@ -176,6 +176,40 @@ if is_main and method == 'multiple_log':
     subset_concept, idx = policy_coverage_selection_multiple_log(ground_truth_gym_env,concept_list,num_concepts_selected,groundtruth_model,q_estimates,acc_list)
 
 
+if is_main and method == 'relaxed':
+    subset_concept, idx = policy_coverage_selection_lp_hybrid(
+    ground_truth_gym_env,
+    concept_list,
+    num_concepts_selected,
+    groundtruth_model,
+    q_estimates, prefix=True)
+
+if is_main and method == 'rho_075':
+    subset_concept, idx = policy_coverage_selection_lp_hybrid(
+    ground_truth_gym_env,
+    concept_list,
+    num_concepts_selected,
+    groundtruth_model,
+    q_estimates,coverage_ratio=0.75)
+
+if is_main and method == 'rho_05':
+    subset_concept, idx = policy_coverage_selection_lp_hybrid(
+    ground_truth_gym_env,
+    concept_list,
+    num_concepts_selected,
+    groundtruth_model,
+    q_estimates,coverage_ratio=0.5)
+
+if is_main and method == 'rho_0':
+    subset_concept, idx = policy_coverage_selection_lp_hybrid(
+    ground_truth_gym_env,
+    concept_list,
+    num_concepts_selected,
+    groundtruth_model,
+    q_estimates,coverage_ratio=0)
+
+if is_main and method == 'mi':
+    subset_concept, idx = mutual_information_selection(concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary")
 
 if is_main and method == 'multiple_old':
     subset_concept, idx = multiple_lp_selection_old(ground_truth_env,concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary",acc_list)

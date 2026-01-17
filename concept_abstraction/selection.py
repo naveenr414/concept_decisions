@@ -12,6 +12,7 @@ import copy
 import torch.nn as nn
 import torch.optim as optim
 from concept_abstraction.env_utils import rollout_q_estimates_td
+from sklearn.feature_selection import mutual_info_regression
 
 class ValueNet(nn.Module):
     def __init__(self, obs_dim, hidden_sizes=(64,64)):
@@ -268,6 +269,63 @@ def greedy_selection(concept_list,num_concepts_selected,selection_function,q_est
         concepts = [concept_list[i] for i in idx]
     return concepts, idx
 
+def mutual_information_selection(
+    concept_list,
+    num_concepts_selected,
+    selection_function,
+    q_estimates,
+    concept_source,
+    n_neighbors=5
+):
+    """
+    Greedy concept selection using mutual information.
+    """
+
+    unique_actions = list(set(int(i[1]) for i in q_estimates))
+    num_concepts = len(concept_list)
+
+    mi_by_concept = []
+
+
+    for idx in range(num_concepts):
+        mi_vals = []
+        weights = []
+
+        for action in unique_actions:
+            x = np.array([i[0][idx] for i in q_estimates if int(i[1]) == action])
+            y = np.array([i[2] for i in q_estimates if int(i[1]) == action])
+
+            if len(np.unique(x)) <= 1 or len(y) <= 2:
+                continue
+
+            mi = mutual_info_regression(
+                x.reshape(-1, 1),
+                y,
+                n_neighbors=n_neighbors,
+                random_state=0
+            )[0]
+
+            mi_vals.append(mi)
+            weights.append(len(x))
+
+        if len(mi_vals) == 0:
+            mi_by_concept.append(0)
+        else:
+            mi_by_concept.append(
+                np.average(mi_vals, weights=weights)
+            )
+
+    mi_by_concept = np.array(mi_by_concept)
+
+    # Select top MI concepts
+    idx = np.argpartition(-mi_by_concept, num_concepts_selected - 1)[:num_concepts_selected]
+    idx = idx[np.argsort(-mi_by_concept[idx])]
+    idx = idx.tolist()
+
+    concepts = [concept_list[i] for i in idx]
+
+    return concepts, idx
+
 def max_prefix_gurobi(final_vals, num_concepts_selected,in_order=True,as_float=False,weighted=False,acc_list=None,min_accuracy=0,fixed_idx=[],has_equality=True):
     """Arguments:
         final_vals: list of tuples (value, elements_covering_value)
@@ -350,7 +408,8 @@ def policy_coverage_selection_lp_hybrid(
     num_pairs_lp=20_000,
     rollout_steps=10_000,
     coverage_ratio=0.99,
-    fixed_idx = []
+    fixed_idx = [],
+    prefix=False 
 ):
     unique_actions = list(set([int(i[1]) for i in q_estimates]))
     actions = np.array([i[1] for i in q_estimates])
@@ -453,9 +512,10 @@ def policy_coverage_selection_lp_hybrid(
             model.addConstr(y_2[i] == 0)  # cannot be covered
     
     # Prefix constraints: enforce consecutive coverage
-    # if len(fixed_idx) == 0:
-    #     for i in range(1, len(final_vals)):
-    #         model.addConstr(y_2[i] <= y_2[i-1], name=f"prefix_{i}")
+
+    if len(fixed_idx) == 0 and prefix:
+        for i in range(1, len(final_vals)):
+            model.addConstr(y_2[i] <= y_2[i-1], name=f"prefix_{i}")
 
     weights = [i[0] for i in final_vals]
 

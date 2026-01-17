@@ -135,22 +135,22 @@ do
     # done
 
     # # # # # # --- Imperfect CartPole/Pong ---
-    for method in multiple_log # imperfect_concepts random entropy greedy lp_hybrid multiple_log 
-    do 
-      for env in cart_pole # pong  
-      do 
-        session="imperfect_cart_pole_pong_${method}_${seed}"
-        tmux send-keys -t "$session" \
-          "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_imperfect.py \
-          --seed ${true_seed} \
-          --environment_string ${env} \
-          --training_timesteps ${training_timesteps[$env]} \
-          --gold_timesteps ${gold_timesteps[$env]} \
-          --num_concepts_selected ${num_concepts[$env]} \
-          --method ${method} \
-          --out_folder basic >> ../../runs/logs/error_imperfect_cart_pole_pong_${method}_${true_seed}.txt 2>&1" ENTER
-      done
-    done
+    # for method in multiple_log # imperfect_concepts random entropy greedy lp_hybrid multiple_log 
+    # do 
+    #   for env in cart_pole # pong  
+    #   do 
+    #     session="imperfect_cart_pole_pong_${method}_${seed}"
+    #     tmux send-keys -t "$session" \
+    #       "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_imperfect.py \
+    #       --seed ${true_seed} \
+    #       --environment_string ${env} \
+    #       --training_timesteps ${training_timesteps[$env]} \
+    #       --gold_timesteps ${gold_timesteps[$env]} \
+    #       --num_concepts_selected ${num_concepts[$env]} \
+    #       --method ${method} \
+    #       --out_folder basic >> ../../runs/logs/error_imperfect_cart_pole_pong_${method}_${true_seed}.txt 2>&1" ENTER
+    #   done
+    # done
 
 
   #   # # --- Imperfect MiniGrid/Boxing ---
