@@ -730,7 +730,7 @@ def policy_coverage_selection_multiple_log(
             )
 
             # main probabilistic constraint
-            model.addConstr(z2[i] <= s2[i], name=f"cover_{i}")
+            model.addConstr(z2[i] >= s2[i], name=f"cover_{i}")
 
         else:
             print("Setting to 0")
@@ -747,10 +747,10 @@ def policy_coverage_selection_multiple_log(
     #     for i in range(1, len(final_vals)):
     #         model.addConstr(y_2[i] <= y_2[i-1], name=f"prefix_{i}")
 
-    weights = [i[0] for i in final_vals]
 
     model.addConstr(gp.quicksum(y[p] for p in range(M)) / M >= coverage_ratio)
 
+    weights = [i[0] for i in final_vals]
 
     # Cardinality constraint
     model.addConstr(

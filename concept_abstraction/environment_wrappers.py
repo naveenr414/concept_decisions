@@ -112,14 +112,8 @@ class VecConceptWrapper(VecEnvWrapper):
     def _resample_intervention_mask(self, env_ids):
         num_concepts = self.mask.shape[1]
         k = round(self.intervention_prob * num_concepts)
-
-        for i in env_ids:
-            self.mask[i].zero_()
-            if k > 0 and (np.random.random() < 1.0 or not self.training_mode):
-                idx = torch.randperm(num_concepts, device="cuda")[:k]
-                self.mask[i, idx] = True
-            else:
-                self.mask[i,:] = False 
+        idx = torch.randperm(num_concepts, device="cuda")[:k]
+        self.mask[:,idx] = True 
 
     def _init_buffers(self,obs,infos):
         """Initialize buffers on first call"""
@@ -166,7 +160,7 @@ class VecConceptWrapper(VecEnvWrapper):
 
     def set_eval_mode(self):
         self.training_mode = False
-        self._resample_intervention_mask(list(range(len(self.mask))))
+        # self._resample_intervention_mask(list(range(len(self.mask))))
 
     def set_train_mode(self):
         self.training_mode = True
@@ -176,8 +170,8 @@ class VecConceptWrapper(VecEnvWrapper):
         processed_obs, rewards, dones, infos = self.venv.step_wait()
         if self.training_mode:
             env_ids_done = np.where(dones)[0]
-            if len(env_ids_done) > 0:
-                self._resample_intervention_mask(env_ids_done)
+            # if len(env_ids_done) > 0:
+            #     self._resample_intervention_mask(env_ids_done)
 
 
 
