@@ -11,25 +11,25 @@ sessions=(
   # ablations
 
   # perfect_mini_grid_relaxed
-  perfect_mini_grid_rho_0
+  # perfect_mini_grid_rho_0
   # perfect_mini_grid_rho_05
   # perfect_mini_grid_rho_075
   # perfect_mini_grid_mi
 
   # perfect_cart_pole_relaxed
-  perfect_cart_pole_rho_0
+  # perfect_cart_pole_rho_0
   # perfect_cart_pole_rho_05
   # perfect_cart_pole_rho_075
   # perfect_cart_pole_mi
 
   # imperfect_mini_grid_relaxed
-  imperfect_mini_grid_rho_0
+  # imperfect_mini_grid_rho_0
   # imperfect_mini_grid_rho_05
-  # imperfect_mini_grid_rho_075
+  imperfect_mini_grid_rho_075
   # imperfect_mini_grid_mi
 
   # imperfect_cart_pole_relaxed
-  imperfect_cart_pole_rho_0
+  # imperfect_cart_pole_rho_0
   # imperfect_cart_pole_rho_05
   # imperfect_cart_pole_rho_075
   # imperfect_cart_pole_mi
@@ -117,24 +117,24 @@ do
     #   done 
     # done 
 
-    for method in rho_0 # relaxed rho_05 rho_075 mi 
-    do 
-      for env in cart_pole mini_grid
-      do 
-        session="perfect_${env}_${method}_${seed}"
-        tmux send-keys -t "$session" \
-          "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_perfect.py \
-          --seed ${true_seed} \
-          --environment_string ${env} \
-          --training_timesteps ${training_timesteps[$env]} \
-          --gold_timesteps ${gold_timesteps[$env]} \
-          --num_concepts_selected ${num_concepts[$env]} \
-          --method ${method} \
-          --out_folder basic >> ../../runs/logs/error_perfect_${env}_${method}_${true_seed}.txt 2>&1" ENTER
-      done
-    done
+    # for method in rho_0 # relaxed rho_05 rho_075 mi 
+    # do 
+    #   for env in cart_pole mini_grid
+    #   do 
+    #     session="perfect_${env}_${method}_${seed}"
+    #     tmux send-keys -t "$session" \
+    #       "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_perfect.py \
+    #       --seed ${true_seed} \
+    #       --environment_string ${env} \
+    #       --training_timesteps ${training_timesteps[$env]} \
+    #       --gold_timesteps ${gold_timesteps[$env]} \
+    #       --num_concepts_selected ${num_concepts[$env]} \
+    #       --method ${method} \
+    #       --out_folder basic >> ../../runs/logs/error_perfect_${env}_${method}_${true_seed}.txt 2>&1" ENTER
+    #   done
+    # done
 
-    for method in rho_0 # relaxed rho_05 rho_075 mi 
+    for method in rho_075 # relaxed rho_0 rho_05 rho_075 mi 
     do 
       for env in mini_grid # cart_pole mini_grid
       do 
@@ -151,21 +151,21 @@ do
       done
     done
 
-    for method in rho_0 # relaxed rho_05 rho_075 mi 
-    do 
-      for env in cart_pole # mini_grid
-      do 
-        session="imperfect_${env}_${method}_${seed}"
-        tmux send-keys -t "$session" \
-          "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_imperfect.py \
-          --seed ${true_seed} \
-          --environment_string ${env} \
-          --training_timesteps ${training_timesteps[$env]} \
-          --gold_timesteps ${gold_timesteps[$env]} \
-          --num_concepts_selected ${num_concepts[$env]} \
-          --method ${method} \
-          --out_folder basic >> ../../runs/logs/error_imperfect_${env}_${method}_${true_seed}.txt 2>&1" ENTER
-      done
-    done
+  #   for method in rho_0 # relaxed rho_05 rho_075 mi 
+  #   do 
+  #     for env in cart_pole # mini_grid
+  #     do 
+  #       session="imperfect_${env}_${method}_${seed}"
+  #       tmux send-keys -t "$session" \
+  #         "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_imperfect.py \
+  #         --seed ${true_seed} \
+  #         --environment_string ${env} \
+  #         --training_timesteps ${training_timesteps[$env]} \
+  #         --gold_timesteps ${gold_timesteps[$env]} \
+  #         --num_concepts_selected ${num_concepts[$env]} \
+  #         --method ${method} \
+  #         --out_folder basic >> ../../runs/logs/error_imperfect_${env}_${method}_${true_seed}.txt 2>&1" ENTER
+  #     done
+  #   done
   done 
 done
