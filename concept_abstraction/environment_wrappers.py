@@ -108,11 +108,14 @@ class VecConceptWrapper(VecEnvWrapper):
         self.predictions_gpu = None
         self.predictions_cpu = None
         self.obs_batch_gpu = None
+        self._resample_intervention_mask(list(range(len(self.mask))))
 
     def _resample_intervention_mask(self, env_ids):
+        print("Resampling Intervention Mask")
         num_concepts = self.mask.shape[1]
         k = round(self.intervention_prob * num_concepts)
         idx = torch.randperm(num_concepts, device="cuda")[:k]
+        print(idx)
         self.mask[:,idx] = True 
 
     def _init_buffers(self,obs,infos):
@@ -152,7 +155,6 @@ class VecConceptWrapper(VecEnvWrapper):
         self._buffers_ready = True
 
     def reset(self):
-        self._resample_intervention_mask(list(range(len(self.mask))))
         obs = self.venv.reset()
         infos = self.venv.reset_infos
         self._init_buffers(obs, infos)
@@ -254,7 +256,8 @@ class VecConceptWrapper(VecEnvWrapper):
                     obs_tensor = obs_batch.to('cuda', dtype=torch.float32, non_blocking=True) / 255.0
                 
                 logits = self.fast_predictor(obs_tensor)[:, self.concept_idx].float()
-                
+                logits = logits.detach()
+
                 # 2. CLAMP the logits to a fixed range
                 # This prevents any "rogue" high-confidence predictions from 
                 # overpowering your intervention.
@@ -272,7 +275,7 @@ class VecConceptWrapper(VecEnvWrapper):
                     )
 
         else:
-            base = concept_vals * 30 - 15
+            base = (concept_vals * 2 - 1)*logit_bound 
             self.predictions_gpu[:] = base
 
         # Just allocate fresh CPU array - this is actually very cheap

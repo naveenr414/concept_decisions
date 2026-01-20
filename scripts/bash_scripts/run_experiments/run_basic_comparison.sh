@@ -25,21 +25,21 @@ sessions=(
   # perfect_pong_entropy
   # perfect_pong_greedy
   # perfect_pong_lp_hybrid
-  perfect_pong_rho_075
+  # perfect_pong_rho_075
 
   # perfect_boxing_perfect_concepts
   # perfect_boxing_random
   # perfect_boxing_entropy
   # perfect_boxing_greedy
   # perfect_boxing_lp_hybrid
-  perfect_boxing_rho_075
+  # perfect_boxing_rho_075
   
   # perfect_glucose_perfect_concepts
   # perfect_glucose_random
   # perfect_glucose_entropy
   # perfect_glucose_greedy
   # perfect_glucose_lp_hybrid
-  perfect_glucose_rho_075
+  # perfect_glucose_rho_075
 
   # imperfect_cart_pole_pong_imperfect_concepts
   # imperfect_cart_pole_pong_random
@@ -47,13 +47,15 @@ sessions=(
   # imperfect_cart_pole_pong_greedy
   # imperfect_cart_pole_pong_lp_hybrid
   imperfect_cart_pole_pong_multiple_log
+  imperfect_cart_pole_pong_rho_075
 
   # imperfect_mini_grid_boxing_imperfect_concepts
   # imperfect_mini_grid_boxing_random
   # imperfect_mini_grid_boxing_entropy
   # imperfect_mini_grid_boxing_greedy
   # imperfect_mini_grid_boxing_lp_hybrid
-  # imperfect_mini_grid_boxing_multiple_log
+  imperfect_mini_grid_boxing_multiple_log
+  imperfect_mini_grid_boxing_rho_075
 )
 
 environment=food
@@ -138,9 +140,9 @@ do
     # done
 
   #   # # # # # # --- Imperfect CartPole/Pong ---
-    for method in multiple_log # imperfect_concepts random entropy greedy lp_hybrid multiple_log 
+    for method in rho_075 multiple_log # imperfect_concepts random entropy greedy lp_hybrid multiple_log 
     do 
-      for env in pong # cart_pole   
+      for env in cart_pole pong    
       do 
         session="imperfect_cart_pole_pong_${method}_${seed}"
         tmux send-keys -t "$session" \
@@ -156,22 +158,22 @@ do
     done
 
 
-  #   # # --- Imperfect MiniGrid/Boxing ---
-    # for method in multiple_log  # imperfect_concepts random entropy greedy lp_hybrid multiple_log 
-    # do 
-    #   for env in boxing # mini_grid    
-    #   do 
-    #     session="imperfect_mini_grid_boxing_${method}_${seed}"
-    #     tmux send-keys -t "$session" \
-    #       "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_imperfect.py \
-    #       --seed ${true_seed} \
-    #       --environment_string ${env} \
-    #       --training_timesteps ${training_timesteps[$env]} \
-    #       --gold_timesteps ${gold_timesteps[$env]} \
-    #       --num_concepts_selected ${num_concepts[$env]} \
-    #       --method ${method} \
-    #       --out_folder basic >> ../../runs/logs/error_imperfect_mini_grid_boxing_${method}_${true_seed}.txt 2>&1" ENTER
-    #   done
-    # done
+    # # --- Imperfect MiniGrid/Boxing ---
+    for method in rho_075  multiple_log  # imperfect_concepts random entropy greedy lp_hybrid multiple_log 
+    do 
+      for env in mini_grid boxing     
+      do 
+        session="imperfect_mini_grid_boxing_${method}_${seed}"
+        tmux send-keys -t "$session" \
+          "conda activate ${environment}; CUDA_VISIBLE_DEVICES=$gpu python -u method_comparison_imperfect.py \
+          --seed ${true_seed} \
+          --environment_string ${env} \
+          --training_timesteps ${training_timesteps[$env]} \
+          --gold_timesteps ${gold_timesteps[$env]} \
+          --num_concepts_selected ${num_concepts[$env]} \
+          --method ${method} \
+          --out_folder basic >> ../../runs/logs/error_imperfect_mini_grid_boxing_${method}_${true_seed}.txt 2>&1" ENTER
+      done
+    done
   done
 done 

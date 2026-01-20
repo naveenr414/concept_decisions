@@ -163,6 +163,13 @@ if is_main and method == 'greedy':
 if is_main and method == 'lp':
     subset_concept, idx = lp_based_selection(ground_truth_env,concept_list,num_concepts_selected,"q_value",q_estimates,"human_selected_binary")
 
+if is_main and method == 'rho_075':
+    subset_concept, idx = policy_coverage_selection_lp_hybrid(
+    ground_truth_gym_env,
+    concept_list,
+    num_concepts_selected,
+    groundtruth_model,
+    q_estimates,coverage_ratio=0.75)
 
 if is_main and method == 'lp_hybrid':
     subset_concept, idx = policy_coverage_selection_lp_hybrid(

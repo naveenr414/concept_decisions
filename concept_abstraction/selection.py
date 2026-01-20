@@ -595,7 +595,7 @@ def policy_coverage_selection_multiple_log(
     acc_list,
     num_pairs_lp=20_000,
     rollout_steps=10_000,
-    coverage_ratio=0.99,
+    coverage_ratio=0.75,
     fixed_idx=None
 ):
     if fixed_idx is None:
