@@ -596,66 +596,73 @@ def policy_coverage_selection_multiple_log(
     num_pairs_lp=20_000,
     rollout_steps=10_000,
     coverage_ratio=0.75,
-    fixed_idx=None
+    fixed_idx=None,
+    final_vals=None,
+    all_observations=None,
+    all_actions=None,
+
 ):
     if fixed_idx is None:
         fixed_idx = []
     unique_actions = list(set([int(i[1]) for i in q_estimates]))
     actions = np.array([i[1] for i in q_estimates])
+    acc_list = [min(a,0.99) for a in acc_list]
 
     # Continuous
     discretized_X = np.array([i[0] for i in q_estimates])
     
     q_values = np.array([i[2] for i in q_estimates])
 
-    final_vals = []
-    num_actions = len(set([i[1] for i in q_estimates]))
-    print(num_actions)
-    seen = set() 
-    for a in unique_actions:
-        relevant_idx = np.where(actions == a)[0]
+    if final_vals is None:
+        final_vals = []
+        num_actions = len(set([i[1] for i in q_estimates]))
+        print(num_actions)
+        seen = set() 
+        for a in unique_actions:
+            relevant_idx = np.where(actions == a)[0]
 
-        if len(relevant_idx) <= 500:
-            relevant_low = relevant_idx
-            relevant_high = relevant_idx
-        else:
-            # Restrict to this action only
-            q_sub = q_values[relevant_idx]
+            if len(relevant_idx) <= 500:
+                relevant_low = relevant_idx
+                relevant_high = relevant_idx
+            else:
+                # Restrict to this action only
+                q_sub = q_values[relevant_idx]
 
-            # Sort by absolute Q-value *within this action*
-            order = np.argsort(np.abs(q_sub))
+                # Sort by absolute Q-value *within this action*
+                order = np.argsort(np.abs(q_sub))
 
-            relevant_low = relevant_idx[order[:500]]
-            relevant_high = relevant_idx[order[-500:]]
-        for low_idx in relevant_low:
-            for high_idx in relevant_high:
-                diff = abs(q_values[low_idx] - q_values[high_idx])
-                # tuple of differing concept indices
-                diffs = tuple(i for i, (l, h) in enumerate(zip(discretized_X[low_idx], discretized_X[high_idx])) if l != h)
-                tup = (diff, diffs)
-                if diffs not in seen and diffs != ():
-                    seen.add(diffs)
-                    final_vals.append(tup)
-    final_vals = final_vals[:250_000]
-    final_vals = sorted(final_vals,reverse=True)
+                relevant_low = relevant_idx[order[:500]]
+                relevant_high = relevant_idx[order[-500:]]
+            for low_idx in relevant_low:
+                for high_idx in relevant_high:
+                    diff = abs(q_values[low_idx] - q_values[high_idx])
+                    # tuple of differing concept indices
+                    diffs = tuple(i for i, (l, h) in enumerate(zip(discretized_X[low_idx], discretized_X[high_idx])) if l != h)
+                    tup = (diff, diffs)
+                    if diffs not in seen and diffs != ():
+                        seen.add(diffs)
+                        final_vals.append(tup)
+        final_vals = final_vals[:100_000]
+        final_vals = sorted(final_vals,reverse=True)
 
     # --------------------------------------------------
     # Collect observations / actions (same as before)
     # --------------------------------------------------
-    all_observations = []
-    all_actions = []
+    if all_observations is None:
+        all_observations = []
+        all_actions = []
 
-    obs, info = ground_truth_gym_env.reset()
+        obs, info = ground_truth_gym_env.reset()
 
-    for _ in range(rollout_steps):
-        actions = groundtruth_model.predict(obs)[0]
-        for j in range(len(actions)):
-            all_observations.append([c(info[j]['observation']) for c in concept_list])
-            all_actions.append(actions[j])
-        obs, rew, t_1, t_2, info = ground_truth_gym_env.step(actions)
+        for _ in range(rollout_steps):
+            actions = groundtruth_model.predict(obs)[0]
+            for j in range(len(actions)):
+                all_observations.append([c(info[j]['observation']) for c in concept_list])
+                all_actions.append(actions[j])
+            obs, rew, t_1, t_2, info = ground_truth_gym_env.step(actions)
 
-    all_observations = np.asarray(all_observations, dtype=np.int8)
-    all_actions = np.asarray(all_actions)
+        all_observations = np.asarray(all_observations, dtype=np.int8)
+        all_actions = np.asarray(all_actions)
 
     N, K = all_observations.shape
 
@@ -664,110 +671,110 @@ def policy_coverage_selection_multiple_log(
     # --------------------------------------------------
     # Sample cross-action pairs
     # --------------------------------------------------
-    idx_i = np.random.randint(low=0, high=N, size=5 * num_pairs_lp)
-    idx_j = np.random.randint(low=0, high=N, size=5 * num_pairs_lp)
+    idx_i, idx_j = [], []
+    while len(idx_i) < num_pairs_lp:
+        i = np.random.randint(0, N, size=num_pairs_lp)
+        j = np.random.randint(0, N, size=num_pairs_lp)
+        mask = all_actions[i] != all_actions[j]
+        idx_i.append(i[mask])
+        idx_j.append(j[mask])
 
-    valid = all_actions[idx_i] != all_actions[idx_j]
-    idx_i = idx_i[valid][:num_pairs_lp]
-    idx_j = idx_j[valid][:num_pairs_lp]
+    idx_i = np.concatenate(idx_i)[:num_pairs_lp]
+    idx_j = np.concatenate(idx_j)[:num_pairs_lp]
 
     if len(idx_i) == 0:
         raise ValueError("No cross-action pairs sampled.")
 
     M = len(idx_i)
 
-    disagreement = (all_observations[idx_i] != all_observations[idx_j]).astype(np.int8)
+    disagreement = (all_observations[idx_i] != all_observations[idx_j]).astype(np.uint8)
 
     # --------------------------------------------------
-    # Precompute log(1 - p_{p,d})
+    # Precompute log constants ONCE
     # --------------------------------------------------
-    log_p = np.zeros((M, K))
-    eps = 1e-9
-
-    for p in range(M):
-        for d in range(K):
-            if disagreement[p, d] == 1:
-                prob = acc_list[d]**2 + (1 - acc_list[d])**2
-            else:
-                prob = 2 * acc_list[d] * (1 - acc_list[d])
-            prob = min(prob, 1 - eps)
-            log_p[p, d] = np.log(1 - prob)   # ≤ 0
+    acc = np.array(acc_list)
+    p_same = acc**2 + (1 - acc)**2
+    log_const = np.log(1 - np.minimum(p_same, 1 - 1e-9))  # shape (K,)
 
     # --------------------------------------------------
     # Build Gurobi model
     # --------------------------------------------------
-    model = gp.Model("max_coverage_log")
+    model = gp.Model("max_coverage_log_fast")
     model.Params.OutputFlag = 0
+    model.Params.Presolve = 2
+    model.Params.MIPFocus = 1
+    model.Params.Threads = 8
 
-    # Concept selection
-    x = model.addVars(K, vtype=GRB.BINARY, name="x")
-
-    # Pair coverage probabilities
+    # Variables
+    x = model.addVars(K, lb=0.0, ub=1.0, vtype=GRB.CONTINUOUS, name="x")
     y = model.addVars(M, lb=0.0, ub=1.0, name="y")
-    y_2 = model.addVars(len(final_vals), lb=0.0, vtype=GRB.CONTINUOUS, name="y_2")
-
-    eps = 1e-9
-
-    one_minus_y2 = model.addVars(len(final_vals), lb=eps, ub=1.0, name="one_minus_y2")
+    y_2 = model.addVars(len(final_vals), lb=0.0, ub=1.0, name="y_2")
     z2 = model.addVars(len(final_vals), lb=-GRB.INFINITY, ub=0.0, name="z2")
     s2 = model.addVars(len(final_vals), lb=-GRB.INFINITY, ub=0.0, name="s2")
 
+    # --------------------------------------------------
+    # PWL approximation of log(1 - y)
+    # --------------------------------------------------
+    bp = np.array([1e-6, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 0.9])
+    vals = np.log(1 - bp)
+
+    # --------------------------------------------------
+    # Final_vals constraints (FAST)
+    # --------------------------------------------------
     for i, (_, elems) in enumerate(final_vals):
         if elems:
-            # one_minus_y2 = 1 - y_2
-            model.addConstr(one_minus_y2[i] == 1 - y_2[i], name=f"one_minus_y2_{i}")
+            # s2[i] = sum x[e] * log_const[e]
+            coeffs = log_const[list(elems)]
+            vars_ = [x[e] for e in elems]
+            model.addConstr(s2[i] == gp.LinExpr(coeffs, vars_), name=f"s2_{i}")
 
-            # z2 = log(1 - y_2)
-            model.addGenConstrLog(one_minus_y2[i], z2[i], name=f"log_y2_{i}")
-
-            # s2 = sum x_e * log(1 - p_e)
-            model.addConstr(
-                s2[i] == gp.quicksum(
-                    x[e] * np.log(1 - (acc_list[e]**2 + (1 - acc_list[e])**2))
-                    for e in elems
-                ),
-                name=f"log_sum_{i}"
+            # z2 ≈ log(1 - y_2)
+            model.addGenConstrPWL(
+                y_2[i], z2[i],
+                bp.tolist(), vals.tolist(),
+                name=f"log_pwl_{i}"
             )
 
-            # main probabilistic constraint
+            # coverage constraint
             model.addConstr(z2[i] >= s2[i], name=f"cover_{i}")
-
         else:
-            print("Setting to 0")
-            model.addConstr(y_2[i] == 0, name=f"cover_{i}")
+            model.addConstr(y_2[i] == 0.0, name=f"cover_{i}")
 
+    # --------------------------------------------------
+    # Pair coverage constraints (SPARSE)
+    # --------------------------------------------------
     for p in range(M):
-        model.addConstr(
-            y[p] <= gp.quicksum(disagreement[p, d] * x[d] for d in range(K)),
-            name=f"cover_{p}",
-        )
+        idx = np.flatnonzero(disagreement[p])
+        if len(idx):
+            model.addConstr(y[p] <= gp.quicksum(x[d] for d in idx),
+                            name=f"pair_{p}")
+        else:
+            model.addConstr(y[p] == 0.0, name=f"pair_{p}")
 
-    # Prefix constraints: enforce consecutive coverage
-    # if len(fixed_idx) == 0:
-    #     for i in range(1, len(final_vals)):
-    #         model.addConstr(y_2[i] <= y_2[i-1], name=f"prefix_{i}")
-
-
+    # --------------------------------------------------
+    # Global constraints
+    # --------------------------------------------------
     model.addConstr(gp.quicksum(y[p] for p in range(M)) / M >= coverage_ratio)
 
-    weights = [i[0] for i in final_vals]
-
-    # Cardinality constraint
     model.addConstr(
         gp.quicksum(x[d] for d in range(K)) <= num_concepts_selected,
-        name="budget",
+        name="budget"
     )
-    if len(fixed_idx) > 0:
-        for i in fixed_idx:
-            model.addConstr(x[i] == 1)
 
-    # Constraint: maximize covered pairs
-    
-    # if len(fixed_idx) > 0:
-    #     model.setObjective(gp.quicksum(y[p] for p in range(M)), GRB.MAXIMIZE)    
-    # else:
-    model.setObjective(gp.quicksum(weights[i]*y_2[i] for i in range(len(final_vals))), GRB.MAXIMIZE)    
+    if fixed_idx:
+        for d in fixed_idx:
+            model.addConstr(x[d] == 1.0)
 
+    # --------------------------------------------------
+    # Objective
+    # --------------------------------------------------
+    weights = np.array([w for w, _ in final_vals])
+    model.setObjective(
+        gp.quicksum(weights[i] * y_2[i] for i in range(len(final_vals))),
+        GRB.MAXIMIZE
+    )
+
+    print("Starting optimization")
     model.optimize()
 
     if model.Status not in (GRB.OPTIMAL, GRB.TIME_LIMIT):
@@ -783,7 +790,11 @@ def policy_coverage_selection_multiple_log(
                 groundtruth_model,
                 q_estimates,
                 acc_list,
-                coverage_ratio=coverage_ratio
+                coverage_ratio=coverage_ratio,
+                final_vals=final_vals,
+                all_observations=all_observations,
+                all_actions=all_actions,
+
             )
 
     # --------------------------------------------------
@@ -796,12 +807,12 @@ def policy_coverage_selection_multiple_log(
     print("Y Vals mean",np.mean(y_vals))
     print("Y 2 Vals maen {}".format(np.mean(y_2_vals)))
     len_x_vals = np.sum(x_vals >  0.5)
+    x = np.argsort(-x_vals)[:num_concepts_selected].tolist()
+    idx = sorted([i for i in x if x_vals[i] > 0.01])
 
+    print("There are {} idx".format(len(idx)))
 
-    print("There are {} x vals".format(len_x_vals))
-    idx = [i for i in range(len(x_vals)) if x_vals[i] > 0.5]
-
-    if len_x_vals < num_concepts_selected and fixed_idx == []:
+    if len(idx) < num_concepts_selected and fixed_idx == []:
         return policy_coverage_selection_multiple_log(
             ground_truth_gym_env=ground_truth_gym_env,
             concept_list=concept_list,
@@ -813,6 +824,9 @@ def policy_coverage_selection_multiple_log(
             rollout_steps=rollout_steps,
             coverage_ratio=coverage_ratio,
             fixed_idx=idx,
+            final_vals=final_vals,
+            all_observations=all_observations,
+            all_actions=all_actions,
         )
 
 

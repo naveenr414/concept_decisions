@@ -92,7 +92,7 @@ if is_main:
         concept_list,
         num_concepts_selected,
         groundtruth_model,
-        q_estimates)
+        q_estimates,coverage_ratio=0.75)
     env, eval_env = get_environment(environment_string,subset_concept,seed,processed_concepts=processed_concepts,concept_idx=idx,concept_accuracy=concept_accuracy)
     model = train_ppo_model(env,environment_string,policy="MlpPolicy",total_timesteps=training_timesteps,custom_name="{}_ablation_lp_hybrid_{}_{}_{}".format(environment_string,concept_accuracy,num_concepts_selected,seed))    
     lp_two_stage_reward = evaluate_model(environment_string,eval_env,model,seed)
