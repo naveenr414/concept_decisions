@@ -47,7 +47,7 @@ sessions=(
   # imperfect_cart_pole_pong_greedy
   # imperfect_cart_pole_pong_lp_hybrid
   imperfect_cart_pole_pong_multiple_log
-  imperfect_cart_pole_pong_rho_075
+  # imperfect_cart_pole_pong_rho_075
 
   # imperfect_mini_grid_boxing_imperfect_concepts
   # imperfect_mini_grid_boxing_random
@@ -55,7 +55,7 @@ sessions=(
   # imperfect_mini_grid_boxing_greedy
   # imperfect_mini_grid_boxing_lp_hybrid
   imperfect_mini_grid_boxing_multiple_log
-  imperfect_mini_grid_boxing_rho_075
+  # imperfect_mini_grid_boxing_rho_075
 )
 
 environment=food
@@ -140,7 +140,7 @@ do
     # done
 
   #   # # # # # # --- Imperfect CartPole/Pong ---
-    for method in rho_075 multiple_log # imperfect_concepts random entropy greedy lp_hybrid multiple_log 
+    for method in  multiple_log # imperfect_concepts random entropy greedy rho_075 multiple_log 
     do 
       for env in cart_pole pong    
       do 
@@ -159,7 +159,7 @@ do
 
 
     # # --- Imperfect MiniGrid/Boxing ---
-    for method in rho_075  multiple_log  # imperfect_concepts random entropy greedy lp_hybrid multiple_log 
+    for method in   multiple_log  # imperfect_concepts random entropy greedy rho_075 multiple_log 
     do 
       for env in mini_grid boxing     
       do 

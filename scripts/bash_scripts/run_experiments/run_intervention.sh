@@ -50,13 +50,13 @@ for i in "${!SEEDS[@]}"; do
   seed=${SEEDS[$i]}
   gpu=${GPU_MAP[$i]}
 
-  for env in mini_grid_pong # cart_pole_boxing 
+  for env in  cart_pole_boxing # mini_grid_pong
   do 
     # cart_pole + pong sessions
     for m in "${METHODS[@]}"; do
       session_name="intervention_${env}_${m}_${seed}"
       setup_tmux_session "$session_name" "$gpu"
-      for shift in 0 3 
+      for shift in 0 # 3 
       do 
         true_seed=$(( SEEDS[idx] + shift ))
         session_name="${s}_${true_seed}"
@@ -68,7 +68,7 @@ done
 
 
 for idx in "${!SEEDS[@]}"; do
-  for shift in 0 3
+  for shift in 0 
   do 
     seed=${SEEDS[$idx]}
     gpu=${GPU_MAP[$idx]}  # assign GPU for this seed
@@ -93,69 +93,69 @@ for idx in "${!SEEDS[@]}"; do
     #   done
     # done
 
-    for method in "${METHODS[@]}"; do
-      for env in pong   
-      do 
+    # for method in "${METHODS[@]}"; do
+    #   for env in pong   
+    #   do 
 
-        tmux_target="intervention_mini_grid_pong_${method}_${seed}"
+    #     tmux_target="intervention_mini_grid_pong_${method}_${seed}"
 
-        tmux send-keys -t "$tmux_target" \
-          "conda activate ${environment}; python -u method_comparison_intervention.py \
-          --seed ${true_seed} \
-          --environment_string ${env} \
-          --training_timesteps ${training_timesteps[$env]} \
-          --gold_timesteps ${gold_timesteps[$env]} \
-          --num_concepts_selected ${num_concepts[$env]} \
-          --method ${method} \
-          --predictor_epochs 1 \
-          --intervention_prob 0.0 \
-          --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
+    #     tmux send-keys -t "$tmux_target" \
+    #       "conda activate ${environment}; python -u method_comparison_intervention.py \
+    #       --seed ${true_seed} \
+    #       --environment_string ${env} \
+    #       --training_timesteps ${training_timesteps[$env]} \
+    #       --gold_timesteps ${gold_timesteps[$env]} \
+    #       --num_concepts_selected ${num_concepts[$env]} \
+    #       --method ${method} \
+    #       --predictor_epochs 1 \
+    #       --intervention_prob 0.0 \
+    #       --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
 
-        tmux send-keys -t "$tmux_target" \
-          "conda activate ${environment}; python -u method_comparison_intervention.py \
-          --seed ${true_seed} \
-          --environment_string ${env} \
-          --training_timesteps ${training_timesteps[$env]} \
-          --gold_timesteps ${gold_timesteps[$env]} \
-          --num_concepts_selected ${num_concepts[$env]} \
-          --method ${method} \
-          --predictor_epochs 1 \
-          --intervention_prob 0.5 \
-          --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
-      done
-    done
+    #     tmux send-keys -t "$tmux_target" \
+    #       "conda activate ${environment}; python -u method_comparison_intervention.py \
+    #       --seed ${true_seed} \
+    #       --environment_string ${env} \
+    #       --training_timesteps ${training_timesteps[$env]} \
+    #       --gold_timesteps ${gold_timesteps[$env]} \
+    #       --num_concepts_selected ${num_concepts[$env]} \
+    #       --method ${method} \
+    #       --predictor_epochs 1 \
+    #       --intervention_prob 0.5 \
+    #       --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
+    #   done
+    # done
 
-    for method in "${METHODS[@]}"; do
-      for env in mini_grid  
-      do 
+    # for method in "${METHODS[@]}"; do
+    #   for env in mini_grid  
+    #   do 
 
-        tmux_target="intervention_mini_grid_pong_${method}_${seed}"
+    #     tmux_target="intervention_mini_grid_pong_${method}_${seed}"
 
-        tmux send-keys -t "$tmux_target" \
-          "conda activate ${environment}; python -u method_comparison_intervention.py \
-          --seed ${true_seed} \
-          --environment_string ${env} \
-          --training_timesteps ${training_timesteps[$env]} \
-          --gold_timesteps ${gold_timesteps[$env]} \
-          --num_concepts_selected ${num_concepts[$env]} \
-          --method ${method} \
-          --predictor_epochs 1 \
-          --intervention_prob 0.0 \
-          --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
+    #     tmux send-keys -t "$tmux_target" \
+    #       "conda activate ${environment}; python -u method_comparison_intervention.py \
+    #       --seed ${true_seed} \
+    #       --environment_string ${env} \
+    #       --training_timesteps ${training_timesteps[$env]} \
+    #       --gold_timesteps ${gold_timesteps[$env]} \
+    #       --num_concepts_selected ${num_concepts[$env]} \
+    #       --method ${method} \
+    #       --predictor_epochs 1 \
+    #       --intervention_prob 0.0 \
+    #       --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
 
-        tmux send-keys -t "$tmux_target" \
-          "conda activate ${environment}; python -u method_comparison_intervention.py \
-          --seed ${true_seed} \
-          --environment_string ${env} \
-          --training_timesteps ${training_timesteps[$env]} \
-          --gold_timesteps ${gold_timesteps[$env]} \
-          --num_concepts_selected ${num_concepts[$env]} \
-          --method ${method} \
-          --predictor_epochs 1 \
-          --intervention_prob 0.5 \
-          --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
-      done
-    done
+    #     tmux send-keys -t "$tmux_target" \
+    #       "conda activate ${environment}; python -u method_comparison_intervention.py \
+    #       --seed ${true_seed} \
+    #       --environment_string ${env} \
+    #       --training_timesteps ${training_timesteps[$env]} \
+    #       --gold_timesteps ${gold_timesteps[$env]} \
+    #       --num_concepts_selected ${num_concepts[$env]} \
+    #       --method ${method} \
+    #       --predictor_epochs 1 \
+    #       --intervention_prob 0.5 \
+    #       --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
+    #   done
+    # done
 
     # for method in "${METHODS[@]}"; do
     #   for env in boxing  
@@ -189,7 +189,7 @@ for idx in "${!SEEDS[@]}"; do
     #   done
     # done
 
-    env=cart_pole
+    # env=cart_pole
     # for intervention_prob in 0.25
     # do 
     #   for method in "${METHODS[@]}"; do
@@ -213,18 +213,18 @@ for idx in "${!SEEDS[@]}"; do
     do 
       for method in "${METHODS[@]}"; do
 
-      tmux_target="intervention_mini_grid_pong_${method}_${seed}"
+        tmux_target="intervention_cart_pole_boxing_${method}_${seed}"
 
-      tmux send-keys -t "$tmux_target" \
-        "conda activate ${environment}; python -u method_comparison_intervention.py \
-        --seed ${true_seed} \
-        --environment_string ${env} \
-        --training_timesteps ${training_timesteps[$env]} \
-        --gold_timesteps ${gold_timesteps[$env]} \
-        --num_concepts_selected ${num_concepts[$env]} \
-        --method ${method} \
-        --intervention_prob ${intervention_prob} \
-        --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
+        tmux send-keys -t "$tmux_target" \
+          "conda activate ${environment}; python -u method_comparison_intervention.py \
+          --seed ${true_seed} \
+          --environment_string ${env} \
+          --training_timesteps ${training_timesteps[$env]} \
+          --gold_timesteps ${gold_timesteps[$env]} \
+          --num_concepts_selected ${num_concepts[$env]} \
+          --method ${method} \
+          --intervention_prob ${intervention_prob} \
+          --out_folder intervention >> ../../runs/logs/error_${tmux_target}.txt 2>&1" ENTER
       done
     done
   done

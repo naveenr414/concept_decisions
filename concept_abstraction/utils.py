@@ -73,7 +73,12 @@ def get_results_matching_parameters(folder_name,result_name,parameters):
             if p not in load_file['parameters'] or load_file['parameters'][p] != parameters[p]:
                 break 
         else:
+            from datetime import datetime
+            mtime = os.path.getmtime(file_name)
+            mtime_readable = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+
             load_file = json.load(open(file_name,"r"))
+            print(f"Opening {file_name} (last modified: {mtime_readable})",load_file['parameters']['seed'])
             ret_results.append(load_file)
             
     return ret_results

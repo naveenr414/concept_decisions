@@ -246,6 +246,7 @@ class VecConceptWrapper(VecEnvWrapper):
             concept_vals = torch.where(flips, 1.0 - concept_vals, concept_vals)
 
         concept_vals = concept_vals[:, self.concept_idx]
+        logit_bound = 5.0
 
         # OPTIMIZATION 2: Reuse predictions buffer
         if self.fast_predictor is not None:
@@ -261,7 +262,6 @@ class VecConceptWrapper(VecEnvWrapper):
                 # 2. CLAMP the logits to a fixed range
                 # This prevents any "rogue" high-confidence predictions from 
                 # overpowering your intervention.
-                logit_bound = 5.0
                 logits = torch.clamp(logits, -logit_bound, logit_bound)
                 
                 self.predictions_gpu[:] = logits
