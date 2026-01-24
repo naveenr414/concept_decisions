@@ -40,6 +40,7 @@ def delete_duplicate_results(folder_name,result_name,data):
             first_few = first_few.split("}")[0]+"}}"
             load_file = json.loads(first_few)['parameters']
             if load_file == data['parameters']:
+                print(load_file)
                 try:
                     os.remove(file_name)
                 except OSError as e:
@@ -78,7 +79,6 @@ def get_results_matching_parameters(folder_name,result_name,parameters):
             mtime_readable = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
 
             load_file = json.load(open(file_name,"r"))
-            print(f"Opening {file_name} (last modified: {mtime_readable})",load_file['parameters']['seed'])
             ret_results.append(load_file)
             
     return ret_results

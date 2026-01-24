@@ -117,7 +117,11 @@ def plot_bar(ax,x_groups,y_values,y_errors,labels,formatting):
         assert formatting['color_palette'] in color_schemes
         assert len(color_schemes[formatting['color_palette']]) >= num_groups
 
-        colors = color_schemes[formatting['color_palette']][:num_groups]
+        colors = color_schemes[formatting['color_palette']]
+        if 'color_shift' in formatting:
+            colors = colors[formatting['color_shift']:]
+        colors = colors[:num_groups]
+    
     print(len(colors),formatting['color_palette'],max_bars_per_group)
 
     if 'bar_width' not in formatting:
@@ -230,7 +234,10 @@ def plot_line(ax,x_values,y_values,y_confidence,labels,formatting):
         colors = [formatting['color_palette'] for i in range(len(x_values))]
     else:
         assert formatting['color_palette'] in color_schemes
+
         colors = color_schemes[formatting['color_palette']]
+        if 'color_shift' in formatting:
+            colors = colors[formatting['color_shift']:]
 
     linewidth = formatting.get('linewidth', 0.6)
 
@@ -375,7 +382,7 @@ def plot_text(ax,text,x,y,formatting):
 
     ax.text(x,y, text, color=formatting['color_palette'], fontsize=formatting['fontsize'], ha='center')
 
-def create_axes(plot_dimensions,formatting,x_labels=None,y_labels=None,titles=None,sup_x_label="",sup_y_label="",sup_title=""):
+def create_axes(plot_dimensions,formatting,x_labels=None,y_labels=None,titles=None,sup_x_label="",sup_x_label_shift=0.01,sup_y_label="",sup_title=""):
     """Create the figure and axes elements with certain labels, 
         number of subplots, and a title
         
@@ -420,14 +427,23 @@ def create_axes(plot_dimensions,formatting,x_labels=None,y_labels=None,titles=No
         title_size = 18
         tick_size = 14
 
+    if 'label_size' in formatting:
+        label_size = formatting['label_size']
+    if 'title_size' in formatting:
+        title_size = formatting['title_size']
+    if 'tick_size' in formatting:
+        tick_size = formatting['tick_size']
+
+    print(formatting,label_size)
+
     for i in range(plot_dimensions[0]):
         for j in range(plot_dimensions[1]):
             ax[i][j].set_xlabel(x_labels[i][j],fontsize=label_size)
             ax[i][j].set_ylabel(y_labels[i][j],fontsize=label_size)
             ax[i][j].set_title(titles[i][j],fontsize=title_size)
 
-    fig.supxlabel(sup_x_label)
-    fig.supylabel(sup_y_label)
+    fig.supxlabel(sup_x_label,y=sup_x_label_shift,fontsize=label_size)
+    fig.supylabel(sup_y_label,fontsize=label_size)
     fig.suptitle(sup_title)
 
 
@@ -496,6 +512,9 @@ def create_legend(fig,ax,plot_dimensions,formatting):
         legend_size = 10
     elif formatting['style_size'] == 'presentation':
         legend_size = 14
+
+    if 'fontsize' in formatting:
+        legend_size = formatting['fontsize']
 
     if formatting['type'] == 'is_global':
         handles, labels = ax[0][0].get_legend_handles_labels()
