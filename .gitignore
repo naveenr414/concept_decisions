@@ -27,6 +27,7 @@ dist/
 
 # --- Jupyter Notebooks ---
 .ipynb_checkpoints
+test_api.py
 # If you want to share the notebook but not the internal "output" state:
 # (Optional) *.ipynb_checkpoints
 
