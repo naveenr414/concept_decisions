@@ -1,0 +1,46 @@
+# configs/intervention.yaml
+#
+# Test-time intervention experiments (Figure 4, Appendix G).
+# Policies and concept predictors are weakly trained (predictor_epochs=1,
+# reduced training_timesteps) to simulate realistic intervention scenarios.
+#
+# Output: results/intervention/
+
+experiment: intervention
+script: method_comparison_intervention
+out_folder: intervention
+
+seeds: [42, 43, 44, 45, 46, 47]
+
+# Reduced training to mimic real intervention scenarios (Section 5.3)
+environments:
+  cart_pole:
+    gold_timesteps: 4000000
+    training_timesteps: 4000000
+    num_concepts: 3
+    predictor_epochs: 25      # full training; CartPole doesn't need weakening
+  mini_grid:
+    gold_timesteps: 1000000
+    training_timesteps: 250000
+    num_concepts: 11
+    predictor_epochs: 1
+  pong:
+    gold_timesteps: 15000000
+    training_timesteps: 4000000
+    num_concepts: 57
+    predictor_epochs: 1
+  boxing:
+    gold_timesteps: 30000000
+    training_timesteps: 2000000
+    num_concepts: 48
+    predictor_epochs: 1
+
+methods:
+  - random
+  - variance    # renamed from 'entropy'
+  - greedy
+  - drs         # renamed from 'rho_075'
+  - drs_log     # renamed from 'multiple_log'
+
+# Figure 4 uses alpha=0.5; Appendix G sweeps all values
+intervention_probs: [0.0, 0.25, 0.5, 0.75]

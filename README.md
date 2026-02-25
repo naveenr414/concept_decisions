@@ -1,0 +1,212 @@
+# Selecting Decision-Relevant Concepts in Reinforcement Learning
+
+**Naveen Raman, Stephanie Milani, Fei Fang**  
+Carnegie Mellon University · New York University · Johns Hopkins University
+
+[[Paper]](https://arxiv.org/abs/XXX) · [[Project Page]](https://XXX)
+
+![Pull figure](figures/pull_figure.jpg)
+
+Concept-based models make RL policies interpretable by routing decisions
+through human-understandable boolean features. The catch: you have to choose
+which concepts to use. This paper formalises that choice and gives the first
+algorithms with performance guarantees for automatic concept selection.
+
+Our key insight is that a concept is *decision-relevant* if and only if it
+separates states that require different actions. We connect this to state
+abstraction theory and derive a tractable LP that finds the optimal subset.
+
+---
+
+## Installation
+
+```bash
+git clone https://github.com/naveenr414/concept-selection
+cd concept-selection
+conda env create -f environment.yaml
+conda activate concept-selection
+```
+
+Gurobi is required for DRS and DRS-log (the LP-based methods).
+A free academic licence is available at [gurobi.com](https://www.gurobi.com/academia/academic-program-and-licenses/).
+The variance and random baselines work without Gurobi.
+
+---
+
+## Quick Start
+
+The package exposes four functions. All of them take a trained policy and a
+list of concept functions, and return the indices of the selected concepts.
+
+```python
+import concept_abstraction as ca
+
+# Your inputs
+policy   = PPO.load("checkpoints/my_policy")   # any SB3-compatible policy
+concepts = [c1, c2, c3, ...]                   # list of f(obs) -> {0, 1}
+env      = make_vec_env("MyEnv-v0", n_envs=8)  # standard gym VecEnv
+```
+
+**DRS** — optimal concept selection for ground-truth (perfect) concept predictors:
+
+```python
+idx = ca.DRS(policy, concepts, env, k=5)
+selected = [concepts[i] for i in idx]
+```
+
+**DRS-log** — use this when your concepts are *predicted* by a CNN (imperfect):
+
+```python
+# acc_list[i] = accuracy of your predictor on concept i, in [0, 1]
+idx = ca.DRS_log(policy, concepts, env, k=5, acc_list=acc_list)
+```
+
+If you don't have accuracy estimates yet, you can train a predictor and get
+them automatically:
+
+```python
+predictor, acc_list = ca.train_concept_predictor(env, policy, concepts, concept_idx=range(len(concepts)))
+idx = ca.DRS_log(policy, concepts, env, k=5, acc_list=acc_list)
+```
+
+**Baselines** (no Gurobi required):
+
+```python
+idx = ca.variance(policy, concepts, env, k=5)  # variance-based greedy
+idx = ca.random(concepts, k=5)                 # random lower bound
+```
+
+### What are concept functions?
+
+Each concept is a function `f(obs) -> int` that maps a raw environment
+observation to 0 or 1. For example:
+
+```python
+# CartPole: is the pole leaning right?
+def pole_right(obs):
+    return int(obs[2] > 0)
+
+# MiniGrid: is the door open?
+def door_open(obs):
+    return int(obs[7] == 1)
+
+concepts = [pole_right, door_open, ...]
+```
+
+The `env` must include the raw observation in its info dict under
+`info["observation"]` so that concept functions can be evaluated during
+rollouts. The built-in environments in this repo all do this automatically;
+see `environment_wrappers.py` if you want to wrap your own env.
+
+---
+
+## Reproducing Paper Results
+
+All experiments from the paper can be reproduced with a single script:
+
+```bash
+bash reproduce_results.sh
+```
+
+This will run training, concept selection, and evaluation for all
+environments (CartPole, MiniGrid, Pong, Boxing, Glucose) and generate all
+figures into `figures/`. Expected runtime on a single GPU: ~24 hours total.
+
+To reproduce a specific experiment:
+
+```bash
+# Train prerequisites (ground-truth policies + concept predictors)
+python scripts/train_prerequisites.py --config scripts/configs/main_perfect.yaml
+
+# Run concept selection comparison
+python scripts/run_comparison.py --config scripts/configs/main_perfect.yaml
+
+# Generate figures
+jupyter nbconvert --to notebook --execute plot_results.ipynb
+```
+
+Config files for each experiment are in `scripts/configs/`:
+
+| Config | Figures |
+|--------|---------|
+| `main_perfect.yaml` | Fig. 2 (top) — perfect concept predictors |
+| `main_imperfect.yaml` | Fig. 2 (bottom) — imperfect concept predictors |
+| `intervention.yaml` | Fig. 4 — test-time intervention |
+| `accuracy_sweep.yaml` | Fig. 3, 5 — varying k |
+| `ablations.yaml` | Appendix E — DRS ablations |
+| `timing.yaml` | Appendix F — runtime |
+| `cub.yaml` | Fig. 6 — CUB bird classification |
+
+---
+
+## CUB Bird Classification
+
+The CUB experiments require additional data setup.
+
+1. Download the standard CUB-200-2011 preprocessed split from
+   [Kaggle](https://www.kaggle.com/datasets/coolerextreme/cub200-cbm) and
+   place the `.pkl` files in `data/cub/`.
+
+2. Download the concept-prediction error files (`train_error.pkl`,
+   `val_error.pkl`, `test_error.pkl`) from
+   [Zenodo](https://zenodo.org/record/XXX) into `data/cub/`.
+
+3. Run:
+   ```bash
+   python scripts/run_comparison.py --config scripts/configs/cub.yaml
+   ```
+
+---
+
+## Repository Structure
+
+```
+concept-selection/
+├── reproduce_results.sh          # reproduces all paper experiments
+├── plot_results.ipynb            # generates all figures
+├── environment.yaml              # conda environment
+├── setup.py
+│
+├── scripts/
+│   ├── train_prerequisites.py    # train policies + concept predictors
+│   ├── run_comparison.py         # run concept selection + eval
+│   ├── run_experiment.py         # single experiment runner
+│   ├── accuracy_sweep.py         # sweep over k
+│   ├── get_runtimes.py           # timing experiments
+│   ├── supervised_learning.py    # CUB supervised experiments
+│   └── configs/                  # per-experiment YAML configs
+│
+├── concept_abstraction/          # library (importable)
+│   ├── __init__.py               # public API: DRS, DRS_log, variance, random
+│   ├── _api.py                   # API implementation
+│   ├── selection.py              # LP solvers (drs, drs_log, etc.)
+│   ├── concept_bank.py           # concept definitions per environment
+│   ├── environments.py           # environment builders
+│   ├── environment_wrappers.py   # VecConceptWrapper, ConceptWrapper, etc.
+│   ├── env_utils.py              # Q-estimation, rollouts, evaluation
+│   ├── training.py               # PPO training, concept predictor training
+│   ├── utils.py                  # result I/O
+│   ├── plotting.py               # figure helpers
+│   └── glucose_env.py            # glucose environment
+│
+├── data/
+│   └── cub/
+│       └── manual_concepts.txt   # manually curated CUB concept list
+│
+├── figures/                      # generated figures (tracked by git)
+└── results/                      # experiment outputs (gitignored)
+```
+
+---
+
+## Citation
+
+```bibtex
+@inproceedings{raman2026decisionrelevant,
+  title     = {Selecting Decision-Relevant Concepts in Reinforcement Learning},
+  author    = {Raman, Naveen and Milani, Stephanie and Fang, Fei},
+  booktitle = {XXX},
+  year      = {2026},
+  url       = {XXX}
+}
+```

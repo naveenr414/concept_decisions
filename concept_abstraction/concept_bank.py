@@ -1,7 +1,22 @@
+"""concept_bank.py
+
+Concept definitions for each environment.
+
+Each environment has:
+  - Scalar concept functions  f(obs) -> float  used during rollouts
+  - A meta map                fn -> dict        used by VecConceptWrapper for
+                                                fast batched GPU evaluation
+  - A get_concepts() entry    returning (concept_list, parsed_concepts)
+"""
+
 import numpy as np
 import torch
 from dataclasses import dataclass
 from copy import deepcopy
+
+
+# ── Parsed concept dataclass ──────────────────────────────────────────────────
+
 @dataclass
 class ParsedConcept:
     name: str
@@ -10,966 +25,366 @@ class ParsedConcept:
     concept_fn: callable
     meta: dict
 
-def make_thresholded_feature(feature_fn, threshold):
-    """Return a concept function that outputs (batch_size,) binary float tensor."""
-    def concept_fn(obs_tensor):
-        vals = feature_fn(obs_tensor)
-        return (vals > threshold).float()
-    return concept_fn
 
-def make_equality_feature(feature_fn, target_value):
-    """Return a concept function that checks equality (for discrete values)."""
-    def concept_fn(obs_tensor):
-        vals = feature_fn(obs_tensor)
-        return (vals == target_value).float()
+# ── Concept builders ──────────────────────────────────────────────────────────
+
+def make_threshold_concept(feature_fn, threshold):
+    """Return f(obs) -> int: 1 if feature_fn(obs) > threshold."""
+    def concept_fn(obs):
+        return int(feature_fn(obs) > threshold)
     return concept_fn
 
 
-def binarize_function(func,threshold):
-    """
-    Convert a scalar-valued function into two binary indicator functions
-    based on a threshold.
+def make_equality_concept(feature_fn, target_value):
+    """Return f(obs) -> int: 1 if feature_fn(obs) == target_value."""
+    def concept_fn(obs):
+        return int(feature_fn(obs) == target_value)
+    return concept_fn
 
-    The returned functions evaluate whether the function output is
-    less than the threshold or greater than or equal to the threshold.
 
-    Args:
-        func: Callable that maps an observation to a scalar value.
-        threshold: Numeric threshold used for binarization.
-
-    Returns:
-        List of two functions:
-            - f_less(obs): Returns 1 if func(obs) < threshold, else 0.
-            - f_greater(obs): Returns 1 if func(obs) >= threshold, else 0.
-    """
-
-    def f_greater(obs):
-        return int(func(obs)>=threshold)
-    
-    def f_less(obs):
-        return int(func(obs)<threshold)
-    
-    return [f_less,f_greater]
-
-def less_function(func,threshold):
-    """
-    Create a binary indicator function that checks whether a scalar-valued
-    function is below a given threshold.
-
-    Args:
-        func: Callable that maps an observation to a scalar value.
-        threshold: Numeric threshold to compare against.
-
-    Returns:
-        A function f_less(obs) that returns 1 if func(obs) < threshold,
-        and 0 otherwise.
-    """
-
-    def f_less(obs):
-        return int(func(obs)<threshold)
-    
-    return f_less 
-
-def binarize_function_list(func_list,threshold_list):
-    """
-    Binarize a list of scalar-valued functions using corresponding thresholds.
-
-    Each function is converted into two binary indicator functions
-    (less-than and greater-than-or-equal), and all resulting functions
-    are concatenated into a single list.
-
-    Args:
-        func_list: List of callables mapping observations to scalar values.
-        threshold_list: List of thresholds, one per function in func_list.
-
-    Returns:
-        new_funcs: List of binary indicator functions produced by
-                   binarizing each function in func_list.
-    """
-
-    new_funcs = []
-    for (f,t) in zip(func_list,threshold_list):
-        new_funcs += binarize_function(f,t)
-    
-    return new_funcs
-
-def build_concepts_with_parsing(feature_fns, thresholds, meta_map, use_equality=False):
-    """
-    Build concepts from features.
-    
-    Args:
-        feature_fns: List of feature extraction functions
-        thresholds: List of threshold/target values
-        meta_map: Metadata for each feature function
-        use_equality: If True, create equality concepts (feature == value) instead of threshold concepts (feature > threshold)
-    
-    Returns:
-        concept_list: List of concept functions
-        parsed: List of ParsedConcept objects with metadata
-    """
+def _build_threshold_concepts(feature_fns, threshold_lists, meta_map):
+    """Build threshold ParsedConcepts for a list of features with per-feature thresholds."""
     parsed = []
-    
-    for base_idx, fn in enumerate(feature_fns):
+    for fn, thresholds in zip(feature_fns, threshold_lists):
         base_meta = meta_map[fn]
-        fn_name = fn.__name__
-        
-        for val in thresholds:
-            val_float = float(val)
-            
-            if use_equality:
-                # Create equality concept: feature == value
-                concept_fn = make_equality_feature(fn, val_float)
-                name = f"{fn_name} == {val_float:.0f}"
-            else:
-                # Create threshold concept: feature > threshold
-                concept_fn = make_thresholded_feature(fn, val_float)
-                name = f"{fn_name} > {val_float:.3f}"
-            
-            # Store the base feature metadata along with concept info
-            meta = deepcopy(base_meta)
-            meta["base_idx"] = base_idx
-            
-            if use_equality:
-                meta["value"] = val_float  # Store target value for equality
-            else:
-                meta["thr"] = val_float    # Store threshold for comparison
-            
-            parsed.append(
-                ParsedConcept(
-                    name=name,
-                    feature_fn=fn,
-                    threshold=val_float if not use_equality else None,
-                    concept_fn=concept_fn,
-                    meta=meta
-                )
-            )
-    
-    concept_list = [p.concept_fn for p in parsed]
-    
-    return concept_list, parsed
-
-### CartPole Concepts
-def get_cart_pole_concept(i):
-    """Get the ith index of a concept
-    
-    Arguments:
-        i: Integer, idx
-    
-    Returns: Function that returns the ith index into a vector"""
-
-    def get_concept(obs):
-        return obs[i]
-    return get_concept
-
-def cartpole_position(obs):
-    # obs: (N, num_frames, D)
-    return obs[:, -1, 0]
-
-def cartpole_velocity(obs):
-    return obs[:, -1, 1]
-
-def cartpole_angle(obs):
-    return obs[:, -1, 2]
-
-def cartpole_angular_velocity(obs):
-    return obs[:, -1, 3]
-
-def build_cartpole_meta():
-    """
-    Returns a dict mapping each cartpole_feature_fn to a metadata dictionary
-    describing its type and indices.
-    """
-    meta_map = {}
-
-    # ----- value-type concepts (direct state values) -----
-    meta_map[cartpole_position] = {
-        "type": "value",
-        "frame": -1,
-        "idx": 0,
-        "scale": 1.0,
-    }
-    meta_map[cartpole_velocity] = {
-        "type": "value",
-        "frame": -1,
-        "idx": 1,
-        "scale": 1.0,
-    }
-    meta_map[cartpole_angle] = {
-        "type": "value",
-        "frame": -1,
-        "idx": 2,
-        "scale": 1.0,
-    }
-    meta_map[cartpole_angular_velocity] = {
-        "type": "value",
-        "frame": -1,
-        "idx": 3,
-        "scale": 1.0,
-    }
-
-    return meta_map
-
-
-### Minigrid Concepts
-def minigrid_feature_0(obs):
-    # obs: (N, num_frames, D)
-    return obs[:, -1, 0]
-
-def minigrid_feature_1(obs):
-    return obs[:, -1, 1]
-
-def minigrid_feature_2(obs):
-    return obs[:, -1, 2]
-
-def minigrid_feature_3(obs):
-    return obs[:, -1, 3]
-
-def minigrid_feature_4(obs):
-    return obs[:, -1, 4]
-
-def minigrid_feature_5(obs):
-    return obs[:, -1, 5]
-
-def minigrid_feature_6(obs):
-    return obs[:, -1, 6]
-
-def minigrid_feature_7(obs):
-    return obs[:, -1, 7]
-
-def minigrid_feature_8(obs):
-    return obs[:, -1, 8]
-
-def minigrid_feature_9(obs):
-    return obs[:, -1, 9]
-
-def minigrid_feature_10(obs):
-    return obs[:, -1, 10]
-
-def minigrid_feature_11(obs):
-    return obs[:, -1, 11]
-
-def build_minigrid_meta():
-    """
-    Returns a dict mapping each minigrid_feature_fn to a metadata dictionary
-    describing its type and indices.
-    """
-    meta_map = {}
-    
-    # All MiniGrid features are value-type concepts
-    for i in range(12):
-        fn = globals()[f'minigrid_feature_{i}']
-        meta_map[fn] = {
-            "type": "value",
-            "frame": -1,
-            "idx": i,
-            "scale": 1.0,
-        }
-    
-    return meta_map
-
-
-def obj_row(obs,i,obj_id):
-    obs = obs[:147].reshape((3,7,7))[0,:,:]
-    return int(obj_id in list(obs[i,:]))
-
-def obj_column(obs,i,obj_id):
-    obs = obs[:147].reshape((3,7,7))[0,:,:]
-    return int(obj_id in list(obs[:,i]))
-
-def door_open(obs,obj_id):
-    door_loc = (-1,-1)
-    obs = obs[:147].reshape((3,7,7))
-
-    for i in range(len(obs[0])):
-        for j in range(len(obs[0][i])):
-            if obs[0][i][j] == obj_id:
-                door_loc = (i,j)
-    return int(obs[1][door_loc[0]][door_loc[1]] == 1)
-
-def mini_grid_position_x(obs,i):
-    return int(obs[-3] == i)
-
-def mini_grid_position_y(obs,j):
-    return int(obs[-2] == j)
-
-def mini_grid_direction(obs,d):
-    return int(obs[-1] == d)
-
-def get_all_mini_grid_concepts():
-    all_concepts = [lambda obs,i=i: obs[i] for i in range(12)]
-    return all_concepts
-
-def get_all_mini_grid_binary_concepts():
-    val_ranges = [(1,5),(1,5),(1,4),(1,5),(1,5),(1,5),(1,5),(0,1),(0,1),(0,1),(0,1),(0,1)]
-    all_concepts = []
-
-    for i in range(12):
-        for j in range(val_ranges[i][0],val_ranges[i][1]+1):
-            all_concepts.append(lambda obs,i=i,j=j: int(obs[i] == j))
-    return all_concepts
-
-def get_all_mini_grid_names():
-    all_concepts = []
-    val_ranges = [(1,5),(1,5),(1,4),(1,5),(1,5),(1,5),(1,5),(0,1),(0,1),(0,1),(0,1),(0,1)]
-    vec = ["X Pos","Y Pos","Dir","Key X","Key Y","Door X","Door Y","Door Open","Right","Left","Down","Up"]
-
-    for i in range(12):
-        for j in range(val_ranges[i][0],val_ranges[i][1]+1):
-            all_concepts.append(vec[i]+"_"+str(j))
-    return all_concepts
-
-## Pong Concepts
-def pong_paddle_y(obs):
-    # obs: (N, num_frames, D)
-    return (obs[:, -1, 1] - 128) / 255.0
-
-def pong_ball_x(obs):
-    return (obs[:, -1, 2] - 128) / 255.0
-
-def pong_ball_y(obs):
-    return (obs[:, -1, 3] - 128) / 255.0
-
-def pong_ball_v_x(obs):
-    # velocity with clipping
-    diff = obs[:, -1, 2] - obs[:, -2, 2]
-    return torch.clamp(diff, -4, 4) / 4.0
-
-def pong_ball_v_y(obs):
-    diff = obs[:, -1, 3] - obs[:, -2, 3]
-    return torch.clamp(diff, -4, 4) / 4.0
-
-def pong_enemy_y(obs):
-    return (obs[:, -1, 5] - 128) / 255.0
-
-def pong_enemy_v_y(obs):
-    diff = obs[:, -2, 5] - obs[:, -1, 5]
-    return torch.clamp(diff, -4, 4) / 4.0
-
-def pong_paddle_x_diff(obs):
-    return (obs[:, -1, 0] - obs[:, -1, 2]) / 255.0
-
-def pong_paddle_y_diff(obs):
-    return (obs[:, -1, 1] - obs[:, -1, 3]) / 255.0
-
-def pong_enemy_y_diff(obs):
-    return (obs[:, -1, 1] - obs[:, -1, 5]) / 255.0
-
-def pong_enemy_ball_x_diff(obs):
-    return (obs[:, -1, 4] - obs[:, -1, 2]) / 255.0
-
-def pong_enemy_ball_y_diff(obs):
-    return (obs[:, -1, 5] - obs[:, -1, 3]) / 255.0
-
-def build_pong_meta():
-    """
-    Returns a dict mapping each pong_feature_fn to a metadata dictionary
-    describing its type and indices.
-    """
-    meta_map = {}
-
-    # ----- value-type concepts (scaled positions) -----
-    meta_map[pong_paddle_y] = {
-        "type": "value",
-        "frame": -1,
-        "idx": 1,
-        "scale": 1/255.0,
-        "offset": -128,
-    }
-    meta_map[pong_ball_x] = {
-        "type": "value",
-        "frame": -1,
-        "idx": 2,
-        "scale": 1/255.0,
-        "offset": -128,
-    }
-    meta_map[pong_ball_y] = {
-        "type": "value",
-        "frame": -1,
-        "idx": 3,
-        "scale": 1/255.0,
-        "offset": -128,
-    }
-    meta_map[pong_enemy_y] = {
-        "type": "value",
-        "frame": -1,
-        "idx": 5,
-        "scale": 1/255.0,
-        "offset": -128,
-    }
-
-    # ----- velocity concepts (diff between frames with clipping) -----
-    meta_map[pong_ball_v_x] = {
-        "type": "velocity",
-        "frame1": -1, "idx1": 2,
-        "frame2": -2, "idx2": 2,
-        "clip_min": -4,
-        "clip_max": 4,
-        "scale": 1/4.0,
-    }
-    meta_map[pong_ball_v_y] = {
-        "type": "velocity",
-        "frame1": -1, "idx1": 3,
-        "frame2": -2, "idx2": 3,
-        "clip_min": -4,
-        "clip_max": 4,
-        "scale": 1/4.0,
-    }
-    meta_map[pong_enemy_v_y] = {
-        "type": "velocity",
-        "frame1": -2, "idx1": 5,
-        "frame2": -1, "idx2": 5,
-        "clip_min": -4,
-        "clip_max": 4,
-        "scale": 1/4.0,
-    }
-
-    # ----- difference concepts (same frame, different indices) -----
-    meta_map[pong_paddle_x_diff] = {
-        "type": "diff",
-        "frame1": -1, "idx1": 0,
-        "frame2": -1, "idx2": 2,
-        "scale": 1/255.0,
-    }
-    meta_map[pong_paddle_y_diff] = {
-        "type": "diff",
-        "frame1": -1, "idx1": 1,
-        "frame2": -1, "idx2": 3,
-        "scale": 1/255.0,
-    }
-    meta_map[pong_enemy_y_diff] = {
-        "type": "diff",
-        "frame1": -1, "idx1": 1,
-        "frame2": -1, "idx2": 5,
-        "scale": 1/255.0,
-    }
-    meta_map[pong_enemy_ball_x_diff] = {
-        "type": "diff",
-        "frame1": -1, "idx1": 4,
-        "frame2": -1, "idx2": 2,
-        "scale": 1/255.0,
-    }
-    meta_map[pong_enemy_ball_y_diff] = {
-        "type": "diff",
-        "frame1": -1, "idx1": 5,
-        "frame2": -1, "idx2": 3,
-        "scale": 1/255.0,
-    }
-
-    return meta_map
-
-def pong_paddle_y(obs):
-    obs = np.array(obs)
-    return (obs[-1,1]-128)/255
-
-def pong_ball_x(obs):
-    obs = np.array(obs)
-    return (obs[-1,2]-128)/255
-
-def pong_ball_y(obs):
-    obs = np.array(obs)
-    return (obs[-1,3]-128)/255
-
-def pong_paddle_x_diff(obs):
-    obs = np.array(obs)
-    return (obs[-1,0]-obs[-1,2])/255
-
-def pong_paddle_y_diff(obs):
-    obs = np.array(obs)
-    return (obs[-1,1]-obs[-1,3])/255
-
-def pong_enemy_y_diff(obs):
-    obs = np.array(obs)
-    return (obs[-1,1]-obs[-1,5])/255
-
-def pong_ball_v_x(obs):
-    obs = np.array(obs)
-    return np.clip(obs[-1,2]-obs[-2,2],-4,4)/4
-
-def pong_ball_v_y(obs):
-    obs = np.array(obs)
-    return np.clip(obs[-1,3]-obs[-2,3],-4,4)/4
-
-def pong_enemy_y(obs):
-    obs = np.array(obs)
-    return (obs[-1,5]-128)/255
-
-def pong_enemy_v_y(obs):
-    obs = np.array(obs)
-    return np.clip(obs[-2,5]-obs[-1,5],-4,4)/4
-
-def pong_enemy_ball_x_diff(obs):
-    obs = np.array(obs)
-    return (obs[-1,4]-obs[-1,2])/255
-
-def pong_enemy_ball_y_diff(obs):
-    obs = np.array(obs)
-    return (obs[-1,5]-obs[-1,3])/255
-
-### Boxing Concepts
-def boxing_player_x(obs):
-    # obs: (N, num_frames, D)
-    return obs[:, -1, 0] / 255.0
-
-def boxing_player_y(obs):
-    return obs[:, -1, 1] / 255.0
-
-def boxing_enemy_x(obs):
-    return obs[:, -1, 2] / 255.0
-
-def boxing_enemy_y(obs):
-    return obs[:, -1, 3] / 255.0
-
-def boxing_player_v_x(obs):
-    # velocity = last_frame - second_last_frame
-    return obs[:, -1, 0] - obs[:, -2, 0]
-
-def boxing_player_v_y(obs):
-    return obs[:, -1, 1] - obs[:, -2, 1]
-
-def boxing_enemy_v_x(obs):
-    return obs[:, -1, 2] - obs[:, -2, 2]
-
-def boxing_enemy_v_y(obs):
-    return obs[:, -1, 3] - obs[:, -2, 3]
-
-def boxing_player_enemy_diff_x(obs):
-    return obs[:, -1, 0] - obs[:, -1, 2]
-
-def boxing_player_enemy_diff_y(obs):
-    return obs[:, -1, 1] - obs[:, -1, 3]
-
-
-def build_boxing_meta():
-    """
-    Returns a dict mapping each boxing_feature_fn to a metadata dictionary
-    describing its type and indices, so compute_concepts_vectorized() can 
-    evaluate them quickly.
-    """
-    meta_map = {}
-
-    # ----- value-type concepts (just scaled last-frame positions) -----
-    meta_map[boxing_player_x] = {
-        "type": "value",
-        "frame": -1,
-        "idx": 0,
-        "scale": 1/255.0,
-    }
-    meta_map[boxing_player_y] = {
-        "type": "value",
-        "frame": -1,
-        "idx": 1,
-        "scale": 1/255.0,
-    }
-    meta_map[boxing_enemy_x] = {
-        "type": "value",
-        "frame": -1,
-        "idx": 2,
-        "scale": 1/255.0,
-    }
-    meta_map[boxing_enemy_y] = {
-        "type": "value",
-        "frame": -1,
-        "idx": 3,
-        "scale": 1/255.0,
-    }
-
-    # ----- velocity concepts (diff between last and second-last frame) -----
-    meta_map[boxing_player_v_x] = {
-        "type": "diff",
-        "frame1": -1, "idx1": 0,
-        "frame2": -2, "idx2": 0,
-    }
-    meta_map[boxing_player_v_y] = {
-        "type": "diff",
-        "frame1": -1, "idx1": 1,
-        "frame2": -2, "idx2": 1,
-    }
-    meta_map[boxing_enemy_v_x] = {
-        "type": "diff",
-        "frame1": -1, "idx1": 2,
-        "frame2": -2, "idx2": 2,
-    }
-    meta_map[boxing_enemy_v_y] = {
-        "type": "diff",
-        "frame1": -1, "idx1": 3,
-        "frame2": -2, "idx2": 3,
-    }
-
-    # ----- player–enemy difference concepts (same frame) -----
-    meta_map[boxing_player_enemy_diff_x] = {
-        "type": "diff",
-        "frame1": -1, "idx1": 0,
-        "frame2": -1, "idx2": 2,
-    }
-    meta_map[boxing_player_enemy_diff_y] = {
-        "type": "diff",
-        "frame1": -1, "idx1": 1,
-        "frame2": -1, "idx2": 3,
-    }
-
-    return meta_map
-
-
-### Boxing Concepts
-def boxing_player_x(obs):
-    obs = np.array(obs)
-    return obs[-1,0]/255
-
-def boxing_player_y(obs):
-    obs = np.array(obs)
-    return obs[-1,1]/255
-
-def boxing_enemy_x(obs):
-    obs = np.array(obs)
-    return obs[-1,2]/255
-
-def boxing_enemy_y(obs):
-    obs = np.array(obs)
-    return obs[-1,3]/255
-
-def boxing_player_v_x(obs):
-    obs = np.array(obs)
-    return obs[-1,0]-obs[-2,0]
-
-def boxing_player_v_y(obs):
-    obs = np.array(obs)
-    return obs[-1,1]-obs[-2,1]
-
-def boxing_enemy_v_x(obs):
-    obs = np.array(obs)
-    return obs[-1,2]-obs[-2,2]
-
-def boxing_enemy_v_y(obs):
-    obs = np.array(obs)
-    return obs[-1,3]-obs[-2,3]
-
-def boxing_player_enemy_diff_x(obs):
-    return obs[-1,0]-obs[-1,2]
-
-def boxing_player_enemy_diff_y(obs):
-    return obs[-1,1]-obs[-1,3]
-
-## Glucose
-def glucose_feature_0(obs):
-    # obs: (N, num_frames, D)
-    return obs[:, -1, 0]
-
-def glucose_feature_1(obs):
-    return obs[:, -1, 1]
-
-def glucose_feature_2(obs):
-    return obs[:, -1, 2]
-
-def glucose_feature_3(obs):
-    return obs[:, -1, 3]
-
-def glucose_feature_4(obs):
-    return obs[:, -1, 4]
-
-def glucose_feature_5(obs):
-    return obs[:, -1, 5]
-
-
-def build_glucose_meta():
-    """
-    Returns a dict mapping each glucose_feature_fn to a metadata dictionary
-    describing its type and indices.
-    """
-    meta_map = {}
-    
-    # All Glucose features are value-type concepts
-    for i in range(6):
-        fn = globals()[f'glucose_feature_{i}']
-        meta_map[fn] = {
-            "type": "value",
-            "frame": -1,
-            "idx": i,
-            "scale": 1.0,
-        }
-    
-    return meta_map
-
-
-def get_glucose_concept(i):
-    """Get the ith index of a concept
-    
-    Arguments:
-        i: Integer, idx
-    
-    Returns: Function that returns the ith index into a vector"""
-
-    def get_concept(obs):
-        return obs[i]
-    return get_concept
-
-def get_concepts(environment_string,concept_source,seed):
-    """Get concepts depending on the source
-    
-    Arguments:
-        environment_string: String, such as Pong or Boxing
-        num_concepts: The number of concepts to select from this environment
-        concept_source: String, human_selected, llm_generated, etc.
-        seed: Integer, random_state
-    
-    Returns: List of functions, each being a concept"""
-
-    human_selected = {}
-    human_selected_binary = {}
-    parsed_human_selected = {}
-
-    cartpole_feature_fns = [
-        cartpole_position,
-        cartpole_velocity,
-        cartpole_angle,
-        cartpole_angular_velocity,
-    ]
-
-    cartpole_thresholds = [
-        [-0.02, 0.02],                    # position
-        [-0.2, -0.1, 0.1, 0.2],          # velocity
-        [-0.02, 0.02],                    # angle
-        [-0.3, -0.15, 0.15, 0.3],        # angular velocity
-    ]
-
-    concept_list = []
-    parsed_concepts = []
-    meta_map = build_cartpole_meta()
-
-    for fn, thresholds in zip(cartpole_feature_fns, cartpole_thresholds):
-        base_meta = meta_map[fn]
-        fn_name = fn.__name__
-        
         for thr in thresholds:
             thr_val = float(thr)
-            
-            # thresholded concept fn
-            concept_fn = make_thresholded_feature(fn, thr_val)
-            concept_list.append(concept_fn)
-            
-            # build the parsed concept
-            meta = {
-                "type": base_meta["type"],
-                "frame": base_meta["frame"],
-                "idx": base_meta["idx"],
-                "scale": base_meta["scale"],
-                "thr": thr_val,
-                "base": None,
-            }
-            
-            # store a ParsedConcept
-            parsed_concepts.append(
-                ParsedConcept(
-                    name=f"{fn_name} > {thr_val:.3f}",
-                    feature_fn=fn,
-                    threshold=thr_val,
-                    concept_fn=concept_fn,
-                    meta=meta
-                )
-            )
+            meta = deepcopy(base_meta)
+            meta["thr"] = thr_val
+            parsed.append(ParsedConcept(
+                name=f"{fn.__name__} > {thr_val:.3f}",
+                feature_fn=fn,
+                threshold=thr_val,
+                concept_fn=make_threshold_concept(fn, thr_val),
+                meta=meta,
+            ))
+    return parsed
 
-    human_selected['cart_pole'] = [get_cart_pole_concept(i) for i in range(4)]
-    full_lst = []
-    thresholds = [[-0.02,0.02],[-0.2,-0.1,0.1,0.2],[-0.02,0.02],[-0.3,-0.15,0.15,0.3]]
-    for i in range(4):
-        for t in thresholds[i]:
-            full_lst.append(less_function(get_cart_pole_concept(i),t))   
-    human_selected_binary['cart_pole'] = full_lst
-    parsed_human_selected["cart_pole"] = parsed_concepts
 
-    minigrid_feature_fns = [
-        minigrid_feature_0, minigrid_feature_1, minigrid_feature_2,
-        minigrid_feature_3, minigrid_feature_4, minigrid_feature_5,
-        minigrid_feature_6, minigrid_feature_7, minigrid_feature_8,
-        minigrid_feature_9, minigrid_feature_10, minigrid_feature_11
-    ]
-
-    minigrid_val_ranges = [
-        [1, 2, 3, 4, 5],  # feature 0
-        [1, 2, 3, 4, 5],  # feature 1
-        [1, 2, 3, 4],     # feature 2
-        [1, 2, 3, 4, 5],  # feature 3
-        [1, 2, 3, 4, 5],  # feature 4
-        [1, 2, 3, 4, 5],  # feature 5
-        [1, 2, 3, 4, 5],  # feature 6
-        [0, 1],           # feature 7
-        [0, 1],           # feature 8
-        [0, 1],           # feature 9
-        [0, 1],           # feature 10
-        [0, 1],           # feature 11
-    ]
-
-    # Build concepts with per-feature value ranges
-    meta_map = build_minigrid_meta()
-    parsed_concepts = []
-
-    for base_idx, (fn, values) in enumerate(zip(minigrid_feature_fns, minigrid_val_ranges)):
+def _build_equality_concepts(feature_fns, value_lists, meta_map):
+    """Build equality ParsedConcepts for a list of features with per-feature value ranges."""
+    parsed = []
+    for base_idx, (fn, values) in enumerate(zip(feature_fns, value_lists)):
         base_meta = meta_map[fn]
-        fn_name = fn.__name__
-        
         for val in values:
             val_float = float(val)
-            concept_fn = make_equality_feature(fn, val_float)
-            
             meta = deepcopy(base_meta)
             meta["base_idx"] = base_idx
             meta["value"] = val_float
-            
-            parsed_concepts.append(
-                ParsedConcept(
-                    name=f"{fn_name} == {val_float:.0f}",
-                    feature_fn=fn,
-                    threshold=None,
-                    concept_fn=concept_fn,
-                    meta=meta
-                )
-            )
+            parsed.append(ParsedConcept(
+                name=f"{fn.__name__} == {val_float:.0f}",
+                feature_fn=fn,
+                threshold=None,
+                concept_fn=make_equality_concept(fn, val_float),
+                meta=meta,
+            ))
+    return parsed
 
-    concept_list = [p.concept_fn for p in parsed_concepts]
-    human_selected['mini_grid'] = get_all_mini_grid_concepts()
-    human_selected_binary['mini_grid'] = get_all_mini_grid_binary_concepts()    
-    parsed_human_selected["mini_grid"] = parsed_concepts
 
-    pong_feature_fns = [
-        pong_paddle_y,
-        pong_ball_x,
-        pong_ball_y,
-        pong_ball_v_x,
-        pong_ball_v_y,
-        pong_enemy_y,
-        pong_enemy_v_y,
-        pong_paddle_x_diff,
-        pong_paddle_y_diff,
-        pong_enemy_y_diff,
-        pong_enemy_ball_x_diff,
-        pong_enemy_ball_y_diff,
-    ]
+# ── CartPole ──────────────────────────────────────────────────────────────────
 
-    thresholds = torch.tensor(
-        [-0.9, -0.8, -0.7, -0.6, -0.5, -0.4, -0.3, -0.2, -0.1, 0,
-        0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
-    )
+def cartpole_position(obs):          return obs[0]
+def cartpole_velocity(obs):          return obs[1]
+def cartpole_angle(obs):             return obs[2]
+def cartpole_angular_velocity(obs):  return obs[3]
 
-    concept_list, parsed_concepts = build_concepts_with_parsing(
-        pong_feature_fns,
-        thresholds,
-        build_pong_meta()
-    )
+CARTPOLE_FEATURE_FNS = [
+    cartpole_position,
+    cartpole_velocity,
+    cartpole_angle,
+    cartpole_angular_velocity,
+]
 
-    human_selected['pong'] = [pong_paddle_y,pong_ball_x,pong_ball_y,pong_ball_v_x,pong_ball_v_y,pong_enemy_y,pong_enemy_v_y,pong_paddle_x_diff,pong_paddle_y_diff,pong_enemy_y_diff,pong_enemy_ball_x_diff,pong_enemy_ball_y_diff]
-    full_lst = []
-    for threshold in [-0.9,-0.8,-0.7,-0.6,-0.5,-0.4,-0.3,-0.2,-0.1,0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9]:
-        for func in human_selected['pong']:
-            full_lst.append(less_function(func,threshold))
-    human_selected_binary['pong'] = full_lst
-    parsed_human_selected["pong"] = parsed_concepts
+CARTPOLE_THRESHOLDS = [
+    [-0.02, 0.02],
+    [-0.2, -0.1, 0.1, 0.2],
+    [-0.02, 0.02],
+    [-0.3, -0.15, 0.15, 0.3],
+]
 
-    boxing_feature_fns = [
-        boxing_player_x,
-        boxing_player_y,
-        boxing_enemy_x,
-        boxing_enemy_y,
-        boxing_player_v_x,
-        boxing_player_v_y,
-        boxing_enemy_v_x,
-        boxing_enemy_v_y,
-        boxing_player_enemy_diff_x,
-        boxing_player_enemy_diff_y,
-    ]
+CARTPOLE_META = {
+    cartpole_position:         {"type": "value", "frame": -1, "idx": 0, "scale": 1.0},
+    cartpole_velocity:         {"type": "value", "frame": -1, "idx": 1, "scale": 1.0},
+    cartpole_angle:            {"type": "value", "frame": -1, "idx": 2, "scale": 1.0},
+    cartpole_angular_velocity: {"type": "value", "frame": -1, "idx": 3, "scale": 1.0},
+}
 
-    thresholds = torch.tensor(
-        [-0.9,-0.8,-0.7,-0.6,-0.5,-0.4,-0.3,-0.2,-0.1,0,
-        0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9]
-    )
-    concept_list, parsed_concepts = build_concepts_with_parsing(
-        boxing_feature_fns,
-        thresholds,
-        build_boxing_meta()
-    )
-    human_selected['boxing'] = [boxing_player_x,boxing_player_y,boxing_enemy_x,boxing_enemy_y,boxing_player_v_x,boxing_player_v_y,boxing_enemy_v_x,boxing_enemy_v_y,boxing_player_enemy_diff_x,boxing_player_enemy_diff_y]    
-    full_lst = []
-    for threshold in [-0.9,-0.8,-0.7,-0.6,-0.5,-0.4,-0.3,-0.2,-0.1,0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9]:
-        for func in human_selected['boxing']:
-            full_lst.append(less_function(func,threshold))
-    human_selected_binary['boxing'] = full_lst
-    parsed_human_selected["boxing"] = parsed_concepts
 
-    glucose_thresholds = [
-        [0.1,0.3,0.5,0.7,0.75],
-        [-0.15,-0.1,-0.075,-0.05,-0.025,0,0.05,0.1,0.15],
-        [-0.001,0.05,0.1,0.15,0.2],
-        [15,30,45,50,60,75],
-        [-0.7,-0.5,-0.3,-0.1,0.1,0.3,0.5,0.7,0.8],
-        [-0.75,-0.5,-0.25,0,0.25,0.5,0.75,0.9,0.95]
-    ]
+# ── MiniGrid ──────────────────────────────────────────────────────────────────
 
-    glucose_feature_fns = [
-        glucose_feature_0,
-        glucose_feature_1,
-        glucose_feature_2,
-        glucose_feature_3,
-        glucose_feature_4,
-        glucose_feature_5,
-    ]
+def minigrid_feature_0(obs):  return obs[0]
+def minigrid_feature_1(obs):  return obs[1]
+def minigrid_feature_2(obs):  return obs[2]
+def minigrid_feature_3(obs):  return obs[3]
+def minigrid_feature_4(obs):  return obs[4]
+def minigrid_feature_5(obs):  return obs[5]
+def minigrid_feature_6(obs):  return obs[6]
+def minigrid_feature_7(obs):  return obs[7]
+def minigrid_feature_8(obs):  return obs[8]
+def minigrid_feature_9(obs):  return obs[9]
+def minigrid_feature_10(obs): return obs[10]
+def minigrid_feature_11(obs): return obs[11]
 
-    # Build concepts with per-feature thresholds
-    concept_list = []
-    parsed_concepts = []
-    meta_map = build_glucose_meta()
+MINIGRID_FEATURE_FNS = [
+    minigrid_feature_0, minigrid_feature_1, minigrid_feature_2,
+    minigrid_feature_3, minigrid_feature_4, minigrid_feature_5,
+    minigrid_feature_6, minigrid_feature_7, minigrid_feature_8,
+    minigrid_feature_9, minigrid_feature_10, minigrid_feature_11,
+]
 
-    for fn, thresholds in zip(glucose_feature_fns, glucose_thresholds):
-        base_meta = meta_map[fn]
-        fn_name = fn.__name__
-        
-        for thr in thresholds:
-            thr_val = float(thr)
-            
-            # thresholded concept fn
-            concept_fn = make_thresholded_feature(fn, thr_val)
-            concept_list.append(concept_fn)
-            
-            # build the parsed concept
-            meta = {
-                "type": base_meta["type"],
-                "frame": base_meta["frame"],
-                "idx": base_meta["idx"],
-                "scale": base_meta["scale"],
-                "thr": thr_val,
-                "base": None,
-            }
-            
-            # store a ParsedConcept
-            parsed_concepts.append(
-                ParsedConcept(
-                    name=f"{fn_name} > {thr_val:.3f}",
-                    feature_fn=fn,
-                    threshold=thr_val,
-                    concept_fn=concept_fn,
-                    meta=meta
-                )
-            )
+MINIGRID_VALUE_RANGES = [
+    [1, 2, 3, 4, 5],  # x pos
+    [1, 2, 3, 4, 5],  # y pos
+    [1, 2, 3, 4],     # direction
+    [1, 2, 3, 4, 5],  # key x
+    [1, 2, 3, 4, 5],  # key y
+    [1, 2, 3, 4, 5],  # door x
+    [1, 2, 3, 4, 5],  # door y
+    [0, 1],           # door open
+    [0, 1],           # can move right
+    [0, 1],           # can move left
+    [0, 1],           # can move down
+    [0, 1],           # can move up
+]
 
-    human_selected_binary["glucose"] = concept_list
-    human_selected["glucose"] = glucose_feature_fns
-    parsed_human_selected["glucose"] = parsed_concepts
+MINIGRID_META = {
+    fn: {"type": "value", "frame": -1, "idx": i, "scale": 1.0}
+    for i, fn in enumerate(MINIGRID_FEATURE_FNS)
+}
 
-    full_lst = []
-    thresholds = [
-        [0.1,0.3,0.5,0.7,0.75],
-        [-0.15,-0.1,-0.075,-0.05,-0.025,0,0.05,0.1,0.15],
-        [-0.001,0.05,0.1,0.15,0.2],
-        [15,30,45,50,60,75],
-        [-0.7,-0.5,-0.3,-0.1,0.1,0.3,0.5,0.7,0.8],
-        [-0.75,-0.5,-0.25,0,0.25,0.5,0.75,0.9,0.95]
-    ]
+MINIGRID_CONCEPT_NAMES = [
+    "X Pos", "Y Pos", "Dir",
+    "Key X", "Key Y", "Door X", "Door Y", "Door Open",
+    "Right", "Left", "Down", "Up",
+]
 
-    human_selected['glucose'] = [get_glucose_concept(i) for i in range(len(thresholds))]
-    for i in range(6):
-        for t in thresholds[i]:
-            full_lst.append(less_function(get_glucose_concept(i),t))   
-    human_selected_binary['glucose'] = full_lst
-    
 
-    if concept_source == 'human_selected':
-        return human_selected[environment_string], parsed_human_selected[environment_string]
-    elif concept_source == 'human_selected_binary':
-        return human_selected_binary[environment_string], parsed_human_selected[environment_string]
+def get_all_mini_grid_names():
+    """Return display names for all MiniGrid binary concepts."""
+    names = []
+    for i, (feat_name, values) in enumerate(zip(MINIGRID_CONCEPT_NAMES, MINIGRID_VALUE_RANGES)):
+        for v in values:
+            names.append(f"{feat_name}_{v}")
+    return names
+
+
+# ── Pong ──────────────────────────────────────────────────────────────────────
+
+def pong_paddle_y(obs):
+    obs = np.array(obs)
+    return (obs[-1, 1] - 128) / 255
+
+def pong_ball_x(obs):
+    obs = np.array(obs)
+    return (obs[-1, 2] - 128) / 255
+
+def pong_ball_y(obs):
+    obs = np.array(obs)
+    return (obs[-1, 3] - 128) / 255
+
+def pong_ball_v_x(obs):
+    obs = np.array(obs)
+    return np.clip(obs[-1, 2] - obs[-2, 2], -4, 4) / 4
+
+def pong_ball_v_y(obs):
+    obs = np.array(obs)
+    return np.clip(obs[-1, 3] - obs[-2, 3], -4, 4) / 4
+
+def pong_enemy_y(obs):
+    obs = np.array(obs)
+    return (obs[-1, 5] - 128) / 255
+
+def pong_enemy_v_y(obs):
+    obs = np.array(obs)
+    return np.clip(obs[-2, 5] - obs[-1, 5], -4, 4) / 4
+
+def pong_paddle_x_diff(obs):
+    obs = np.array(obs)
+    return (obs[-1, 0] - obs[-1, 2]) / 255
+
+def pong_paddle_y_diff(obs):
+    obs = np.array(obs)
+    return (obs[-1, 1] - obs[-1, 3]) / 255
+
+def pong_enemy_y_diff(obs):
+    obs = np.array(obs)
+    return (obs[-1, 1] - obs[-1, 5]) / 255
+
+def pong_enemy_ball_x_diff(obs):
+    obs = np.array(obs)
+    return (obs[-1, 4] - obs[-1, 2]) / 255
+
+def pong_enemy_ball_y_diff(obs):
+    obs = np.array(obs)
+    return (obs[-1, 5] - obs[-1, 3]) / 255
+
+PONG_FEATURE_FNS = [
+    pong_paddle_y, pong_ball_x, pong_ball_y,
+    pong_ball_v_x, pong_ball_v_y,
+    pong_enemy_y, pong_enemy_v_y,
+    pong_paddle_x_diff, pong_paddle_y_diff, pong_enemy_y_diff,
+    pong_enemy_ball_x_diff, pong_enemy_ball_y_diff,
+]
+
+PONG_THRESHOLDS = [-0.9, -0.8, -0.7, -0.6, -0.5, -0.4, -0.3, -0.2, -0.1,
+                   0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+
+PONG_META = {
+    pong_paddle_y:         {"type": "value",    "frame": -1,  "idx": 1, "scale": 1/255.0, "offset": -128},
+    pong_ball_x:           {"type": "value",    "frame": -1,  "idx": 2, "scale": 1/255.0, "offset": -128},
+    pong_ball_y:           {"type": "value",    "frame": -1,  "idx": 3, "scale": 1/255.0, "offset": -128},
+    pong_enemy_y:          {"type": "value",    "frame": -1,  "idx": 5, "scale": 1/255.0, "offset": -128},
+    pong_ball_v_x:         {"type": "velocity", "frame1": -1, "idx1": 2, "frame2": -2, "idx2": 2, "clip_min": -4, "clip_max": 4, "scale": 1/4.0},
+    pong_ball_v_y:         {"type": "velocity", "frame1": -1, "idx1": 3, "frame2": -2, "idx2": 3, "clip_min": -4, "clip_max": 4, "scale": 1/4.0},
+    pong_enemy_v_y:        {"type": "velocity", "frame1": -2, "idx1": 5, "frame2": -1, "idx2": 5, "clip_min": -4, "clip_max": 4, "scale": 1/4.0},
+    pong_paddle_x_diff:    {"type": "diff",     "frame1": -1, "idx1": 0, "frame2": -1, "idx2": 2, "scale": 1/255.0},
+    pong_paddle_y_diff:    {"type": "diff",     "frame1": -1, "idx1": 1, "frame2": -1, "idx2": 3, "scale": 1/255.0},
+    pong_enemy_y_diff:     {"type": "diff",     "frame1": -1, "idx1": 1, "frame2": -1, "idx2": 5, "scale": 1/255.0},
+    pong_enemy_ball_x_diff:{"type": "diff",     "frame1": -1, "idx1": 4, "frame2": -1, "idx2": 2, "scale": 1/255.0},
+    pong_enemy_ball_y_diff:{"type": "diff",     "frame1": -1, "idx1": 5, "frame2": -1, "idx2": 3, "scale": 1/255.0},
+}
+
+
+# ── Boxing ────────────────────────────────────────────────────────────────────
+
+def boxing_player_x(obs):
+    obs = np.array(obs)
+    return obs[-1, 0] / 255
+
+def boxing_player_y(obs):
+    obs = np.array(obs)
+    return obs[-1, 1] / 255
+
+def boxing_enemy_x(obs):
+    obs = np.array(obs)
+    return obs[-1, 2] / 255
+
+def boxing_enemy_y(obs):
+    obs = np.array(obs)
+    return obs[-1, 3] / 255
+
+def boxing_player_v_x(obs):
+    obs = np.array(obs)
+    return obs[-1, 0] - obs[-2, 0]
+
+def boxing_player_v_y(obs):
+    obs = np.array(obs)
+    return obs[-1, 1] - obs[-2, 1]
+
+def boxing_enemy_v_x(obs):
+    obs = np.array(obs)
+    return obs[-1, 2] - obs[-2, 2]
+
+def boxing_enemy_v_y(obs):
+    obs = np.array(obs)
+    return obs[-1, 3] - obs[-2, 3]
+
+def boxing_player_enemy_diff_x(obs):
+    obs = np.array(obs)
+    return obs[-1, 0] - obs[-1, 2]
+
+def boxing_player_enemy_diff_y(obs):
+    obs = np.array(obs)
+    return obs[-1, 1] - obs[-1, 3]
+
+BOXING_FEATURE_FNS = [
+    boxing_player_x, boxing_player_y,
+    boxing_enemy_x, boxing_enemy_y,
+    boxing_player_v_x, boxing_player_v_y,
+    boxing_enemy_v_x, boxing_enemy_v_y,
+    boxing_player_enemy_diff_x, boxing_player_enemy_diff_y,
+]
+
+BOXING_THRESHOLDS = [-0.9, -0.8, -0.7, -0.6, -0.5, -0.4, -0.3, -0.2, -0.1,
+                     0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+
+BOXING_META = {
+    boxing_player_x:          {"type": "value", "frame": -1, "idx": 0, "scale": 1/255.0},
+    boxing_player_y:          {"type": "value", "frame": -1, "idx": 1, "scale": 1/255.0},
+    boxing_enemy_x:           {"type": "value", "frame": -1, "idx": 2, "scale": 1/255.0},
+    boxing_enemy_y:           {"type": "value", "frame": -1, "idx": 3, "scale": 1/255.0},
+    boxing_player_v_x:        {"type": "diff",  "frame1": -1, "idx1": 0, "frame2": -2, "idx2": 0},
+    boxing_player_v_y:        {"type": "diff",  "frame1": -1, "idx1": 1, "frame2": -2, "idx2": 1},
+    boxing_enemy_v_x:         {"type": "diff",  "frame1": -1, "idx1": 2, "frame2": -2, "idx2": 2},
+    boxing_enemy_v_y:         {"type": "diff",  "frame1": -1, "idx1": 3, "frame2": -2, "idx2": 3},
+    boxing_player_enemy_diff_x: {"type": "diff","frame1": -1, "idx1": 0, "frame2": -1, "idx2": 2},
+    boxing_player_enemy_diff_y: {"type": "diff","frame1": -1, "idx1": 1, "frame2": -1, "idx2": 3},
+}
+
+
+# ── Glucose ───────────────────────────────────────────────────────────────────
+
+def glucose_feature_0(obs): return obs[0]
+def glucose_feature_1(obs): return obs[1]
+def glucose_feature_2(obs): return obs[2]
+def glucose_feature_3(obs): return obs[3]
+def glucose_feature_4(obs): return obs[4]
+def glucose_feature_5(obs): return obs[5]
+
+GLUCOSE_FEATURE_FNS = [
+    glucose_feature_0, glucose_feature_1, glucose_feature_2,
+    glucose_feature_3, glucose_feature_4, glucose_feature_5,
+]
+
+GLUCOSE_THRESHOLDS = [
+    [0.1, 0.3, 0.5, 0.7, 0.75],
+    [-0.15, -0.1, -0.075, -0.05, -0.025, 0, 0.05, 0.1, 0.15],
+    [-0.001, 0.05, 0.1, 0.15, 0.2],
+    [15, 30, 45, 50, 60, 75],
+    [-0.7, -0.5, -0.3, -0.1, 0.1, 0.3, 0.5, 0.7, 0.8],
+    [-0.75, -0.5, -0.25, 0, 0.25, 0.5, 0.75, 0.9, 0.95],
+]
+
+GLUCOSE_META = {
+    fn: {"type": "value", "frame": -1, "idx": i, "scale": 1.0}
+    for i, fn in enumerate(GLUCOSE_FEATURE_FNS)
+}
+
+
+# ── Public API ────────────────────────────────────────────────────────────────
+
+def get_concepts(environment_string):
+    """Return (concept_list, parsed_concepts) for the given environment.
+
+    Args:
+        environment_string: One of 'cart_pole', 'mini_grid', 'pong',
+                            'boxing', 'glucose'
+
+    Returns:
+        concept_list: List of scalar concept functions f(obs) -> float
+        parsed_concepts: List of ParsedConcept objects with metadata
+    """
+    if environment_string == "cart_pole":
+        parsed = _build_threshold_concepts(
+            CARTPOLE_FEATURE_FNS, CARTPOLE_THRESHOLDS, CARTPOLE_META
+        )
+
+    elif environment_string == "mini_grid":
+        parsed = _build_equality_concepts(
+            MINIGRID_FEATURE_FNS, MINIGRID_VALUE_RANGES, MINIGRID_META
+        )
+
+    elif environment_string == "pong":
+        parsed = _build_threshold_concepts(
+            PONG_FEATURE_FNS,
+            [PONG_THRESHOLDS] * len(PONG_FEATURE_FNS),
+            PONG_META,
+        )
+
+    elif environment_string == "boxing":
+        parsed = _build_threshold_concepts(
+            BOXING_FEATURE_FNS,
+            [BOXING_THRESHOLDS] * len(BOXING_FEATURE_FNS),
+            BOXING_META,
+        )
+
+    elif environment_string == "glucose":
+        parsed = _build_threshold_concepts(
+            GLUCOSE_FEATURE_FNS, GLUCOSE_THRESHOLDS, GLUCOSE_META
+        )
+
+    else:
+        raise ValueError(f"Unknown environment: {environment_string}")
+
+    concept_list = [p.concept_fn for p in parsed]
+    return concept_list, parsed

@@ -1,0 +1,39 @@
+# configs/accuracy_sweep.yaml
+#
+# Synthetic accuracy × concept count sweep (Figure 3).
+# Uses accuracy_sweep.py (renamed from only_multiple.py), which injects
+# synthetic concept accuracy rather than training a real concept predictor.
+# This isolates the effect of accuracy and k independently.
+#
+# Output: results/imperfect/
+
+experiment: accuracy_sweep
+script: accuracy_sweep        # renamed from only_multiple.py
+out_folder: imperfect
+
+seeds: [42, 43, 44, 45, 46, 47]
+
+environments:
+  cart_pole:
+    gold_timesteps: 4000000
+    training_timesteps_values: [1000000, 2000000, 3000000, 4000000]  # Figure 5 curves
+    num_concepts_values: [1, 2, 3]                                    # Figure 3 columns
+  mini_grid:
+    gold_timesteps: 1000000
+    training_timesteps_values: [250000, 500000, 750000, 1000000]
+    num_concepts_values: [3, 6, 11]
+  pong:
+    gold_timesteps: 15000000
+    training_timesteps_values: [15000000]
+    num_concepts_values: [14, 28, 57]
+  boxing:
+    gold_timesteps: 30000000
+    training_timesteps_values: [15000000]
+    num_concepts_values: [12, 24, 48]
+  glucose:
+    gold_timesteps: 4000000
+    training_timesteps_values: [4000000]
+    num_concepts_values: [2, 5, 10]
+
+# Figure 3 rows
+concept_accuracies: [0.75, 0.85, 0.95]

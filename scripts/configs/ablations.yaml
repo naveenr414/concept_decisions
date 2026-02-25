@@ -1,0 +1,49 @@
+# configs/ablations.yaml
+#
+# Two ablation studies:
+#
+# [Appendix D] rho_ablation: compares DRS with varying coverage ratio (rho)
+#   and with/without P1c constraint relaxation. Environments: CartPole, MiniGrid.
+#   Runs both perfect and imperfect settings.
+#
+# [Appendix I] policy_quality: tests DRS robustness when the reference policy
+#   pi* is trained for fewer timesteps. Environment: MiniGrid only.
+#
+# Output: results/ablations/
+
+experiment: ablations
+out_folder: ablations
+
+seeds: [42, 43, 44, 45, 46, 47]
+
+# --- Appendix D: rho / P1c relaxation ---
+rho_ablation:
+  script: method_comparison_perfect      # runs both perfect and imperfect
+  environments:
+    cart_pole:
+      gold_timesteps: 4000000
+      training_timesteps: 4000000
+      num_concepts: 3
+    mini_grid:
+      gold_timesteps: 1000000
+      training_timesteps: 500000
+      num_concepts: 11
+  methods:
+    - drs_rho_0        # rho=0
+    - drs_rho_05       # rho=0.5
+    - drs_rho_075      # rho=0.75  (= main DRS)
+    - drs_rho_099      # rho=0.99
+    - drs_no_relax     # rho=0.75 with P1c enforced
+
+# --- Appendix I: imperfect policy robustness ---
+policy_quality:
+  script: method_comparison_imperfect
+  environment: mini_grid
+  training_timesteps: 500000
+  num_concepts: 11
+  gold_timesteps_values: [100000, 250000, 500000]   # varies pi* quality
+  methods:
+    - variance
+    - greedy
+    - drs
+    - drs_log

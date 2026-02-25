@@ -2,49 +2,34 @@ import numpy as np
 from simglucose.envs import T1DSimGymnaisumEnv
 import gymnasium.spaces as spaces
 
-def glucose_risk(bg):
+
+def compute_reward(bg, dose, delta_bg):
+    """Intermediate reward for glucose control.
+
+    - +1 if BG in [80, 140], 0 in mild range, -1 in dangerous range
+    - Small penalty for insulin dose
+    - Small penalty for rapid BG change
+
+    Args:
+        bg: Current blood glucose (mg/dL)
+        dose: Insulin dose administered (U)
+        delta_bg: Change in BG since last step
+
+    Returns:
+        Total reward (float)
     """
-    Compute risk index from mg/dL glucose.
-    Normalized to be more RL-friendly.
-    """
-    # Target range: 70-180 mg/dL
-    if 70 <= bg <= 180:
-        return 0.0  # Perfect range
-    elif bg < 70:
-        # Penalize hypoglycemia more severely
-        return ((70 - bg) / 70) ** 2 * 10
-    else:
-        # Penalize hyperglycemia
-        return ((bg - 180) / 180) ** 2 * 5
-def compute_reward(bg, dose, delta_bg, action):
-    """
-    Intermediate reward function for glucose control:
-    - Encourages BG in range [80, 140]
-    - Mildly penalizes insulin usage
-    - Mildly penalizes fast BG changes
-    - Gives action-dependent small bonus
-    """
-    # --- 1. Glucose range reward ---
     if 80 <= bg <= 140:
-        r_glucose = 1.0  # in range
+        r_glucose = 1.0
     elif 60 <= bg < 80 or 140 < bg <= 180:
-        r_glucose = 0.0  # slightly out of range
+        r_glucose = 0.0
     else:
-        r_glucose = -1.0  # dangerous range
+        r_glucose = -1.0
 
-    # --- 2. Insulin penalty ---
-    r_insulin = -0.01 * dose  # discourage over-dosing
+    r_insulin = -0.01 * dose
+    r_trend   = -0.001 * abs(delta_bg)
 
-    # --- 3. BG trend penalty ---
-    r_trend = -0.001 * abs(delta_bg)  # mild penalty for rapid changes
+    return r_glucose + r_insulin + r_trend
 
-    # --- 4. Small bonus for “safe” action choices ---
-    # Example: action 0 is “no insulin”, action 1 is “some insulin”, etc.
-    r_action = 0.1 if action == 0 else 0.0
-
-    # --- Total reward ---
-    total_reward = r_glucose + r_insulin + r_trend + 0*r_action
-    return total_reward
 
 def compute_delta(bg_history):
     if len(bg_history) < 2:
@@ -53,126 +38,119 @@ def compute_delta(bg_history):
 
 
 def compute_iob(past_doses, tau=50):
-    """
-    Simple exponential decay IOB model.
-    tau ~ duration of insulin activity (50-60 min)
-    """
-    if len(past_doses) == 0:
-        return 0.0
+    """Exponential decay insulin-on-board model.
 
-    iob = 0
+    Args:
+        past_doses: List of (dose, minutes_ago) tuples
+        tau: Insulin activity half-life in minutes (~50-60 min)
+
+    Returns:
+        Estimated IOB (float)
+    """
+    iob = 0.0
     for dose, minutes_ago in past_doses:
-        decay = np.exp(-minutes_ago / tau)
-        iob += dose * decay
-
+        iob += dose * np.exp(-minutes_ago / tau)
     return iob
 
 
 def time_features(dt):
-    """
-    Encode time of day with sin/cos.
+    """Encode time of day as sin/cos pair.
+
+    Args:
+        dt: datetime object
+
+    Returns:
+        (sin, cos) tuple
     """
     minutes = dt.hour * 60 + dt.minute
-    angle = 2 * np.pi * minutes / (24*60)
+    angle   = 2 * np.pi * minutes / (24 * 60)
     return np.sin(angle), np.cos(angle)
 
+
 def build_observation(info, bg_history, past_doses):
-    bg = info["bg"]
+    """Build the 6-dimensional normalised observation vector.
+
+    Features: [bg_norm, delta_bg, meal_norm, iob, sin_time, cos_time]
+
+    Args:
+        info: Simulator info dict with keys 'bg', 'meal', 'time'
+        bg_history: List of recent BG readings
+        past_doses: List of (dose, minutes_ago) tuples
+
+    Returns:
+        np.ndarray of shape (6,), dtype float32
+    """
+    bg   = info["bg"]
     meal = info["meal"]
-    dt = info["time"]
-    
-    # Normalize features for better learning
-    bg_norm = bg / 200.0  # Normalize around typical range
-    delta_bg = compute_delta(bg_history) / 50.0  # Normalize delta
-    meal_norm = meal / 100.0  # Normalize meal size
-    iob = compute_iob(past_doses)
+    dt   = info["time"]
+
+    bg_norm   = bg / 200.0
+    delta_bg  = compute_delta(bg_history) / 50.0
+    meal_norm = meal / 100.0
+    iob       = compute_iob(past_doses)
     sin_t, cos_t = time_features(dt)
-    
+
     return np.array([bg_norm, delta_bg, meal_norm, iob, sin_t, cos_t], dtype=np.float32)
+
 
 NUM_ACTIONS = 6
 
-def action_to_dose(action):
-    action_to_dose_dict = {
-        0: 0,
-        1: 2,
-        2: 4,
-        3: 6,
-        4: 8,
-        5: 10,
-    }
+_ACTION_TO_DOSE = {0: 0, 1: 2, 2: 4, 3: 6, 4: 8, 5: 10}
 
-    return action_to_dose_dict[action]
+
+def action_to_dose(action):
+    return _ACTION_TO_DOSE[action]
+
+
 class GlucoseEnvironment(T1DSimGymnaisumEnv):
+    """Discrete-action glucose control environment.
+
+    Wraps the simglucose T1D simulator with:
+    - 6 discrete insulin dose levels (0–10 U)
+    - Normalised 6-feature observation vector
+    - Shaped intermediate reward function
+
+    Args:
+        patient_name: Simglucose patient ID, e.g. 'adolescent#002'
+    """
+
     def __init__(self, patient_name="adolescent#002", **kwargs):
         super().__init__(patient_name=patient_name, **kwargs)
 
-        # Track BG + dose history
-        self.bg_history = []
-        self.past_doses = []   # list of (dose, minutes_ago)
-        self.episode_rewards = []  # Track rewards
-        # Observation space: 6 normalized features
-        low = np.array([0, -5, 0, 0, -1, -1], dtype=np.float32)
-        high = np.array([3, 5, 2, 20, 1, 1], dtype=np.float32)
-        self.observation_space = spaces.Box(low=low, high=high)
-        
-        # Discrete actions
+        self.bg_history  = []
+        self.past_doses  = []   # list of (dose, minutes_ago)
+
+        # Observation space: 6 normalised features
+        self.observation_space = spaces.Box(
+            low =np.array([0, -5,  0,  0, -1, -1], dtype=np.float32),
+            high=np.array([3,  5,  2, 20,  1,  1], dtype=np.float32),
+        )
         self.action_space = spaces.Discrete(NUM_ACTIONS)
-        
-        # 3 minutes per step (from simulator)
-        self.step_minutes = 5
+        self.step_minutes = 5   # 5 minutes per simulator step
 
-
-    # ----------------------
-    #        Reset
-    # ----------------------
     def reset(self, *, seed=None, options=None):
         obs_raw, info = super().reset(seed=seed, options=options)
-        
-        # Reset histories
         self.bg_history = [info["bg"]]
         self.past_doses = []
-        
-        # Build observation vector
-        obs = build_observation(info, self.bg_history, self.past_doses)
-        return obs, info
-    
+        return build_observation(info, self.bg_history, self.past_doses), info
 
-
-    # ----------------------
-    #         Step
-    # ----------------------
     def step(self, action):
-
-        # Convert discrete → dose (U)
         dose = action_to_dose(action)
-        
-        # Step simulator
+
         obs_raw, _, terminated, truncated, info = super().step(dose)
-        
-        # Update time counters for doses
-        for i in range(len(self.past_doses)):
-            d, t = self.past_doses[i]
-            self.past_doses[i] = (d, t + self.step_minutes)
-        
-        # Add current dose
+
+        # Age all previous doses by one step
+        self.past_doses = [(d, t + self.step_minutes) for d, t in self.past_doses]
         if dose > 0:
             self.past_doses.append((dose, 0))
-        
-        # Update BG history
+
         bg = info["bg"]
         self.bg_history.append(bg)
-        if len(self.bg_history) > 10:  # Keep more history for smoothing
+        if len(self.bg_history) > 10:
             self.bg_history.pop(0)
-        
-        # Compute features
-        delta_bg = compute_delta(self.bg_history)
-        
-        # FIXED: Correct argument order!
-        reward = compute_reward(bg, dose, delta_bg,action)
-        self.episode_rewards.append(reward)
-        # Build final observation
-        obs = build_observation(info, self.bg_history, self.past_doses)
-        
-        return obs, reward, terminated, truncated, info
 
+        delta_bg = compute_delta(self.bg_history)
+        reward   = compute_reward(bg, dose, delta_bg)
+        obs      = build_observation(info, self.bg_history, self.past_doses)
+
+        return obs, reward, terminated, truncated, info

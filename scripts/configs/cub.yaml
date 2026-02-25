@@ -1,0 +1,18 @@
+# configs/cub.yaml
+#
+# Supervised concept selection on CUB-200-2011 (Figure 6, Section 5.4).
+# Compares automatic selection against manually selected k=112 concepts.
+# Uses supervised_learning.py which is self-contained (no RL environment).
+#
+# Output: results/cub/
+
+experiment: cub
+script: supervised_learning
+out_folder: cub
+
+seeds: [42, 43, 44, 45, 46, 47]
+
+# Sweeps k from small subsets up to the full manual selection (k=112).
+# The script internally runs all methods (random, variance, greedy, drs, drs_log)
+# for each k in a single invocation, so we only need to vary seed and k here.
+num_concepts_values: [112]

@@ -1,0 +1,41 @@
+# configs/main_perfect.yaml
+#
+# Main concept selection comparison, perfect concept predictors (Figure 2, top row).
+# Runs all methods across all five environments.
+#
+# Output: results/basic/
+
+experiment: main_perfect
+script: method_comparison_perfect
+out_folder: basic
+
+seeds: [42, 43, 44, 45, 46, 47]
+
+environments:
+  cart_pole:
+    gold_timesteps: 4000000
+    training_timesteps: 4000000
+    num_concepts: 3
+  mini_grid:
+    gold_timesteps: 1000000
+    training_timesteps: 500000
+    num_concepts: 11
+  pong:
+    gold_timesteps: 15000000
+    training_timesteps: 15000000
+    num_concepts: 57
+  boxing:
+    gold_timesteps: 30000000
+    training_timesteps: 15000000
+    num_concepts: 48
+  glucose:
+    gold_timesteps: 4000000
+    training_timesteps: 4000000
+    num_concepts: 10
+
+methods:
+  - perfect_concepts   # all-concepts baseline
+  - random
+  - variance           # renamed from 'entropy' in original scripts
+  - greedy
+  - drs                # renamed from 'rho_075'

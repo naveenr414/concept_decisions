@@ -1,0 +1,38 @@
+# configs/main_imperfect.yaml
+#
+# Main concept selection comparison, trained concept predictors (Figure 2, bottom row).
+# Glucose excluded — concept predictors have perfect accuracy in that environment.
+#
+# Output: results/basic/
+
+experiment: main_imperfect
+script: method_comparison_imperfect
+out_folder: basic
+
+seeds: [42, 43, 44, 45, 46, 47]
+
+environments:
+  cart_pole:
+    gold_timesteps: 4000000
+    training_timesteps: 4000000
+    num_concepts: 3
+  mini_grid:
+    gold_timesteps: 1000000
+    training_timesteps: 500000
+    num_concepts: 11
+  pong:
+    gold_timesteps: 15000000
+    training_timesteps: 15000000
+    num_concepts: 57
+  boxing:
+    gold_timesteps: 30000000
+    training_timesteps: 15000000
+    num_concepts: 48
+
+methods:
+  - imperfect_concepts   # all-concepts baseline
+  - random
+  - variance             # renamed from 'entropy'
+  - greedy
+  - drs                  # renamed from 'rho_075'
+  - drs_log              # renamed from 'multiple_log'

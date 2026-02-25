@@ -1,0 +1,33 @@
+# configs/timing.yaml
+#
+# Wall-clock runtime benchmarks for concept selection algorithms (Figure 9, Appendix F).
+# Only times the selection step — no policy training.
+# Requires Q-values to be precomputed (run train_base_models.sh first).
+#
+# Output: results/timing/
+
+experiment: timing
+script: get_runtimes
+out_folder: timing
+
+seeds: [42, 43, 44, 45, 46, 47]
+
+environments:
+  cart_pole:
+    gold_timesteps: 4000000
+    num_concepts: 3
+  mini_grid:
+    gold_timesteps: 1000000
+    num_concepts: 11
+  pong:
+    gold_timesteps: 15000000
+    num_concepts: 57
+  boxing:
+    gold_timesteps: 30000000
+    num_concepts: 48
+
+methods:
+  - variance    # renamed from 'entropy'
+  - greedy
+  - drs         # renamed from 'rho_075'
+  - drs_log     # renamed from 'multiple_log'
