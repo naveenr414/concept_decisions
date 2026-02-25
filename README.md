@@ -44,7 +44,7 @@ import concept_abstraction as ca
 # Your inputs
 policy   = PPO.load("checkpoints/my_policy")   # any SB3-compatible policy
 concepts = [c1, c2, c3, ...]                   # list of f(obs) -> {0, 1}
-env      = make_vec_env("MyEnv-v0", n_envs=8)  # standard gym VecEnv
+gym_env      = make_vec_env("MyEnv-v0", n_envs=8)  # standard gymnasium VecEnv
 ```
 
 For example, to train with Mini-Grid, you can run
@@ -58,7 +58,7 @@ SEED = 42
 ENV  = "mini_grid"
 
 # ── 1. Build the MiniGrid environment ────────────────────────────────────────
-concept_list, _ = get_concepts(ENV)
+concepts, _ = get_concepts(ENV)
 vec_env, gym_env = get_environment(ENV, concept_list=None, seed=SEED)
 
 # ── 2. Train the base policy (pi*) ───────────────────────────────────────────
@@ -75,7 +75,7 @@ policy.save("results/models/mini_grid_policy.zip")
 **DRS** — optimal concept selection for ground-truth (perfect) concept predictors:
 
 ```python
-idx = ca.DRS(policy, concepts, env, k=5)
+idx = ca.DRS(policy, concepts, gym_env, k=5)
 selected = [concepts[i] for i in idx]
 ```
 
@@ -83,22 +83,22 @@ selected = [concepts[i] for i in idx]
 
 ```python
 # acc_list[i] = accuracy of your predictor on concept i, in [0, 1]
-idx = ca.DRS_log(policy, concepts, env, k=5, acc_list=acc_list)
+idx = ca.DRS_log(policy, concepts, gym_env, k=5, acc_list=acc_list)
 ```
 
 If you don't have accuracy estimates yet, you can train a predictor and get
 them automatically:
 
 ```python
-predictor, acc_list = ca.train_concept_predictor(env, policy, concepts, concept_idx=range(len(concepts)))
-idx = ca.DRS_log(policy, concepts, env, k=5, acc_list=acc_list)
+predictor, acc_list = ca.train_concept_predictor(gym_env, policy, concepts, concept_idx=range(len(concepts)))
+idx = ca.DRS_log(policy, concepts, gym_env, k=5, acc_list=acc_list)
 ```
 
-**Baselines** (no Gurobi required):
+**Baselines**:
 
 ```python
-idx = ca.variance(policy, concepts, env, k=5)  # variance-based greedy
-idx = ca.random(concepts, k=5)                 # random lower bound
+idx = ca.variance(policy, concepts, gym_env, k=5)
+idx = ca.random(concepts, k=5)
 ```
 
 ### What are concept functions?

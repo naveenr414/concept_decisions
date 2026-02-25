@@ -1,11 +1,13 @@
 name: concept-selection
 channels:
-  - conda-forge
   - pytorch
   - nvidia
+  - conda-forge
   - defaults
 dependencies:
   - python=3.10
+  - tqdm   
+  - rich    
   - numpy
   - scipy
   - scikit-learn
@@ -15,15 +17,16 @@ dependencies:
   - jupytext
   - jupyter
   - ipykernel
-  - pytorch
-  - pytorch-cuda=12.1
+  - pytorch::pytorch
+  - pytorch::torchvision
+  - pytorch::pytorch-cuda=12.1
   - pip
   - pip:
-      - "setuptools<70.0.0"          # Fix for pkg_resources in simglucose
-      - "gym<0.26,>=0.21"           # Namespace bridge for simglucose
-      - shimmy                      # Required for gym/gymnasium conversion
+      - "setuptools<70.0.0"
+      - "gym<0.26,>=0.21"
+      - shimmy
       - stable-baselines3
-      - "gymnasium[classic-control,atari,accept-rom-license]" # Engine + ROMs
+      - "gymnasium[classic-control,atari,accept-rom-license]"
       - ocatari
       - minigrid
       - "gurobipy<13.0,>=12.0"

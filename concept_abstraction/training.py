@@ -19,6 +19,7 @@ with redirect_stderr(stderr_buffer):
     from stable_baselines3.common.callbacks import BaseCallback
 
 from concept_abstraction.env_utils import evaluate_policy
+from stable_baselines3.common.callbacks import CallbackList
 
 
 # ── Concept predictor CNN ─────────────────────────────────────────────────────
@@ -184,7 +185,7 @@ def train_ppo(
                       if k in params}
         model = PPO(policy, env, gamma=0.99, verbose=0, seed=seed,**ppo_kwargs)
 
-    callback = _WandbCallback() if use_wandb else None
+    callback = CallbackList([_WandbCallback()]) if use_wandb else None
     model.learn(total_timesteps=total_timesteps, callback=callback,progress_bar=True)
 
     if use_wandb:

@@ -34,17 +34,14 @@
 set -euo pipefail
 
 # ── Config ────────────────────────────────────────────────────────────────────
-CONDA_ENV="concept_abstraction"
-GRB_LICENSE_FILE="${GRB_LICENSE_FILE:-/usr0/home/naveenr/gurobi.lic}"
+CONDA_ENV="concept-selection"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)/scripts"
-NOTEBOOKS_DIR="${SCRIPT_DIR}/notebooks"
 
-export GRB_LICENSE_FILE
 export PYTHONWARNINGS=ignore
 export GYMNASIUM_DISABLE_WARNINGS=1
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
-mkdir -p results/{imperfect,models,q_estimates,timing,cub,intervention,ablations,basic,training}
+
 # ── Argument parsing ──────────────────────────────────────────────────────────
 DRY_RUN=""
 RESUME=""
@@ -61,7 +58,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-conda activate "${CONDA_ENV}" 2>/dev/null || source activate "${CONDA_ENV}"
+conda activate "${CONDA_ENV}"
 
 # ── Step 1: Prerequisites ─────────────────────────────────────────────────────
 if [[ $SKIP_PREREQS -eq 0 ]]; then
@@ -70,7 +67,7 @@ if [[ $SKIP_PREREQS -eq 0 ]]; then
   echo "  Step 1: Training prerequisites"
   echo "  (base policies, Q-estimates, concept predictors)"
   echo "══════════════════════════════════════════"
-  python "${NOTEBOOKS_DIR}/train_prerequisites.py" ${DRY_RUN}
+  python "${SCRIPT_DIR}/train_prerequisites.py" ${DRY_RUN}
 fi
 
 # ── Step 2: Experiments ───────────────────────────────────────────────────────

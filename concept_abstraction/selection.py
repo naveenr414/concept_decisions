@@ -26,11 +26,39 @@ def random_selection(concept_list, num_concepts):
 
 
 def variance_selection(concept_list, num_concepts, q_estimates):
+    """Select concepts by highest marginal variance of their binary values.
+
+    Picks the k concepts whose empirical distribution across collected
+    observations is closest to 50/50, i.e. maximises p*(1-p) for each
+    concept bit. Does not use Q-values.
+
+    Args:
+        concept_list: Full list of concept functions
+        num_concepts: Number to select
+        q_estimates: List of (concept_vector, action, q_value) triples
+            (used only to read concept observations, not Q-values)
+
+    Returns:
+        concepts: Selected concept functions
+        idx: Sorted list of selected indices
+    """
+    all_x = np.array([i[0] for i in q_estimates])   # (N, K)
+    mean_vals = np.mean(all_x, axis=0)               # fraction of 1s per concept
+    bit_variance = mean_vals * (1 - mean_vals)        # maximised at 0.5
+
+    idx = np.argpartition(-bit_variance, num_concepts - 1)[:num_concepts]
+    idx = idx[np.argsort(-bit_variance[idx])].tolist()
+    idx = [int(i) for i in idx]
+    return [concept_list[i] for i in idx], idx
+
+
+def greedy_selection(concept_list, num_concepts, q_estimates):
     """Select concepts that minimise weighted conditional variance of Q-values.
 
-    For each concept, compute the total variance of Q-values when the concept
-    is 0 vs 1 (weighted by group size), then select the `num_concepts` with
-    the lowest total variance.
+    For each concept, computes the total variance of Q-values when the concept
+    is 0 vs 1 (weighted by group size), then selects the `num_concepts` with
+    the lowest total variance — i.e. those that most cleanly partition states
+    by their Q-values.
 
     Args:
         concept_list: Full list of concept functions
@@ -39,7 +67,7 @@ def variance_selection(concept_list, num_concepts, q_estimates):
 
     Returns:
         concepts: Selected concept functions
-        idx: List of selected indices
+        idx: Sorted list of selected indices
     """
     unique_actions = list(set(int(i[1]) for i in q_estimates))
 
@@ -57,11 +85,6 @@ def variance_selection(concept_list, num_concepts, q_estimates):
     idx = idx[np.argsort(variance_by_concept[idx])].tolist()
     idx = [int(i) for i in idx]
     return [concept_list[i] for i in idx], idx
-
-
-def greedy_selection(concept_list, num_concepts, q_estimates):
-    """Alias for variance_selection for backwards compatibility."""
-    return variance_selection(concept_list, num_concepts, q_estimates)
 
 
 def drs(
@@ -246,7 +269,6 @@ def drs_log(
     q_values = np.array([i[2] for i in q_estimates])
     acc_list = [min(a, 0.99) for a in acc_list]
 
-    # Build Q-distinguishing pairs (reuse if provided)
     if _final_vals is None:
         seen = set()
         _final_vals = []
@@ -271,7 +293,6 @@ def drs_log(
                         _final_vals.append((diff, diffs))
         _final_vals = sorted(_final_vals[:100_000], reverse=True)
 
-    # Collect policy observations (reuse if provided)
     if _all_observations is None:
         all_obs_list, all_act_list = [], []
         obs, info = ground_truth_gym_env.reset()
@@ -286,7 +307,6 @@ def drs_log(
 
     N, K = _all_observations.shape
 
-    # Sample cross-action pairs
     idx_i_list, idx_j_list = [], []
     while len(idx_i_list) < num_pairs:
         i_batch = np.random.randint(0, N, size=num_pairs)
@@ -301,12 +321,10 @@ def drs_log(
     M = len(idx_i)
     disagreement = (_all_observations[idx_i] != _all_observations[idx_j]).astype(np.uint8)
 
-    # Precompute log constants
     acc = np.array(acc_list)
     p_same = acc ** 2 + (1 - acc) ** 2
     log_const = np.log(1 - np.minimum(p_same, 1 - 1e-9))
 
-    # Build Gurobi model
     gmodel = gp.Model("drs_log")
     gmodel.Params.OutputFlag = 0
     gmodel.Params.Presolve = 2
@@ -383,26 +401,31 @@ def drs_log(
 # ── Supervised (CUB) concept selection ───────────────────────────────────────
 
 def variance_selection_supervised(train_X, train_Y, num_concepts):
-    """Select concepts by highest marginal entropy (most balanced split).
+    """Select concepts by highest marginal variance of their binary values.
+
+    Supervised analogue of variance_selection. train_Y is accepted for API
+    consistency but not used.
 
     Args:
         train_X: (N, d) binary concept matrix
-        train_Y: (N,) class labels (unused, kept for API consistency)
+        train_Y: (N,) class labels (unused)
         num_concepts: Number to select
 
     Returns:
         idx: List of selected concept indices
     """
-    entropy_by_concept = np.array([
+    bit_variance = np.array([
         (train_X[:, i] == 0).mean() * (train_X[:, i] == 1).mean()
         for i in range(train_X.shape[1])
     ])
-    idx = np.argpartition(-entropy_by_concept, num_concepts)[:num_concepts]
-    return idx[np.argsort(-entropy_by_concept[idx])].tolist()
+    idx = np.argpartition(-bit_variance, num_concepts)[:num_concepts]
+    return idx[np.argsort(-bit_variance[idx])].tolist()
 
 
 def greedy_selection_supervised(train_X, train_Y, num_concepts):
     """Select concepts that minimise conditional variance of Y.
+
+    Supervised analogue of greedy_selection.
 
     Args:
         train_X: (N, d) binary concept matrix

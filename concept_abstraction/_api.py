@@ -3,6 +3,14 @@
 All functions accept a standard Gym/SB3 policy + env and return a list of
 selected concept indices. The internal Q-estimation and LP steps are handled
 automatically.
+
+Baseline methods
+----------------
+random   – pick k concepts uniformly at random; requires no env interaction
+variance – pick k concepts with the highest marginal bit-variance (closest to
+           50/50 split); does not use Q-values
+greedy   – pick k concepts that minimise the conditional variance of Q-values;
+           uses Q-value estimates but no LP solver
 """
 
 import numpy as np
@@ -12,6 +20,7 @@ from concept_abstraction.selection import (
     drs               as _drs,
     drs_log           as _drs_log,
     variance_selection,
+    greedy_selection,
     random_selection,
 )
 
@@ -141,6 +150,34 @@ def DRS_log(
 
 
 def variance(policy, concepts, env, k, q_estimation_steps=200_000, seed=0):
+    """Select k concepts by highest marginal bit-variance.
+
+    Fast baseline that requires no LP solver and does not use Q-values.
+    Picks the k concepts whose empirical distribution across collected
+    observations is closest to 50/50, maximising p*(1-p) for each binary
+    concept bit.
+
+    Args:
+        policy: Trained SB3-compatible policy.
+        concepts: List of K concept functions f(obs) -> int (0 or 1).
+        env: Gym-compatible vectorised environment.
+        k: Number of concepts to select.
+        q_estimation_steps: Environment steps used to collect concept
+            observations (Q-values themselves are not used).
+        seed: Random seed.
+
+    Returns:
+        idx: Sorted list of k integer indices into `concepts`.
+    """
+    np.random.seed(seed)
+    q_estimates = estimate_q_values(
+        policy, env, concepts, total_timesteps=q_estimation_steps
+    )
+    _, idx = variance_selection(concepts, k, q_estimates)
+    return sorted(idx)
+
+
+def greedy(policy, concepts, env, k, q_estimation_steps=200_000, seed=0):
     """Select k concepts by lowest conditional variance of Q-values.
 
     Fast baseline that requires no LP solver. For each concept, computes
@@ -163,7 +200,7 @@ def variance(policy, concepts, env, k, q_estimation_steps=200_000, seed=0):
     q_estimates = estimate_q_values(
         policy, env, concepts, total_timesteps=q_estimation_steps
     )
-    _, idx = variance_selection(concepts, k, q_estimates)
+    _, idx = greedy_selection(concepts, k, q_estimates)
     return sorted(idx)
 
 
@@ -210,12 +247,11 @@ def train_concept_predictor(env, policy, concepts, concept_idx=None, environment
         concept_idx = list(range(len(concepts)))
 
     if environment_string is None:
-        # Best-effort inference from obs space shape
         shape = env.observation_space.shape
         if len(shape) == 1 and shape[0] == 4:
             environment_string = "cart_pole"
         elif len(shape) == 3 and shape[1:] == (84, 84):
-            environment_string = "pong"  # generic fallback
+            environment_string = "pong"
         else:
             raise ValueError(
                 "Could not infer environment_string from observation space. "

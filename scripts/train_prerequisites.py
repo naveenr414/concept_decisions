@@ -52,7 +52,6 @@ torch.set_num_interop_threads(1)
 from stable_baselines3 import PPO
 
 from concept_abstraction.training import train_ppo, evaluate_model, train_concept_predictor
-from concept_abstraction.selection import drs, drs_log, variance_selection, random_selection
 from concept_abstraction.concept_bank import get_concepts
 from concept_abstraction.env_utils import estimate_q_values
 from concept_abstraction.environments import get_environment
@@ -208,41 +207,42 @@ def train_concept_predictor_for_env(environment_string, seed, force=False):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-os.makedirs("../../results/models",      exist_ok=True)
-os.makedirs("../../results/q_estimates", exist_ok=True)
-os.makedirs("../../results/training",    exist_ok=True)
+if __name__ == "__main__":
+    os.makedirs("../../results/models",      exist_ok=True)
+    os.makedirs("../../results/q_estimates", exist_ok=True)
+    os.makedirs("../../results/training",    exist_ok=True)
 
-total_base       = len(args.envs) * len(args.seeds)
-total_predictors = len([e for e in args.envs
-                        if e in ENVS_NEEDING_CONCEPT_PREDICTOR]) * len(args.seeds)
+    total_base       = len(args.envs) * len(args.seeds)
+    total_predictors = len([e for e in args.envs
+                            if e in ENVS_NEEDING_CONCEPT_PREDICTOR]) * len(args.seeds)
 
-print(f"Environments : {args.envs}")
-print(f"Seeds        : {args.seeds}")
-print(f"Base policies to train     : {total_base}")
-if not args.skip_concept_predictors:
-    print(f"Concept predictors to train: {total_predictors}")
-if args.dry_run:
-    print("(dry run — nothing will be executed)\n")
+    print(f"Environments : {args.envs}")
+    print(f"Seeds        : {args.seeds}")
+    print(f"Base policies to train     : {total_base}")
+    if not args.skip_concept_predictors:
+        print(f"Concept predictors to train: {total_predictors}")
+    if args.dry_run:
+        print("(dry run — nothing will be executed)\n")
 
-print("\n── Step 1: Base policies and Q-estimates ────────────────────────────────")
-for env in args.envs:
-    for seed in args.seeds:
-        if args.dry_run:
-            print(f"  Would train: base policy {env}, seed={seed}")
-        else:
-            train_base_policy(env, seed, force=args.force)
-
-if not args.skip_concept_predictors:
-    print("\n── Step 2: Concept predictors ───────────────────────────────────────────")
+    print("\n── Step 1: Base policies and Q-estimates ────────────────────────────────")
     for env in args.envs:
-        if env not in ENVS_NEEDING_CONCEPT_PREDICTOR:
-            print(f"  [skip] {env} uses ground-truth concept labels")
-            continue
         for seed in args.seeds:
             if args.dry_run:
-                print(f"  Would train: concept predictor {env}, seed={seed}")
+                print(f"  Would train: base policy {env}, seed={seed}")
             else:
-                train_concept_predictor_for_env(env, seed, force=args.force)
+                train_base_policy(env, seed, force=args.force)
 
-print("\nAll prerequisites complete.")
-print("You can now run: python run_experiment.py --config configs/main_perfect.yaml")
+    if not args.skip_concept_predictors:
+        print("\n── Step 2: Concept predictors ───────────────────────────────────────────")
+        for env in args.envs:
+            if env not in ENVS_NEEDING_CONCEPT_PREDICTOR:
+                print(f"  [skip] {env} uses ground-truth concept labels")
+                continue
+            for seed in args.seeds:
+                if args.dry_run:
+                    print(f"  Would train: concept predictor {env}, seed={seed}")
+                else:
+                    train_concept_predictor_for_env(env, seed, force=args.force)
+
+    print("\nAll prerequisites complete.")
+    print("You can now run: python run_experiment.py --config configs/main_perfect.yaml")
