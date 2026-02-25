@@ -34,8 +34,8 @@ environments:
     num_concepts: 10
 
 methods:
-  - perfect_concepts   # all-concepts baseline
+  - perfect_concepts
   - random
-  - variance           # renamed from 'entropy' in original scripts
+  - variance
   - greedy
-  - drs                # renamed from 'rho_075'
+  - drs

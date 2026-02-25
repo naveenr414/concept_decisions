@@ -18,7 +18,7 @@ seeds: [42, 43, 44, 45, 46, 47]
 
 # --- Appendix D: rho / P1c relaxation ---
 rho_ablation:
-  script: method_comparison_perfect      # runs both perfect and imperfect
+  script: method_comparison_perfect
   environments:
     cart_pole:
       gold_timesteps: 4000000
@@ -31,7 +31,7 @@ rho_ablation:
   methods:
     - drs_rho_0        # rho=0
     - drs_rho_05       # rho=0.5
-    - drs_rho_075      # rho=0.75  (= main DRS)
+    - drs_rho_075      # rho=0.75
     - drs_rho_099      # rho=0.99
     - drs_no_relax     # rho=0.75 with P1c enforced
 
@@ -41,7 +41,7 @@ policy_quality:
   environment: mini_grid
   training_timesteps: 500000
   num_concepts: 11
-  gold_timesteps_values: [100000, 250000, 500000]   # varies pi* quality
+  gold_timesteps_values: [100000, 250000, 500000]
   methods:
     - variance
     - greedy

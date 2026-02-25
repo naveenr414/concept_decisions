@@ -37,10 +37,10 @@ environments:
 
 methods:
   - random
-  - variance    # renamed from 'entropy'
+  - variance
   - greedy
-  - drs         # renamed from 'rho_075'
-  - drs_log     # renamed from 'multiple_log'
+  - drs
+  - drs_log
 
 # Figure 4 uses alpha=0.5; Appendix G sweeps all values
 intervention_probs: [0.0, 0.25, 0.5, 0.75]

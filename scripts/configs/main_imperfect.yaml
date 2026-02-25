@@ -30,9 +30,9 @@ environments:
     num_concepts: 48
 
 methods:
-  - imperfect_concepts   # all-concepts baseline
+  - imperfect_concepts
   - random
-  - variance             # renamed from 'entropy'
+  - variance
   - greedy
-  - drs                  # renamed from 'rho_075'
-  - drs_log              # renamed from 'multiple_log'
+  - drs 
+  - drs_log

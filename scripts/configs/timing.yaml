@@ -27,7 +27,7 @@ environments:
     num_concepts: 48
 
 methods:
-  - variance    # renamed from 'entropy'
+  - variance
   - greedy
-  - drs         # renamed from 'rho_075'
-  - drs_log     # renamed from 'multiple_log'
+  - drs
+  - drs_log
