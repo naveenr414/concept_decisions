@@ -182,10 +182,10 @@ def train_ppo(
                       ("policy_kwargs", "n_steps", "batch_size", "n_epochs",
                        "learning_rate", "ent_coef", "device")
                       if k in params}
-        model = PPO(policy, env, gamma=0.99, verbose=0, seed=seed, progress_bar=True,**ppo_kwargs)
+        model = PPO(policy, env, gamma=0.99, verbose=0, seed=seed,**ppo_kwargs)
 
     callback = _WandbCallback() if use_wandb else None
-    model.learn(total_timesteps=total_timesteps, callback=callback)
+    model.learn(total_timesteps=total_timesteps, callback=callback,progress_bar=True)
 
     if use_wandb:
         import wandb
