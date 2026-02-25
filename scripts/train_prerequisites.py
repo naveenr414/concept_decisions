@@ -7,7 +7,7 @@ Trains all shared prerequisites before running experiments:
   3. Concept predictor CNN for each environment × seed
      (not needed for glucose — concepts are perfect there)
 
-Must be run before run_experiment.py. All outputs are cached in results/models/
+Must be run before run_comparison.py. All outputs are cached in results/models/
 and results/q_estimates/ so subsequent runs skip already-completed work.
 
 Usage:
@@ -61,11 +61,11 @@ from concept_abstraction.utils import get_save_path, delete_duplicate_results
 # ── Default experiment matrix ─────────────────────────────────────────────────
 
 GOLD_TIMESTEPS = {
-    "cart_pole":  4_000_000,
-    "mini_grid":  1_000_000,
-    "pong":       15_000_000,
-    "boxing":     30_000_000,
-    "glucose":    4_000_000,
+    "cart_pole": 4_000_000,
+    "mini_grid": 1_000_000,
+    "pong":      15_000_000,
+    "boxing":    30_000_000,
+    "glucose":   4_000_000,
 }
 
 # Glucose uses ground-truth concept labels — no CNN predictor needed.
@@ -76,15 +76,15 @@ DEFAULT_SEEDS = [42, 43, 44, 45, 46, 47]
 # ── Arguments ─────────────────────────────────────────────────────────────────
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--envs', nargs='+', default=list(GOLD_TIMESTEPS.keys()),
+parser.add_argument("--envs", nargs="+", default=list(GOLD_TIMESTEPS.keys()),
     choices=list(GOLD_TIMESTEPS.keys()),
     help="Environments to train prerequisites for.")
-parser.add_argument('--seeds', nargs='+', type=int, default=DEFAULT_SEEDS)
-parser.add_argument('--skip_concept_predictors', action='store_true',
+parser.add_argument("--seeds", nargs="+", type=int, default=DEFAULT_SEEDS)
+parser.add_argument("--skip_concept_predictors", action="store_true",
     help="Skip concept predictor training (base policy + Q-estimates only).")
-parser.add_argument('--force', action='store_true',
+parser.add_argument("--force", action="store_true",
     help="Retrain even if cached outputs already exist.")
-parser.add_argument('--dry_run', action='store_true',
+parser.add_argument("--dry_run", action="store_true",
     help="Print what would be done without running anything.")
 args = parser.parse_args()
 
@@ -96,17 +96,17 @@ def _policy_type(environment_string):
 
 
 def _model_path(environment_string, seed):
-    return "../../results/models/env={}_training={}_seed={}.zip".format(
+    return "results/models/env={}_training={}_seed={}.zip".format(
         environment_string, GOLD_TIMESTEPS[environment_string], seed)
 
 
 def _q_path(environment_string, seed):
-    return "../../results/q_estimates/env={}_training={}_seed={}.pkl".format(
+    return "results/q_estimates/env={}_training={}_seed={}.pkl".format(
         environment_string, GOLD_TIMESTEPS[environment_string], seed)
 
 
 def _predictor_path(environment_string, seed):
-    return "../../results/models/concept_predictor_env={}_seed={}.pth".format(
+    return "results/models/concept_predictor_env={}_seed={}.pth".format(
         environment_string, seed)
 
 
@@ -138,6 +138,7 @@ def train_base_policy(environment_string, seed, force=False):
     )
     groundtruth_model.save(model_path)
 
+    print("  Finished training, evaluating...")
     groundtruth_reward = evaluate_model(
         environment_string, ground_truth_gym_env, groundtruth_model, seed)
     print(f"    Reward: {groundtruth_reward:.3f}")
@@ -147,18 +148,20 @@ def train_base_policy(environment_string, seed, force=False):
         groundtruth_model, ground_truth_gym_env, concept_list)
     pickle.dump(q_estimates, open(q_path, "wb"))
 
-    results = {
-        'parameters': {
-            'seed':               seed,
-            'gold_timesteps':     GOLD_TIMESTEPS[environment_string],
-            'environment_string': environment_string,
-            'experiment':         'training',
+    train_results = {
+        "parameters": {
+            "seed":               seed,
+            "gold_timesteps":     GOLD_TIMESTEPS[environment_string],
+            "environment_string": environment_string,
+            "experiment":         "training",
         },
-        'ground_truth': {'reward': groundtruth_reward},
+        "ground_truth": {"reward": groundtruth_reward},
     }
     save_name = secrets.token_hex(4)
-    delete_duplicate_results("training", "", results)
-    json.dump(results, open('../../results/' + get_save_path("training", save_name), 'w'))
+    delete_duplicate_results("training", "", train_results)
+    json.dump(
+        train_results,
+        open("results/" + get_save_path("training", save_name), "w"))
 
     ground_truth_env.close()
     ground_truth_gym_env.close()
@@ -208,9 +211,9 @@ def train_concept_predictor_for_env(environment_string, seed, force=False):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    os.makedirs("../../results/models",      exist_ok=True)
-    os.makedirs("../../results/q_estimates", exist_ok=True)
-    os.makedirs("../../results/training",    exist_ok=True)
+    os.makedirs("results/models",      exist_ok=True)
+    os.makedirs("results/q_estimates", exist_ok=True)
+    os.makedirs("results/training",    exist_ok=True)
 
     total_base       = len(args.envs) * len(args.seeds)
     total_predictors = len([e for e in args.envs
@@ -245,4 +248,4 @@ if __name__ == "__main__":
                     train_concept_predictor_for_env(env, seed, force=args.force)
 
     print("\nAll prerequisites complete.")
-    print("You can now run: python run_experiment.py --config configs/main_perfect.yaml")
+    print("You can now run: python run_comparison.py --setting perfect ...")

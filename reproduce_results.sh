@@ -11,13 +11,14 @@
 #
 #   Step 2 — run_experiment.py (one call per config)
 #             Runs the actual concept selection experiments. These are
-#             independent of each other and can be parallelized:
+#             independent of each other and can be parallelised:
 #
 #             Terminal 1: bash reproduce_results.sh --configs main_perfect main_imperfect
 #             Terminal 2: bash reproduce_results.sh --configs intervention accuracy_sweep
 #             Terminal 3: bash reproduce_results.sh --configs ablations timing cub
 #
 #             (Step 1 must complete before any Step 2 terminal is started.)
+#             (ablations includes drs_log policy_quality jobs — run main_imperfect first.)
 #
 # Requirements:
 #   - conda environment installed (see environment.yaml)
@@ -31,11 +32,10 @@
 #   bash reproduce_results.sh --skip_prereqs           # skip step 1 (already done)
 #   bash reproduce_results.sh --configs main_perfect   # run one config only
 
-set -euo pipefail
-
 # ── Config ────────────────────────────────────────────────────────────────────
 CONDA_ENV="concept-selection"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)/scripts"
+CONFIG_DIR="${SCRIPT_DIR}/configs"
 
 export PYTHONWARNINGS=ignore
 export GYMNASIUM_DISABLE_WARNINGS=1
@@ -72,7 +72,7 @@ fi
 
 # ── Step 2: Experiments ───────────────────────────────────────────────────────
 for config_name in "${CONFIGS[@]}"; do
-  config_path="${SCRIPT_DIR}/configs/${config_name}.yaml"
+  config_path="${CONFIG_DIR}/${config_name}.yaml"
   if [[ ! -f "$config_path" ]]; then
     echo "Config not found: $config_path"
     exit 1

@@ -30,7 +30,7 @@ environments:
     num_concepts: 48
 
 methods:
-  - imperfect_concepts
+  - all_concepts
   - random
   - variance
   - greedy

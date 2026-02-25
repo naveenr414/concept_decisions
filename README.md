@@ -99,6 +99,7 @@ idx = ca.DRS_log(policy, concepts, gym_env, k=5, acc_list=acc_list)
 ```python
 idx = ca.variance(policy, concepts, gym_env, k=5)
 idx = ca.random(concepts, k=5)
+idx = ca.greedy(policy, concepts, gym_env, k=5)
 ```
 
 ### What are concept functions?

@@ -20,4 +20,4 @@ Each function returns a sorted list of integer indices into `concepts`.
 
 from concept_abstraction._api import DRS, DRS_log, variance, random, train_concept_predictor
 
-__all__ = ["DRS", "DRS_log", "variance", "random", "train_concept_predictor"]
+__all__ = ["DRS", "DRS_log", "variance", "random", "greedy", "train_concept_predictor"]

@@ -250,6 +250,8 @@ def _collect_training_data(gym_env, policy, concept_list, num_episodes=5, max_ep
         obs, info = gym_env.reset()
         done = [False] * 8
 
+        print("Collecting data for episode {}".format(episode+1))
+
         for step in range(max_episode_length):
             actions = (policy.predict(obs)[0] if use_gold
                        else [gym_env.action_space.sample() for _ in range(8)])
@@ -305,6 +307,8 @@ def train_concept_predictor(
                                 height=height, width=width).to(device)
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=3e-4, weight_decay=1e-4)
+
+    print("Collecting training data for {}".format(environment_string))
 
     # Collect data
     X_data, Y_data_raw = _collect_training_data(

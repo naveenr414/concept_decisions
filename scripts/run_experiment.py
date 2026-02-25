@@ -35,7 +35,6 @@ import yaml
 
 SCRIPTS_DIR = Path(__file__).parent
 REPO_ROOT   = SCRIPTS_DIR.parent
-NOTEBOOKS   = SCRIPTS_DIR / "notebooks"
 
 
 def result_exists(out_folder: str, params: dict) -> bool:
@@ -62,11 +61,11 @@ def build_jobs(config: dict) -> list[dict]:
 
     # ── CUB ───────────────────────────────────────────────────────────────────
     if experiment == "cub":
-        script = NOTEBOOKS / "supervised_learning.py"
+        script = SCRIPTS_DIR / "supervised_learning.py"
         for seed, k in itertools.product(seeds, config["num_concepts_values"]):
             jobs.append({
-                "script": script,
-                "setting": None,
+                "script":     script,
+                "setting":    None,
                 "out_folder": out_folder,
                 "params": {"seed": seed, "num_concepts_selected": k},
             })
@@ -74,7 +73,7 @@ def build_jobs(config: dict) -> list[dict]:
 
     # ── Accuracy sweep (Figure 3) ─────────────────────────────────────────────
     if experiment == "accuracy_sweep":
-        script = NOTEBOOKS / "accuracy_sweep.py"
+        script = SCRIPTS_DIR / "accuracy_sweep.py"
         for env_name, env_cfg in config["environments"].items():
             for seed, accuracy, ts, k in itertools.product(
                 seeds,
@@ -83,8 +82,8 @@ def build_jobs(config: dict) -> list[dict]:
                 env_cfg["num_concepts_values"],
             ):
                 jobs.append({
-                    "script": script,
-                    "setting": None,
+                    "script":     script,
+                    "setting":    None,
                     "out_folder": out_folder,
                     "params": {
                         "seed":                  seed,
@@ -99,12 +98,12 @@ def build_jobs(config: dict) -> list[dict]:
 
     # ── Timing ────────────────────────────────────────────────────────────────
     if experiment == "timing":
-        script = NOTEBOOKS / "get_runtimes.py"
+        script = SCRIPTS_DIR / "get_runtimes.py"
         for env_name, env_cfg in config["environments"].items():
             for seed, method in itertools.product(seeds, config["methods"]):
                 jobs.append({
-                    "script": script,
-                    "setting": None,
+                    "script":     script,
+                    "setting":    None,
                     "out_folder": out_folder,
                     "params": {
                         "seed":                  seed,
@@ -117,10 +116,11 @@ def build_jobs(config: dict) -> list[dict]:
         return jobs
 
     # ── Everything below uses run_comparison.py ───────────────────────────────
-    script = NOTEBOOKS / "run_comparison.py"
+    script = SCRIPTS_DIR / "run_comparison.py"
 
     # ── Ablations ─────────────────────────────────────────────────────────────
     if experiment == "ablations":
+        # Appendix D: rho / P1c relaxation — both perfect and imperfect settings
         rho_cfg = config["rho_ablation"]
         for setting, env_name, seed, method in itertools.product(
             ("perfect", "imperfect"),
@@ -128,10 +128,13 @@ def build_jobs(config: dict) -> list[dict]:
             seeds,
             rho_cfg["methods"],
         ):
+            # drs_log is not valid for the perfect setting
+            if setting == "perfect" and method == "drs_log":
+                continue
             env_cfg = rho_cfg["environments"][env_name]
             jobs.append({
-                "script": script,
-                "setting": setting,
+                "script":     script,
+                "setting":    setting,
                 "out_folder": out_folder,
                 "params": {
                     "seed":                  seed,
@@ -142,13 +145,18 @@ def build_jobs(config: dict) -> list[dict]:
                     "method":                method,
                 },
             })
+
+        # Appendix I: policy quality / robustness to reduced pi* training
+        # NOTE: drs_log jobs here require a prior imperfect run to exist for
+        # acc_list lookup (via get_results_matching_parameters). Run
+        # main_imperfect.yaml first if drs_log is included.
         pq_cfg = config["policy_quality"]
         for seed, gold_ts, method in itertools.product(
             seeds, pq_cfg["gold_timesteps_values"], pq_cfg["methods"]
         ):
             jobs.append({
-                "script": script,
-                "setting": "imperfect",
+                "script":     script,
+                "setting":    "imperfect",
                 "out_folder": out_folder,
                 "params": {
                     "seed":                  seed,
@@ -168,8 +176,8 @@ def build_jobs(config: dict) -> list[dict]:
                 seeds, config["methods"], config["intervention_probs"]
             ):
                 jobs.append({
-                    "script": script,
-                    "setting": "intervention",
+                    "script":     script,
+                    "setting":    "intervention",
                     "out_folder": out_folder,
                     "params": {
                         "seed":                  seed,
@@ -185,23 +193,26 @@ def build_jobs(config: dict) -> list[dict]:
         return jobs
 
     # ── Main perfect / imperfect ──────────────────────────────────────────────
-    setting = "perfect" if experiment == "main_perfect" else "imperfect"
-    for env_name, env_cfg in config["environments"].items():
-        for seed, method in itertools.product(seeds, config["methods"]):
-            jobs.append({
-                "script": script,
-                "setting": setting,
-                "out_folder": out_folder,
-                "params": {
-                    "seed":                  seed,
-                    "environment_string":    env_name,
-                    "gold_timesteps":        env_cfg["gold_timesteps"],
-                    "training_timesteps":    env_cfg["training_timesteps"],
-                    "num_concepts_selected": env_cfg["num_concepts"],
-                    "method":                method,
-                },
-            })
-    return jobs
+    if experiment in ("main_perfect", "main_imperfect"):
+        setting = "perfect" if experiment == "main_perfect" else "imperfect"
+        for env_name, env_cfg in config["environments"].items():
+            for seed, method in itertools.product(seeds, config["methods"]):
+                jobs.append({
+                    "script":     script,
+                    "setting":    setting,
+                    "out_folder": out_folder,
+                    "params": {
+                        "seed":                  seed,
+                        "environment_string":    env_name,
+                        "gold_timesteps":        env_cfg["gold_timesteps"],
+                        "training_timesteps":    env_cfg["training_timesteps"],
+                        "num_concepts_selected": env_cfg["num_concepts"],
+                        "method":                method,
+                    },
+                })
+        return jobs
+
+    raise ValueError(f"Unknown experiment type: {experiment!r}")
 
 
 def run_job(job: dict, dry_run: bool = False, resume: bool = False) -> bool:
@@ -226,7 +237,7 @@ def run_job(job: dict, dry_run: bool = False, resume: bool = False) -> bool:
     if dry_run:
         return True
 
-    result = subprocess.run(cmd, cwd=str(NOTEBOOKS))
+    result = subprocess.run(cmd, cwd=str(SCRIPTS_DIR))
     if result.returncode != 0:
         print(f"  [FAILED] exit code {result.returncode}")
         return False
@@ -235,9 +246,9 @@ def run_job(job: dict, dry_run: bool = False, resume: bool = False) -> bool:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config",  required=True)
-    parser.add_argument("--dry_run", action="store_true")
-    parser.add_argument("--resume",  action="store_true")
+    parser.add_argument("--config",  required=True,       help="Path to YAML config file")
+    parser.add_argument("--dry_run", action="store_true", help="Print commands without executing")
+    parser.add_argument("--resume",  action="store_true", help="Skip jobs whose results already exist")
     args = parser.parse_args()
 
     config_path = Path(args.config)
@@ -250,6 +261,7 @@ def main():
     jobs  = build_jobs(config)
     total = len(jobs)
     print(f"Experiment : {config['experiment']}")
+    print(f"Config     : {config_path}")
     print(f"Total jobs : {total}")
     if args.dry_run:
         print("(dry run)\n")
