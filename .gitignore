@@ -1,8 +1,38 @@
-*.egg-info
-*/__pycache__
-results/
-data/
-runs/
-models/
-scripts/notebooks/wandb
-scripts/notebooks/sanity_checks/wandb/
+# --- Research Data & Results ---
+# Ignore all results, but keep the directory structure via .gitkeep files
+results/**/*
+!results/**/.gitkeep
+
+# Data folder: Ignore everything in CUB except the manual_concepts.txt
+data/cub/*
+!data/cub/manual_concepts.txt
+
+# --- Python / Environment ---
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv
+env/
+venv/
+ENV/
+build/
+dist/
+*.egg-info/
+
+# --- Jupyter Notebooks ---
+.ipynb_checkpoints
+# If you want to share the notebook but not the internal "output" state:
+# (Optional) *.ipynb_checkpoints
+
+# --- OS & IDEs ---
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# --- Large Model Files (Common in RL/ML) ---
+*.pth
+*.pkl
+*.npy
+*.joblib
