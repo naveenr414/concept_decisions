@@ -43,6 +43,7 @@ import random
 import pickle
 import secrets
 import ujson as json
+from pathlib import Path 
 
 is_jupyter = "ipykernel" in sys.modules
 is_main = __name__ == "__main__"
@@ -85,12 +86,13 @@ if is_main:
 
 # ── Environment and ground-truth policy ───────────────────────────────────────
 if is_main:
+    REPO_ROOT = Path(__file__).parent.parent
     concept_list, processed_concepts = get_concepts(environment_string)
     num_concepts_selected = min(num_concepts_selected, len(concept_list))
     ground_truth_env, ground_truth_gym_env = get_environment(
         environment_string, concept_list=None, seed=seed)
 
-    model_name = "../../results/models/env={}_training={}_seed={}.zip".format(
+    model_name = REPO_ROOT / "results/models/env={}_training={}_seed={}.zip".format(
         environment_string, gold_timesteps, seed)
 
     if os.path.exists(model_name):
@@ -107,7 +109,7 @@ if is_main:
 
 # ── Q-value estimation ────────────────────────────────────────────────────────
 if is_main:
-    q_name = "../../results/q_estimates/env={}_training={}_seed={}.pkl".format(
+    q_name = REPO_ROOT / "results/q_estimates/env={}_training={}_seed={}.pkl".format(
         environment_string, gold_timesteps, seed)
     if os.path.exists(q_name):
         q_estimates = pickle.load(open(q_name, "rb"))
@@ -143,7 +145,7 @@ if is_main:
     save_name = secrets.token_hex(4)
     save_path = get_save_path(out_folder, save_name)
     delete_duplicate_results(out_folder, "", results)
-    json.dump(results, open("../../results/" + save_path, "w"))
+    json.dump(results, open(REPO_ROOT / "results/" + save_path, "w"))
     ground_truth_env.close()
     ground_truth_gym_env.close()
     env.close()

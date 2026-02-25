@@ -42,6 +42,7 @@ import random
 import pickle
 import secrets
 import ujson as json
+from pathlib import Path 
 
 is_jupyter = "ipykernel" in sys.modules
 is_main = __name__ == "__main__"
@@ -67,6 +68,7 @@ if is_main:
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 if is_main:
+    REPO_ROOT = Path(__file__).parent.parent
     results = {}
     results["parameters"] = {
         "seed":                  seed,
@@ -86,7 +88,7 @@ if is_main:
     ground_truth_env, ground_truth_gym_env = get_environment(
         environment_string, concept_list=None, seed=seed)
 
-    model_name = "../../results/models/env={}_training={}_seed={}.zip".format(
+    model_name = REPO_ROOT / "results/models/env={}_training={}_seed={}.zip".format(
         environment_string, gold_timesteps, seed)
 
     if os.path.exists(model_name):
@@ -110,7 +112,7 @@ if is_main and method == "drs_log":
 
 # ── Q-value estimation (must be pre-computed via train_prerequisites.py) ──────
 if is_main:
-    q_name = "../../results/q_estimates/env={}_training={}_seed={}.pkl".format(
+    q_name = REPO_ROOT / "results/q_estimates/env={}_training={}_seed={}.pkl".format(
         environment_string, gold_timesteps, seed)
     if not os.path.exists(q_name):
         raise FileNotFoundError(
@@ -146,6 +148,6 @@ if is_main:
     save_name = secrets.token_hex(4)
     save_path = get_save_path(out_folder, save_name)
     delete_duplicate_results(out_folder, "", results)
-    json.dump(results, open("../../results/" + save_path, "w"))
+    json.dump(results, open(REPO_ROOT / "results/" + save_path, "w"))
     ground_truth_env.close()
     ground_truth_gym_env.close()

@@ -38,6 +38,7 @@ import pickle
 import ujson as json
 from sklearn.neural_network import MLPClassifier
 from sklearn.metrics import accuracy_score
+from pathlib import Path 
 
 # ── Arguments ─────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser()
@@ -60,11 +61,12 @@ print("Parameters {}".format(results["parameters"]))
 
 np.random.seed(seed)
 random.seed(seed)
+REPO_ROOT = Path(__file__).parent.parent
 
 # ── Load data ─────────────────────────────────────────────────────────────────
 # Ground-truth concept labels
-train_gt = pickle.load(open("../../data/cub/train.pkl", "rb"))
-test_gt  = pickle.load(open("../../data/cub/test.pkl",  "rb"))
+train_gt = pickle.load(open("data/cub/train.pkl", "rb"))
+test_gt  = pickle.load(open("data/cub/test.pkl",  "rb"))
 train_X  = np.array([i["attribute_label"] for i in train_gt])
 train_Y  = np.array([i["class_label"]     for i in train_gt])
 test_X   = np.array([i["attribute_label"] for i in test_gt])
@@ -74,8 +76,8 @@ test_Y   = np.array([i["class_label"]     for i in test_gt])
 def sigmoid(z):
     return 1 / (1 + np.exp(-z))
 
-train_pred = pickle.load(open("../../data/cub/train_error.pkl", "rb"))
-test_pred  = pickle.load(open("../../data/cub/test_error.pkl",  "rb"))
+train_pred = pickle.load(open("data/cub/train_error.pkl", "rb"))
+test_pred  = pickle.load(open("data/cub/test_error.pkl",  "rb"))
 pred_train_X = sigmoid(np.array([i["attribute_label"] for i in train_pred])).round()
 pred_test_X  = sigmoid(np.array([i["attribute_label"] for i in test_pred])).round()
 
@@ -83,7 +85,7 @@ train_concept_accuracy = np.mean(pred_train_X == train_X, axis=0)
 
 manually_selected_concepts = [
     int(i) for i in
-    open("../../data/cub/manual_concepts.txt").read().strip().split("\n")
+    open("data/cub/manual_concepts.txt").read().strip().split("\n")
 ]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -176,4 +178,4 @@ for intervention_frac in [0.2, 0.4, 0.6, 0.8, 1.0]:
 save_name = secrets.token_hex(4)
 save_path = get_save_path(out_folder, save_name)
 delete_duplicate_results(out_folder, "", results)
-json.dump(results, open("../../results/" + save_path, "w"))
+json.dump(results, open(REPO_ROOT / "results/" + save_path, "w"))

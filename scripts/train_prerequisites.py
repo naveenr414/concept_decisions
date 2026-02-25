@@ -45,6 +45,8 @@ import json
 import numpy as np
 import random
 import torch
+from pathlib import Path
+REPO_ROOT = Path(__file__).parent.parent
 
 torch.set_num_threads(1)
 torch.set_num_interop_threads(1)
@@ -61,17 +63,17 @@ from concept_abstraction.utils import get_save_path, delete_duplicate_results
 # ── Default experiment matrix ─────────────────────────────────────────────────
 
 GOLD_TIMESTEPS = {
-    "cart_pole": 4_000_000,
+    # "cart_pole": 4_000_000,
     "mini_grid": 1_000_000,
-    "pong":      15_000_000,
-    "boxing":    30_000_000,
-    "glucose":   4_000_000,
+    # "pong":      15_000_000,
+    # "boxing":    30_000_000,
+    # "glucose":   4_000_000,
 }
 
 # Glucose uses ground-truth concept labels — no CNN predictor needed.
 ENVS_NEEDING_CONCEPT_PREDICTOR = {"cart_pole", "mini_grid", "pong", "boxing"}
 
-DEFAULT_SEEDS = [42, 43, 44, 45, 46, 47]
+DEFAULT_SEEDS = [42] #, 43, 44, 45, 46, 47]
 
 # ── Arguments ─────────────────────────────────────────────────────────────────
 
@@ -96,18 +98,18 @@ def _policy_type(environment_string):
 
 
 def _model_path(environment_string, seed):
-    return "results/models/env={}_training={}_seed={}.zip".format(
+    return REPO_ROOT / "results/models/env={}_training={}_seed={}.zip".format(
         environment_string, GOLD_TIMESTEPS[environment_string], seed)
 
 
 def _q_path(environment_string, seed):
-    return "results/q_estimates/env={}_training={}_seed={}.pkl".format(
+    return REPO_ROOT / "results/q_estimates/env={}_training={}_seed={}.pkl".format(
         environment_string, GOLD_TIMESTEPS[environment_string], seed)
 
 
-def _predictor_path(environment_string, seed):
-    return "results/models/concept_predictor_env={}_seed={}.pth".format(
-        environment_string, seed)
+def _predictor_path(environment_string, training, seed):
+    return REPO_ROOT / "results/models/concept_predictor_env={}_training={}_seed={}.pth".format(
+        environment_string, training, seed)
 
 
 # ── Step 1: Base policy + Q-estimates ────────────────────────────────────────
@@ -161,7 +163,7 @@ def train_base_policy(environment_string, seed, force=False):
     delete_duplicate_results("training", "", train_results)
     json.dump(
         train_results,
-        open("results/" + get_save_path("training", save_name), "w"))
+        open(REPO_ROOT / "results/" + get_save_path("training", save_name), "w"))
 
     ground_truth_env.close()
     ground_truth_gym_env.close()
@@ -169,9 +171,9 @@ def train_base_policy(environment_string, seed, force=False):
 
 # ── Step 2: Concept predictor ─────────────────────────────────────────────────
 
-def train_concept_predictor_for_env(environment_string, seed, force=False):
+def train_concept_predictor_for_env(environment_string, seed, force=False,training_epochs=25):
     """Train CNN concept predictor. Skips if cached."""
-    predictor_path = _predictor_path(environment_string, seed)
+    predictor_path = _predictor_path(environment_string, training_epochs, seed)
 
     if os.path.exists(predictor_path) and not force:
         print(f"  [skip] concept predictor already exists: {environment_string}, seed={seed}")
@@ -199,7 +201,7 @@ def train_concept_predictor_for_env(environment_string, seed, force=False):
         concept_list,
         concept_idx=list(range(len(concept_list))),
         environment_string=environment_string,
-        epochs=25,
+        epochs=training_epochs,
         max_episode_length=10_000,
     )
     torch.save(concept_predictor.state_dict(), predictor_path)
@@ -211,9 +213,9 @@ def train_concept_predictor_for_env(environment_string, seed, force=False):
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    os.makedirs("results/models",      exist_ok=True)
-    os.makedirs("results/q_estimates", exist_ok=True)
-    os.makedirs("results/training",    exist_ok=True)
+    os.makedirs(REPO_ROOT / "results/models",      exist_ok=True)
+    os.makedirs(REPO_ROOT / "results/q_estimates", exist_ok=True)
+    os.makedirs(REPO_ROOT / "results/training",    exist_ok=True)
 
     total_base       = len(args.envs) * len(args.seeds)
     total_predictors = len([e for e in args.envs
@@ -245,6 +247,7 @@ if __name__ == "__main__":
                 if args.dry_run:
                     print(f"  Would train: concept predictor {env}, seed={seed}")
                 else:
+                    train_concept_predictor_for_env(env, seed, force=args.force,training_epochs=1)
                     train_concept_predictor_for_env(env, seed, force=args.force)
 
     print("\nAll prerequisites complete.")

@@ -90,7 +90,7 @@ If you don't have accuracy estimates yet, you can train a predictor and get
 them automatically:
 
 ```python
-predictor, acc_list = ca.train_concept_predictor(gym_env, policy, concepts, concept_idx=range(len(concepts)))
+predictor, acc_list = ca.train_concept_predictor(gym_env, policy, concepts, concept_idx=range(len(concepts)),environment_string=ENV)
 idx = ca.DRS_log(policy, concepts, gym_env, k=5, acc_list=acc_list)
 ```
 
@@ -142,10 +142,10 @@ To reproduce a specific experiment:
 
 ```bash
 # Train prerequisites (ground-truth policies + concept predictors)
-python scripts/train_prerequisites.py --config scripts/configs/main_perfect.yaml
+python scripts/train_prerequisites.py
 
 # Run concept selection comparison
-python scripts/run_comparison.py --config scripts/configs/main_perfect.yaml
+python scripts/run_experiment.py --config scripts/configs/main_perfect.yaml
 
 # Generate figures
 jupyter nbconvert --to notebook --execute plot_results.ipynb
@@ -179,7 +179,7 @@ The CUB experiments require additional data setup.
 
 3. Run:
    ```bash
-   python scripts/run_comparison.py --config scripts/configs/cub.yaml
+   python scripts/run_experiment.py --config scripts/configs/cub.yaml
    ```
 
 ---

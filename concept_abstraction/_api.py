@@ -250,14 +250,23 @@ def train_concept_predictor(env, policy, concepts, concept_idx=None, environment
         shape = env.observation_space.shape
         if len(shape) == 1 and shape[0] == 4:
             environment_string = "cart_pole"
-        elif len(shape) == 3 and shape[1:] == (84, 84):
+        elif len(shape) == 3 and shape[0] == 1 and shape[1:] == (84, 84):
+            environment_string = "mini_grid"
+        elif len(shape) == 3 and shape[0] == 4 and shape[1:] == (84, 84):
+            # Both pong and boxing have this shape — can't distinguish automatically.
+            # Pass environment_string explicitly if you need the exact env name;
+            # for train_concept_predictor the only thing that matters is num_frames=4,
+            # so "pong" is a safe default here.
             environment_string = "pong"
+        elif len(shape) == 3 and shape[1:] == (160, 240):
+            environment_string = "cart_pole"
+        elif len(shape) == 1 and shape[0] == 6:
+            environment_string = "glucose"
         else:
             raise ValueError(
-                "Could not infer environment_string from observation space. "
-                "Please pass it explicitly, e.g. environment_string='cart_pole'."
+                f"Could not infer environment_string from observation space shape {shape}. "
+                "Please pass it explicitly, e.g. environment_string='mini_grid'."
             )
-
     return _train_concept_predictor(
         env, policy, concepts, concept_idx, environment_string, **kwargs
     )

@@ -25,7 +25,7 @@ def delete_duplicate_results(folder_name, result_name, data):
         result_name: Filename prefix to glob
         data: Dict containing a 'parameters' key
     """
-    all_results = glob.glob("../../results/{}/{}*.json".format(folder_name, result_name))
+    all_results = glob.glob("../results/{}/{}*.json".format(folder_name, result_name))
 
     for file_name in all_results:
         try:
@@ -48,7 +48,7 @@ def get_results_matching_parameters(folder_name, result_name, parameters):
     Returns:
         List of result dicts
     """
-    all_results = glob.glob("../../results/{}/{}*.json".format(folder_name, result_name))
+    all_results = glob.glob("results/{}/{}*.json".format(folder_name, result_name))
     ret_results = []
 
     for file_name in all_results:

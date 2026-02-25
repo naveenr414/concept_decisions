@@ -308,8 +308,6 @@ def train_concept_predictor(
     criterion = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=3e-4, weight_decay=1e-4)
 
-    print("Collecting training data for {}".format(environment_string))
-
     # Collect data
     X_data, Y_data_raw = _collect_training_data(
         gym_env, policy, concept_list,
