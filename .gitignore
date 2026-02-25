@@ -1,12 +1,17 @@
-# --- Research Data & Results ---
-# Ignore all results, but keep the directory structure via .gitkeep files
+# 1. Ignore every file inside the results directory (recursively)
 results/**/*
+
+# 2. But do NOT ignore the folders themselves 
+# (This allows Git to see the sub-folders like 'basic' or 'ablations')
+!results/**/
+
+# 3. And do NOT ignore the .gitkeep files 
+# (This is the only file inside those folders Git will track)
 !results/**/.gitkeep
 
-# Data folder: Ignore everything in CUB except the manual_concepts.txt
+# --- CUB Data ---
 data/cub/*
 !data/cub/manual_concepts.txt
-
 # --- Python / Environment ---
 __pycache__/
 *.py[cod]
