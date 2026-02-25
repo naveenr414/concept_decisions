@@ -23,7 +23,7 @@ abstraction theory and derive a tractable LP that finds the optimal subset.
 ```bash
 git clone https://github.com/naveenr414/concept-selection
 cd concept-selection
-conda env create -f environment.yaml
+bash install.sh
 conda activate concept-selection
 ```
 
@@ -45,6 +45,31 @@ import concept_abstraction as ca
 policy   = PPO.load("checkpoints/my_policy")   # any SB3-compatible policy
 concepts = [c1, c2, c3, ...]                   # list of f(obs) -> {0, 1}
 env      = make_vec_env("MyEnv-v0", n_envs=8)  # standard gym VecEnv
+```
+
+For example, to train with Mini-Grid, you can run
+```python
+import concept_abstraction as ca
+from concept_abstraction.training import train_ppo
+from concept_abstraction.concept_bank import get_concepts
+from concept_abstraction.environments import get_environment
+
+SEED = 42
+ENV  = "mini_grid"
+
+# ── 1. Build the MiniGrid environment ────────────────────────────────────────
+concept_list, _ = get_concepts(ENV)
+vec_env, gym_env = get_environment(ENV, concept_list=None, seed=SEED)
+
+# ── 2. Train the base policy (pi*) ───────────────────────────────────────────
+policy = train_ppo(
+    vec_env,
+    ENV,
+    seed=SEED,
+    total_timesteps=250_000,
+    policy="CnnPolicy",
+)
+policy.save("results/models/mini_grid_policy.zip")
 ```
 
 **DRS** — optimal concept selection for ground-truth (perfect) concept predictors:
