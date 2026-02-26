@@ -21,8 +21,8 @@ abstraction theory and derive a tractable LP that finds the optimal subset.
 ## Installation
 
 ```bash
-git clone https://github.com/naveenr414/concept-selection
-cd concept-selection
+git clone https://github.com/naveenr414/concept_decisions
+cd concept_decisions
 bash install.sh
 conda activate concept-selection
 ```
@@ -186,7 +186,7 @@ The CUB experiments require additional data setup.
 ## Repository Structure
 
 ```
-concept-selection/
+concept_decisions/
 ├── reproduce_results.sh          # reproduces all paper experiments
 ├── plot_results.ipynb            # generates all figures
 ├── environment.yaml              # conda environment
