@@ -178,4 +178,4 @@ for intervention_frac in [0.2, 0.4, 0.6, 0.8, 1.0]:
 save_name = secrets.token_hex(4)
 save_path = get_save_path(out_folder, save_name)
 delete_duplicate_results(out_folder, "", results)
-json.dump(results, open(REPO_ROOT / "results/" + save_path, "w"))
+json.dump(results, open(REPO_ROOT / "results/" / save_path, "w"))

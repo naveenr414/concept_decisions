@@ -135,8 +135,7 @@ bash reproduce_results.sh
 ```
 
 This will run training, concept selection, and evaluation for all
-environments (CartPole, MiniGrid, Pong, Boxing, Glucose) and generate all
-figures into `figures/`. Expected runtime on a single GPU: ~24 hours total.
+environments (CartPole, MiniGrid, Pong, Boxing, Glucose) and write all results to the `results/` folder. Figures are generated from the `plot_results.ipynb` file. 
 
 To reproduce a specific experiment:
 
