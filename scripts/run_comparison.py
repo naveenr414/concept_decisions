@@ -18,6 +18,45 @@ Usage:
                              --intervention_prob 0.5 --predictor_epochs 1
 """
 
+def _evaluate_predictor_accuracy(
+        predictor, gym_env, policy, concept_list,
+        num_frames, height, width, device,
+        num_steps=2000,
+    ):
+    """Compute per-concept accuracy of a trained CNN predictor via rollout.
+
+    Used in place of the old evaluate_concept_predictor() helper that no
+    longer exists as a standalone function.
+
+    Returns:
+        acc_list: np.ndarray of shape (K,) with per-concept accuracy in [0, 1]
+    """
+    import torch
+    K = len(concept_list)
+    correct = np.zeros(K)
+    total = 0
+
+    obs, infos = gym_env.reset()
+
+    for _ in range(num_steps):
+        actions, _ = policy.predict(obs, deterministic=True)
+        obs, _, _, _, infos = gym_env.step(actions)
+
+        for i, info in enumerate(infos):
+            if "observation" not in info:
+                continue
+            raw = info["observation"]
+            gt = np.array([c(raw) for c in concept_list], dtype=np.float32)
+
+            x = torch.from_numpy(obs[i].astype(np.float32) / 255.0).unsqueeze(0).to(device)
+            with torch.no_grad():
+                pred = (torch.sigmoid(predictor(x)) > 0.5).cpu().numpy().flatten()
+
+            correct += (pred == gt)
+            total += 1
+
+    return correct / max(total, 1)
+
 if __name__ == "__main__":
 
     import os
@@ -306,51 +345,9 @@ if __name__ == "__main__":
     save_name = secrets.token_hex(4)
     save_path = get_save_path(out_folder, save_name)
     delete_duplicate_results(out_folder, "", results)
-    json.dump(results, open(REPO_ROOT / "results/" + save_path, "w"))
+    json.dump(results, open(REPO_ROOT / "results/" / save_path, "w"))
 
     ground_truth_env.close()
     ground_truth_gym_env.close()
     two_stage_env.close()
     two_stage_gym_env.close()
-
-
-    # ── Helpers ───────────────────────────────────────────────────────────────────
-
-    def _evaluate_predictor_accuracy(
-        predictor, gym_env, policy, concept_list,
-        num_frames, height, width, device,
-        num_steps=2000,
-    ):
-        """Compute per-concept accuracy of a trained CNN predictor via rollout.
-
-        Used in place of the old evaluate_concept_predictor() helper that no
-        longer exists as a standalone function.
-
-        Returns:
-            acc_list: np.ndarray of shape (K,) with per-concept accuracy in [0, 1]
-        """
-        import torch
-        K = len(concept_list)
-        correct = np.zeros(K)
-        total = 0
-
-        obs, infos = gym_env.reset()
-
-        for _ in range(num_steps):
-            actions, _ = policy.predict(obs, deterministic=True)
-            obs, _, _, _, infos = gym_env.step(actions)
-
-            for i, info in enumerate(infos):
-                if "observation" not in info:
-                    continue
-                raw = info["observation"]
-                gt = np.array([c(raw) for c in concept_list], dtype=np.float32)
-
-                x = torch.from_numpy(obs[i].astype(np.float32) / 255.0).unsqueeze(0).to(device)
-                with torch.no_grad():
-                    pred = (torch.sigmoid(predictor(x)) > 0.5).cpu().numpy().flatten()
-
-                correct += (pred == gt)
-                total += 1
-
-        return correct / max(total, 1)

@@ -65,8 +65,8 @@ REPO_ROOT = Path(__file__).parent.parent
 
 # ── Load data ─────────────────────────────────────────────────────────────────
 # Ground-truth concept labels
-train_gt = pickle.load(open("data/cub/train.pkl", "rb"))
-test_gt  = pickle.load(open("data/cub/test.pkl",  "rb"))
+train_gt = pickle.load(open(REPO_ROOT / "data/cub/train.pkl", "rb"))
+test_gt  = pickle.load(open(REPO_ROOT / "data/cub/test.pkl",  "rb"))
 train_X  = np.array([i["attribute_label"] for i in train_gt])
 train_Y  = np.array([i["class_label"]     for i in train_gt])
 test_X   = np.array([i["attribute_label"] for i in test_gt])
@@ -76,8 +76,8 @@ test_Y   = np.array([i["class_label"]     for i in test_gt])
 def sigmoid(z):
     return 1 / (1 + np.exp(-z))
 
-train_pred = pickle.load(open("data/cub/train_error.pkl", "rb"))
-test_pred  = pickle.load(open("data/cub/test_error.pkl",  "rb"))
+train_pred = pickle.load(open(REPO_ROOT / "data/cub/train_error.pkl", "rb"))
+test_pred  = pickle.load(open(REPO_ROOT / "data/cub/test_error.pkl",  "rb"))
 pred_train_X = sigmoid(np.array([i["attribute_label"] for i in train_pred])).round()
 pred_test_X  = sigmoid(np.array([i["attribute_label"] for i in test_pred])).round()
 
@@ -85,7 +85,7 @@ train_concept_accuracy = np.mean(pred_train_X == train_X, axis=0)
 
 manually_selected_concepts = [
     int(i) for i in
-    open("data/cub/manual_concepts.txt").read().strip().split("\n")
+    open(REPO_ROOT / "data/cub/manual_concepts.txt").read().strip().split("\n")
 ]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

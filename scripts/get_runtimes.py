@@ -148,6 +148,6 @@ if is_main:
     save_name = secrets.token_hex(4)
     save_path = get_save_path(out_folder, save_name)
     delete_duplicate_results(out_folder, "", results)
-    json.dump(results, open(REPO_ROOT / "results/" + save_path, "w"))
+    json.dump(results, open(REPO_ROOT / "results/" / save_path, "w"))
     ground_truth_env.close()
     ground_truth_gym_env.close()
