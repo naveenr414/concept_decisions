@@ -3,7 +3,7 @@
 **Naveen Raman, Stephanie Milani, Fei Fang**  
 Carnegie Mellon University · New York University · Johns Hopkins University
 
-[[Paper]](https://arxiv.org/abs/XXX) · [[Project Page]](https://XXX)
+[[Paper]](https://arxiv.org/abs/XXX) · [[Project Page]](https://naveenraman.com/projects/concept-rl/)
 
 ![Pull figure](figures/pull_figure.jpg)
 
@@ -69,7 +69,6 @@ policy = train_ppo(
     total_timesteps=250_000,
     policy="CnnPolicy",
 )
-policy.save("results/models/mini_grid_policy.zip")
 ```
 
 **DRS** — optimal concept selection for ground-truth (perfect) concept predictors:
@@ -152,16 +151,6 @@ jupyter nbconvert --to notebook --execute plot_results.ipynb
 
 Config files for each experiment are in `scripts/configs/`:
 
-| Config | Figures |
-|--------|---------|
-| `main_perfect.yaml` | Fig. 2 (top) — perfect concept predictors |
-| `main_imperfect.yaml` | Fig. 2 (bottom) — imperfect concept predictors |
-| `intervention.yaml` | Fig. 4 — test-time intervention |
-| `accuracy_sweep.yaml` | Fig. 3, 5 — varying k |
-| `ablations.yaml` | Appendix E — DRS ablations |
-| `timing.yaml` | Appendix F — runtime |
-| `cub.yaml` | Fig. 6 — CUB bird classification |
-
 ---
 
 ## CUB Bird Classification
@@ -169,12 +158,12 @@ Config files for each experiment are in `scripts/configs/`:
 The CUB experiments require additional data setup.
 
 1. Download the standard CUB-200-2011 preprocessed split from
-   [Kaggle](https://www.kaggle.com/datasets/coolerextreme/cub200-cbm) and
-   place the `.pkl` files in `data/cub/`.
+   [Kaggle](https://worksheets.codalab.org/bundles/0xd013a7ba2e88481bbc07e787f73109f5) and
+   place the resulting `.pkl` files in `data/cub/`.
 
 2. Download the concept-prediction error files (`train_error.pkl`,
    `val_error.pkl`, `test_error.pkl`) from
-   [Zenodo](https://zenodo.org/record/XXX) into `data/cub/`.
+   [Zenodo](https://zenodo.org/records/18827396) into `data/cub/`. We also provide the `train.pkl`, `val.pkl`, and `test.pkl` files for convenience. 
 
 3. Run:
    ```bash
@@ -191,6 +180,7 @@ concept_decisions/
 ├── plot_results.ipynb            # generates all figures
 ├── environment.yaml              # conda environment
 ├── setup.py
+|── install.sh
 │
 ├── scripts/
 │   ├── train_prerequisites.py    # train policies + concept predictors
@@ -202,7 +192,7 @@ concept_decisions/
 │   └── configs/                  # per-experiment YAML configs
 │
 ├── concept_abstraction/          # library (importable)
-│   ├── __init__.py               # public API: DRS, DRS_log, variance, random
+│   ├── __init__.py               # public API: DRS, DRS_log, variance, etc.
 │   ├── _api.py                   # API implementation
 │   ├── selection.py              # LP solvers (drs, drs_log, etc.)
 │   ├── concept_bank.py           # concept definitions per environment
@@ -230,8 +220,7 @@ concept_decisions/
 @inproceedings{raman2026decisionrelevant,
   title     = {Selecting Decision-Relevant Concepts in Reinforcement Learning},
   author    = {Raman, Naveen and Milani, Stephanie and Fang, Fei},
-  booktitle = {XXX},
-  year      = {2026},
-  url       = {XXX}
+  journal={arXiv preprint arXiv:XXXX.XXXXX},
+  year={2026}
 }
 ```
